@@ -3192,5 +3192,27 @@
     "unreported_spent_limit": "已用金額和限額未回報",
     "unreported_spent": "已用金額未回報",
     "unreported_limit": "限額未回報"
+  },
+  "provider_catalog": {
+    "awaiting_auth": "等待認證",
+    "awaiting_auth_desc": "已在此節點發現。請登入或上傳憑證以在認證檔案與配額管理中啟用。",
+    "connect_action": "登入",
+    "upload_action": "上傳憑證",
+    "lifecycle_active": "已啟用",
+    "lifecycle_disabled": "已停用",
+    "lifecycle_needs_attention": "需要注意",
+    "unpooled_section_title": "已發現的提供商（未入池）",
+    "unpooled_section_help": "已認證且有配額讀數的帳號會顯示於此，啟用後才會納入配額池預測。",
+    "awaiting_auth_section_title": "等待認證",
+    "awaiting_auth_section_help": "節點已宣告但尚未新增憑證的提供商。",
+    "opt_in_pool": "加入配額池",
+    "opt_out_pool": "移出配額池",
+    "pool_profile_title": "設定配額池",
+    "pool_profile_weekly": "每週限額視窗",
+    "pool_profile_five_hour": "5 小時限額視窗",
+    "pool_profile_none": "無",
+    "pool_profile_units": "基礎方案倍率（1 倍 = 100 分）",
+    "pool_profile_save": "儲存配額池設定",
+    "no_quota_reader": "已認證 · 無配額讀取器"
   }
 }
