@@ -204,7 +204,9 @@ export function createModelAccessStore() {
       const run: Promise<void> = read(api)
         .then(
           (data) => {
-            loadedAt.set(id, active.now());
+            // A read that a forced one has replaced no longer says when the data was read:
+            // its payload is dropped below, so it must not make the newer data look fresher.
+            if (inflight.get(id) === run) loadedAt.set(id, active.now());
             dispatch(owner, slot, { type: 'LOADED', generation, data });
           },
           (error: unknown) => {

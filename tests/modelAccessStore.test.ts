@@ -361,6 +361,28 @@ describe('after a hub updates its model catalog', () => {
     await h.store.getState().ensureProvider(OWNER, 'claude', REFS);
     expect(h.calls.filter((call) => call.startsWith('catalog'))).toEqual([]);
   });
+
+  test('a pre-update answer that lands late does not make the newer data look fresher', async () => {
+    const h = hub();
+    await h.store.getState().ensureCatalog(OWNER, 'claude');
+    h.advance(MODEL_ACCESS_MAX_AGE_MS + 1);
+    const stale = deferred<{ id: string }[]>();
+    const fresh = h.api.getCatalog;
+    h.api.getCatalog = () => stale.promise;
+    const before = h.store.getState().ensureCatalog(OWNER, 'claude');
+    h.api.getCatalog = fresh;
+    await h.store.getState().refreshSourceModels(OWNER);
+
+    // The old answer arrives 20 s after the fresh one was stored.
+    h.advance(20_000);
+    stale.resolve([{ id: 'claude-old' }]);
+    await before;
+    // 15 s later the fresh data is older than the maximum age, so it is read again.
+    h.advance(MODEL_ACCESS_MAX_AGE_MS - 20_000 + 5_000);
+    h.calls.length = 0;
+    await h.store.getState().ensureCatalog(OWNER, 'claude');
+    expect(h.calls).toEqual(['catalog:claude']);
+  });
 });
 
 describe('every screen reads model access through the one store', () => {

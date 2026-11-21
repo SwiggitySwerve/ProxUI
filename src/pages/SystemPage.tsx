@@ -230,9 +230,8 @@ function SourceSystemPage() {
       await scope.session.management.post('/models/refresh');
       if (!isCurrent()) return;
       // The Models screen keeps this hub's model definitions in the shared model-access store;
-      // force fresh reads there so it does not keep showing the catalog from before.
-      await modelAccess().refreshSourceModels(scope.session.owner);
-      if (!isCurrent()) return;
+      // force fresh reads there, in the background: this page does not wait for them.
+      void modelAccess().refreshSourceModels(scope.session.owner);
       await fetchModels({ forceRefresh: true });
       if (!isCurrent()) return;
       showNotification(t('system_info.models_catalog_refresh_success'), 'success');

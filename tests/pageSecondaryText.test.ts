@@ -28,7 +28,7 @@ describe('system page', () => {
     expect(source).toContain("await scope.session.management.post('/models/refresh');");
     // This hub's slices of the shared model-access store are re-read after the update.
     expect(source).toMatch(
-      /post\('\/models\/refresh'\);[\s\S]{0,320}await modelAccess\(\)\.refreshSourceModels\(scope\.session\.owner\);/
+      /post\('\/models\/refresh'\);[\s\S]{0,320}void modelAccess\(\)\.refreshSourceModels\(scope\.session\.owner\);/
     );
     expect(source).not.toMatch(/\bapiClient\b/);
   });
