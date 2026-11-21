@@ -235,11 +235,12 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     const pool = weekly.pools.find((entry) => entry.provider === 'antigravity')!;
     expect(pool.instanceId).toBe('gemini-src');
     expect(pool.accountCount).toBe(1);
-    expect(pool.capacityPoints).toBe(2000);
-    expect(pool.remainingPoints).toBeCloseTo(1800, 6);
+    // The fixture account is Ultra Lite: 5 base plans.
+    expect(pool.capacityPoints).toBe(500);
+    expect(pool.remainingPoints).toBeCloseTo(450, 6);
     const [account] = pool.accounts;
     expect(account.label).toBe('Gemini 1');
-    expect(account.plan).toEqual({ label: 'Ultra', capacityPoints: 2000, known: true });
+    expect(account.plan).toEqual({ label: 'Ultra Lite', capacityPoints: 500, known: true });
     expect(account.status).toBe('ok');
     // The Claude and GPT group rides along as its own namespaced window, never in the pool balance.
     expect(account.windows.map((window) => [window.id, laneOf('antigravity', window.id)])).toEqual([
@@ -248,13 +249,13 @@ describe('Gemini (Antigravity) in the quota pool', () => {
       ['claude-and-gpt-models:3p-5h', 'model'],
       ['claude-and-gpt-models:3p-weekly', 'model'],
     ]);
-    expect(weekly.combined?.antigravity?.series?.capacityPoints).toBe(2000);
-    expect(weekly.combined?.all.series?.capacityPoints).toBe(2000 + 100);
+    expect(weekly.combined?.antigravity?.series?.capacityPoints).toBe(500);
+    expect(weekly.combined?.all.series?.capacityPoints).toBe(500 + 100);
 
     const fiveHour = f.dashboard('five-hour');
     expect(
       fiveHour.pools.find((entry) => entry.provider === 'antigravity')!.remainingPoints
-    ).toBeCloseTo(1500, 6);
+    ).toBeCloseTo(375, 6);
     // No empty Gemini card beside the Claude hub, and no Claude card beside the Gemini hub.
     expect(weekly.pools.map((entry) => [entry.instanceId, entry.provider])).toEqual([
       ['claude-src', 'claude'],
@@ -626,13 +627,18 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     expect(lines.join('\n')).not.toContain(SENTINEL);
   });
 
-  test('Google AI Ultra counts 2000 points; other tiers stay unknown at one unit', () => {
+  test('Google AI Ultra counts 2000 points, Ultra Lite 500; other tiers stay unknown', () => {
     expect(planWeight('antigravity', 'g1-ultra-tier')).toEqual({
       multiplier: 20,
       label: 'Ultra',
       known: true,
     });
-    expect(planWeight('antigravity', 'g1-ultra-lite-tier').multiplier).toBe(20);
+    // Ultra Lite is the lower tier (user direction, 21 Nov 2026): 5 base plans, like Claude Max.
+    expect(planWeight('antigravity', 'g1-ultra-lite-tier')).toEqual({
+      multiplier: 5,
+      label: 'Ultra Lite',
+      known: true,
+    });
     expect(planWeight('antigravity', 'g1-pro-tier')).toEqual({
       multiplier: 1,
       label: 'g1-pro-tier',

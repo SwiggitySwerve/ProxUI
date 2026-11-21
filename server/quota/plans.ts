@@ -10,8 +10,9 @@ import { parseAntigravitySubscriptionSummary } from '../../src/services/api/anti
  * ChatGPT Plus), and 100 quota points equal one unit. Multipliers are the providers' published
  * "N times Pro/Plus" allowances (Oct 2026): Claude Max 5x/20x; ChatGPT Pro 200 is 10x Plus and
  * Pro 500 ("promax") 25x. ChatGPT reports both Pro 100 and Pro 200 as "pro"; it is counted as
- * the $200 plan. Google AI Ultra counts 20 units, like Claude Ultra (user direction, 21 Nov 2026);
- * Antigravity reports it as `g1-ultra-tier` or `g1-ultra-lite-tier`, both named "Google AI Ultra".
+ * the $200 plan. Google AI Ultra (`g1-ultra-tier`) counts 20 units, like Claude Ultra; Google AI
+ * Ultra Lite (`g1-ultra-lite-tier`), the lower tier, counts 5, like Claude Max (user direction,
+ * 21 Nov 2026). Antigravity names both "Google AI Ultra", so only the tier id tells them apart.
  * Unknown plans count as one unit and are marked unknown.
  */
 const PLANS: Record<
@@ -35,7 +36,7 @@ const PLANS: Record<
   },
   antigravity: {
     'g1-ultra-tier': { multiplier: 20, label: 'Ultra' },
-    'g1-ultra-lite-tier': { multiplier: 20, label: 'Ultra' },
+    'g1-ultra-lite-tier': { multiplier: 5, label: 'Ultra Lite' },
   },
 };
 

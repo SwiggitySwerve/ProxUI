@@ -63,8 +63,9 @@ credential UI. The store owns persistence; the collector uses only public APIs.
 - Each enabled account contributes 100 quota points per base-plan unit of its
   subscription (`plans.ts`): one unit is the provider's $20 plan (Claude Pro,
   ChatGPT Plus), and plans count as the providers' published multiples (Claude
-  Max 5x/20x; ChatGPT Pro 10x, Pro 500 25x). Google AI Ultra (`g1-ultra-tier`,
-  `g1-ultra-lite-tier`) counts 20 units, like Claude Ultra (user direction, 21 Nov 2026). A window's remaining percent times
+  Max 5x/20x; ChatGPT Pro 10x, Pro 500 25x). Google AI Ultra (`g1-ultra-tier`)
+  counts 20 units, like Claude Ultra, and the lower Google AI Ultra Lite (`g1-ultra-lite-tier`)
+  5, like Claude Max (user direction, 21 Nov 2026). A window's remaining percent times
   that weight gives pool points; resets restore each account to its own capacity.
   An unknown plan counts as one unit and is shown as unknown. Points are not tokens.
 - Plans come from provider responses only: Codex's usage `plan_type`, Claude's

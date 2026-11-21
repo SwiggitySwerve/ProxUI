@@ -40,7 +40,7 @@ import styles from './QuotaPoolPage.module.scss';
 /** Points per plan (server/quota/plans.ts), listed in About so each weight reads on its own line. */
 const PLAN_WEIGHTS = [
   ['Claude Pro · ChatGPT Plus', 100],
-  ['Claude Max', 500],
+  ['Claude Max · Google AI Ultra Lite', 500],
   ['ChatGPT Pro', 1000],
   ['Claude Ultra · Google AI Ultra', 2000],
   ['ChatGPT Pro 500', 2500],
