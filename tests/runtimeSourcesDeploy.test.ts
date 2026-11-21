@@ -28,6 +28,9 @@ interface DeployOptions {
   applyFails?: boolean;
   seedFails?: boolean;
   routesMissing?: boolean;
+  /** A systemctl call containing this text fails, as on a bus error. */
+  queryFails?: string;
+  stopFails?: boolean;
   /** How many checks still see an apply job the triggers started or queued. */
   activeRuns?: number;
 }
@@ -76,7 +79,11 @@ function deploy(options: DeployOptions = {}) {
           : name === 'systemctl'
             ? [
                 'if [[ -n "${APPLY_FAILS:-}" && "$*" == "--user start prox-sources-apply.service" ]]; then exit 1; fi',
-                'if [[ "$*" == "--user --quiet is-active "* && -z "${TRIGGERS_ACTIVE:-}" ]]; then exit 3; fi',
+                'if [[ -n "${QUERY_FAILS:-}" && "$*" == *"$QUERY_FAILS"* ]]; then exit 1; fi',
+                'if [[ -n "${STOP_FAILS:-}" && "$*" == "--user stop "* ]]; then exit 1; fi',
+                'if [[ "$*" == "--user is-active "* ]]; then',
+                '  if [[ -n "${TRIGGERS_ACTIVE:-}" ]]; then echo active; else echo inactive; exit 3; fi',
+                'fi',
                 'if [[ "$*" == "--user list-jobs --no-legend prox-sources-apply.service" ]]; then',
                 '  runs=$(cat "$HOME/active-runs"); echo $((runs - 1)) > "$HOME/active-runs"',
                 '  if ((runs > 0)); then echo "7 prox-sources-apply.service start waiting"; fi',
@@ -99,6 +106,8 @@ function deploy(options: DeployOptions = {}) {
       ...(options.routesMissing ? { ROUTES_MISSING: '1' } : {}),
       ...(options.seedFails ? { SEED_FAILS: '1' } : {}),
       ...(options.seeded ? { TRIGGERS_ACTIVE: '1' } : {}),
+      ...(options.queryFails ? { QUERY_FAILS: options.queryFails } : {}),
+      ...(options.stopFails ? { STOP_FAILS: '1' } : {}),
     },
   });
   const calls = readFileSync(join(home, 'calls'), 'utf8').trim().split('\n');
@@ -214,6 +223,21 @@ describe('deploy-homelab.sh runtime hub discovery', () => {
 
   test('a later deploy that fails restarts the triggers it paused', () => {
     const { result, calls } = deploy({ seeded: true, routesMissing: true });
+    expect(result.exitCode).not.toBe(0);
+    expect(calls.at(-1)).toBe('systemctl --user start prox-sources.path prox-sources-apply.timer');
+  });
+
+  test.each(['is-active', 'list-jobs'])(
+    'a failed %s query stops the deploy before any input is replaced',
+    (query) => {
+      const { home, result } = deploy({ seeded: true, queryFails: query });
+      expect(result.exitCode).not.toBe(0);
+      expect(existsSync(join(home, SOURCES_APPLY, 'prox-sources-apply.js'))).toBe(false);
+    }
+  );
+
+  test('a failed stop still restarts the triggers', () => {
+    const { result, calls } = deploy({ seeded: true, stopFails: true });
     expect(result.exitCode).not.toBe(0);
     expect(calls.at(-1)).toBe('systemctl --user start prox-sources.path prox-sources-apply.timer');
   });

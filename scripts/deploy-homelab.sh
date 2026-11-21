@@ -34,15 +34,24 @@ install_renamed() { # <source> <target>
 # Runtime hub discovery. Pause its triggers and let a run they started or queued finish, so no
 # run of the previous bundle or baked manifest outlives this deploy; they are enabled again at the
 # end, and restarted if the deploy fails before then.
+# A systemd query that fails stops the deploy rather than reading as "nothing to wait for".
 paused=()
 for trigger in prox-sources.path prox-sources-apply.timer; do
-  if systemctl --user --quiet is-active "$trigger"; then paused+=("$trigger"); fi
+  trigger_state=$(systemctl --user is-active "$trigger" || true)
+  case "$trigger_state" in
+    active|activating|reloading) paused+=("$trigger") ;;
+    inactive|failed) ;;
+    *) echo "Cannot read the state of $trigger: '$trigger_state'" >&2; exit 1 ;;
+  esac
 done
 if ((${#paused[@]})); then
-  systemctl --user stop "${paused[@]}"
   trap 'systemctl --user start "${paused[@]}"' EXIT
+  systemctl --user stop "${paused[@]}"
 fi
-while [[ -n $(systemctl --user list-jobs --no-legend prox-sources-apply.service) ]]; do
+while :; do
+  # Outside the loop condition, so errexit stops the deploy when the query fails.
+  apply_jobs=$(systemctl --user list-jobs --no-legend prox-sources-apply.service)
+  [[ -n "$apply_jobs" ]] || break
   sleep 1
 done
 sources_apply_dir="$HOME/.local/share/prox/sources-apply"
@@ -125,8 +134,8 @@ curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1
 systemctl --user restart prox-history.service
 curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 \
   --max-time 5 http://127.0.0.1:18319/healthz
-trap - EXIT
 systemctl --user enable --now prox-sources.path prox-sources-apply.timer
+trap - EXIT
 if ((sources_failed)); then
   echo 'Prox UI deployed, but prox-sources-apply failed; the previous source routes stay live.' \
     'See journalctl --user -u prox-sources-apply.service. The timer retries it; prox-history' \
