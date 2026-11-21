@@ -1927,17 +1927,25 @@ export function useVisualConfig() {
     () => getVisualConfigValidationErrors(visualValues, dirtyFields),
     [visualValues, dirtyFields]
   );
-  const visualHasPayloadValidationErrors = useMemo(
+  // Replacement rules are written only when they were edited, so only an edited set can block.
+  // A loaded rule the editor cannot represent is left as it is and never blocks other settings.
+  const payloadReplaceDraftInvalid = useMemo(
     () =>
+      dirtyFields.has('payloadReplaceRules') &&
       visualValues.payloadReplaceRules.some((rule) =>
         Boolean(getPayloadReplaceValidationError(rule))
-      ) ||
+      ),
+    [dirtyFields, visualValues.payloadReplaceRules]
+  );
+  const visualHasPayloadValidationErrors = useMemo(
+    () =>
+      payloadReplaceDraftInvalid ||
       hasPayloadParamValidationErrors(visualValues.payloadDefaultRules) ||
       hasPayloadParamValidationErrors(visualValues.payloadDefaultRawRules) ||
       hasPayloadParamValidationErrors(visualValues.payloadOverrideRules) ||
       hasPayloadParamValidationErrors(visualValues.payloadOverrideRawRules),
     [
-      visualValues.payloadReplaceRules,
+      payloadReplaceDraftInvalid,
       visualValues.payloadDefaultRules,
       visualValues.payloadDefaultRawRules,
       visualValues.payloadOverrideRules,
@@ -1974,9 +1982,7 @@ export function useVisualConfig() {
 
   const applyVisualChangesToYaml = useCallback(
     (currentYaml: string, target: 'server' | 'draft' = 'server'): string => {
-      if (visualValues.payloadReplaceRules.some((rule) => getPayloadReplaceValidationError(rule))) {
-        throw new Error('Invalid payload.replace rules');
-      }
+      if (payloadReplaceDraftInvalid) throw new Error('Invalid payload.replace rules');
       try {
         const doc = parseDocument(currentYaml);
         if (doc.errors.length > 0) return currentYaml;
@@ -2522,7 +2528,14 @@ export function useVisualConfig() {
         return currentYaml;
       }
     },
-    [baselineValues, baselineYaml, dirtyFields, visualValues, rebasedPayload]
+    [
+      baselineValues,
+      baselineYaml,
+      dirtyFields,
+      visualValues,
+      rebasedPayload,
+      payloadReplaceDraftInvalid,
+    ]
   );
 
   const setVisualValues = useCallback((newValues: Partial<VisualConfigValues>) => {
@@ -2537,6 +2550,7 @@ export function useVisualConfig() {
     visualParseError,
     visualValidationErrors,
     visualHasPayloadValidationErrors,
+    payloadReplaceDraftInvalid,
     loadVisualValuesFromYaml,
     rebaseVisualValuesFromYaml,
     applyVisualChangesToYaml,

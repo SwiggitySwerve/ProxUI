@@ -619,6 +619,26 @@ describe('Gemini (Antigravity) in the quota pool', () => {
       'weekly',
     ]);
 
+    // Case 2b': the first answer has only the weekly Gemini window. The next endpoint is still
+    // asked for the 5-hour one; the first answer's weekly reading stands.
+    const weeklyOnly = () => {
+      const groups = summary(0.7, 0.3).groups;
+      return { groups: [{ ...groups[0], buckets: groups[0].buckets.slice(0, 1) }] };
+    };
+    const split = makeCollector((url) =>
+      url === ANTIGRAVITY_QUOTA_URLS[0]
+        ? Response.json({ status_code: 200, body: JSON.stringify(weeklyOnly()) })
+        : Response.json({ status_code: 200, body: JSON.stringify(summary(0.2, 0.45)) })
+    );
+    await split.collector.refresh();
+    expect(split.attempted).toEqual(ANTIGRAVITY_QUOTA_URLS.slice(0, 2));
+    const splitSamples = split.store.listSamples(0, NOW);
+    expect(splitSamples.find((s) => s.window === 'weekly')?.remainingPercent).toBeCloseTo(70, 6);
+    expect(splitSamples.find((s) => s.window === 'five-hour')?.remainingPercent).toBeCloseTo(
+      45,
+      6
+    );
+
     // Case 2c: no endpoint has a Gemini group, so the Claude/GPT answer stands and the pool
     // windows are recorded as missing, as before.
     const noGemini = makeCollector(() =>

@@ -1183,6 +1183,7 @@
     "login_proxy_clear": "Xóa",
     "login_proxy_invalid": "URL proxy không hợp lệ. Hãy dùng http, https, socks5 hoặc socks5h kèm máy chủ (socks5 cần cổng), không có đường dẫn hay tham số truy vấn.",
     "login_proxy_in_use": "Đang đăng nhập qua proxy",
+    "login_proxy_saved_note": "Được lưu vào thông tin xác thực mới dưới dạng URL proxy, gồm cả tên người dùng và mật khẩu, và sau đó dùng cho các yêu cầu của tài khoản đó.",
     "success_saved_hint": "Đã lưu credential — quản lý trong File xác thực.",
     "sign_up_prompt": "Chưa có tài khoản?",
     "copied": "Đã sao chép",
@@ -1666,7 +1667,8 @@
         "payload_replace_invalid_positions": "Chọn tất cả tin nhắn của vai trò đã chọn hoặc nhập danh sách vị trí gồm các số nguyên dương, không chọn cả hai.",
         "payload_replace_invalid_paths": "Nhập ít nhất một đường dẫn JSON không rỗng. Không dùng đường dẫn cùng vai trò, all hoặc positions.",
         "payload_replace_invalid_models": "Thêm ít nhất một mô hình có tên không rỗng và các điều kiện hợp lệ.",
-        "payload_replace_invalid_replacements": "Thêm ít nhất một phép thay thế hợp lệ. Văn bản nguồn không được rỗng; biểu thức chính quy dùng Go RE2. Văn bản thay thế rỗng sẽ xóa phần khớp."
+        "payload_replace_invalid_replacements": "Thêm ít nhất một phép thay thế hợp lệ. Văn bản nguồn không được rỗng; biểu thức chính quy dùng Go RE2. Văn bản thay thế rỗng sẽ xóa phần khớp.",
+        "payload_replace_blocks_source": "Hãy hoàn tất hoặc xóa quy tắc thay thế chưa hoàn chỉnh trước khi chuyển sang Mã nguồn."
       },
       "common": {
         "edit": "Chỉnh sửa",
@@ -2202,7 +2204,6 @@
       "activeCount": "{{active}}/{{total}} đang hoạt động"
     },
     "providerNames": {
-      "aiCodeMirror": "AIcodemirror",
       "gemini": "Gemini",
       "interactions": "Interactions API",
       "codex": "Codex",
@@ -2268,8 +2269,6 @@
       "urlMode": "URL {{provider}}",
       "urlHint": "Mọi URL dùng cùng quy ước API. Lưu chỉ ghi endpoint của giao thức được nhóm hiện tại.",
       "urlOptions": {
-        "aiCodeMirrorGlobal": "Tuyến toàn cầu được bảo vệ cao",
-        "aiCodeMirrorDomestic": "Tuyến tối ưu cho Trung Quốc đại lục",
         "standard": "URL chuẩn",
         "direct": "URL trực tiếp",
         "domestic": "Tuyến Trung Quốc đại lục",
@@ -2278,8 +2277,6 @@
         "global": "Toàn cầu"
       },
       "urlOptionDescriptions": {
-        "aiCodeMirrorGlobal": "Tuyến có mức bảo vệ cao dành cho truy cập toàn cầu.",
-        "aiCodeMirrorDomestic": "Tuyến được tối ưu cho mạng tại Trung Quốc đại lục.",
         "domestic": "Dành cho người dùng và khối lượng công việc tại Trung Quốc đại lục; thường có độ trễ thấp hơn trên mạng đại lục.",
         "overseas": "Dành cho triển khai nước ngoài, truy cập xuyên biên giới hoặc khối lượng công việc cần model nước ngoài.",
         "mainlandChinaRecommended": "Khuyến nghị cho người dùng và khối lượng công việc trên mạng Trung Quốc đại lục.",

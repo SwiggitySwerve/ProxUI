@@ -21,6 +21,7 @@ export function LoginProxyField({ value, rejectedValue, onChange }: LoginProxyFi
   const panelId = useId();
   const inputId = useId();
   const errorId = useId();
+  const noteId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [expanded, setExpanded] = useState(rejectedValue !== null);
   const [touched, setTouched] = useState(false);
@@ -108,7 +109,7 @@ export function LoginProxyField({ value, rejectedValue, onChange }: LoginProxyFi
             autoCorrect="off"
             spellCheck={false}
             aria-invalid={showError}
-            aria-describedby={showError ? errorId : undefined}
+            aria-describedby={showError ? `${errorId} ${noteId}` : noteId}
           />
           {value && (
             <button type="button" className={styles.clear} onClick={clear}>
@@ -116,6 +117,10 @@ export function LoginProxyField({ value, rejectedValue, onChange }: LoginProxyFi
             </button>
           )}
         </div>
+        {/* The hub stores this URL, password included, on the credential the login creates. */}
+        <p id={noteId} className={styles.note}>
+          {t('auth_login.login_proxy_saved_note')}
+        </p>
         {showError && (
           <p id={errorId} className={styles.error} role="alert">
             {t('auth_login.login_proxy_invalid')}

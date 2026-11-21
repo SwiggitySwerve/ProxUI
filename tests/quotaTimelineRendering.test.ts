@@ -76,6 +76,28 @@ describe('QuotaTimeline rendering', () => {
     expect(render(false)).not.toContain(`>${off}</span>`);
   });
 
+  test('a switched-off Antigravity account is marked off on each of its group lanes', () => {
+    const bucket = { id: 'gemini-weekly', label: 'Weekly', remainingFraction: 0.5, periodHours: 168 };
+    const quota = {
+      status: 'success' as const,
+      groups: ['gemini-models', 'claude-and-gpt-models'].map((id) => ({
+        id,
+        label: id,
+        buckets: [{ ...bucket, resetAtMs: new Date(2026, 7, 1, 12).getTime() }],
+      })),
+    };
+    const render = (disabled: boolean) =>
+      renderToStaticMarkup(
+        createElement(QuotaTimeline, {
+          ...baseProps,
+          entries: [{ file: { name: 'gemini.json', type: 'antigravity', disabled }, type: 'antigravity' }],
+          quotaFor: () => quota as never,
+        })
+      );
+    expect(render(true).match(/data-off="true"/g)).toHaveLength(2);
+    expect(render(false)).not.toContain('data-off');
+  });
+
   test('keeps the panel and controls visible when 5-hour mode has no matching lanes', () => {
     const weeklyOnlyQuota = {
       status: 'success' as const,

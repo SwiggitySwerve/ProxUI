@@ -1290,6 +1290,7 @@
     "login_proxy_clear": "清除",
     "login_proxy_invalid": "代理 URL 無效。請使用 http、https、socks5 或 socks5h 並填寫主機（socks5 需要連接埠），不能包含路徑或查詢參數。",
     "login_proxy_in_use": "本次登入透過代理",
+    "login_proxy_saved_note": "會作為代理 URL 儲存到新憑證上（包含使用者名稱與密碼），之後該帳號的請求也經由此代理。",
     "success_saved_hint": "憑證已儲存，可在驗證檔案頁管理。",
     "sign_up_prompt": "還沒有帳號？",
     "copied": "已複製",
@@ -1900,7 +1901,8 @@
         "payload_replace_invalid_positions": "請選擇該角色的所有訊息，或輸入非空的正整數位置清單，兩者不可同時指定。",
         "payload_replace_invalid_paths": "請至少輸入一個非空的 JSON 路徑。路徑不可與角色、all 或 positions 同時指定。",
         "payload_replace_invalid_models": "請至少新增一個模型，模型名稱不可為空，且條件必須有效。",
-        "payload_replace_invalid_replacements": "請至少新增一項有效替換。字面值來源文字不可為空；正規表示式使用 Go RE2。替換文字為空時會刪除符合的文字。"
+        "payload_replace_invalid_replacements": "請至少新增一項有效替換。字面值來源文字不可為空；正規表示式使用 Go RE2。替換文字為空時會刪除符合的文字。",
+        "payload_replace_blocks_source": "切換到原始碼前，請先補全或移除未完成的替換規則。"
       },
       "common": {
         "edit": "編輯",
@@ -2356,7 +2358,6 @@
       "activeCount": "{{active}}/{{total}} 活躍"
     },
     "providerNames": {
-      "aiCodeMirror": "AIcodemirror",
       "meta": "Muse (Meta)",
       "gemini": "Gemini",
       "interactions": "Interactions API",
@@ -2419,8 +2420,6 @@
       "urlMode": "{{provider}} URL",
       "urlHint": "不同 URL 的使用規範一致,儲存時只會寫入目前分組協議對應位址。",
       "urlOptions": {
-        "aiCodeMirrorGlobal": "全球高保線路",
-        "aiCodeMirrorDomestic": "國內優化線路",
         "standard": "普通 URL",
         "direct": "專線直連 URL",
         "domestic": "中國大陸線路",
@@ -2429,8 +2428,6 @@
         "global": "全球"
       },
       "urlOptionDescriptions": {
-        "aiCodeMirrorGlobal": "適用於全球存取的高防護線路。",
-        "aiCodeMirrorDomestic": "針對中國大陸網路最佳化的線路。",
         "domestic": "面向中國大陸使用者和部署在中國大陸網路環境中的業務，通常可獲得更低延遲。",
         "overseas": "面向海外部署、跨境存取或需要存取境外模型的業務。",
         "mainlandChinaRecommended": "推薦中國大陸使用者和部署在中國大陸網路環境中的業務使用。",

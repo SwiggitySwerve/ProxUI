@@ -53,6 +53,8 @@ export interface TimelineLane {
   /** Separate identity lines keep group labels visible even for long account names. */
   groupName?: string;
   accountName?: string;
+  /** The credential a group lane belongs to; `name` is then only the lane's own identity. */
+  credentialName?: string;
   provider: QuotaProviderType;
   /** Instant a window boundary falls on; all other boundaries derive from it. */
   anchorMs: number | null;
@@ -421,6 +423,7 @@ export function buildTimelineLanes(
       }),
       groupName,
       accountName: input.displayName,
+      credentialName: input.name,
     };
   });
 }

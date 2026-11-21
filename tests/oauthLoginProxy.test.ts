@@ -334,7 +334,15 @@ const KEYS = [
   'login_proxy_clear',
   'login_proxy_invalid',
   'login_proxy_in_use',
+  'login_proxy_saved_note',
 ];
+
+test('the field says the proxy is saved on the new credential', () => {
+  const field = readFileSync('src/features/oauth/components/LoginProxyField.tsx', 'utf8');
+  // Visible text, not a tooltip: the URL may hold a password and the hub stores it.
+  expect(field).toMatch(/<p id=\{noteId\}[^>]*>\s*\{t\('auth_login\.login_proxy_saved_note'\)\}/);
+  expect(field).toContain('aria-describedby={showError ? `${errorId} ${noteId}` : noteId}');
+});
 
 describe('login proxy locales', () => {
   test('every locale translates every key', () => {
@@ -407,7 +415,9 @@ describe('login proxy field', () => {
     expect(input).toContain('aria-invalid="false"');
     const inputId = /id="([^"]+)"/.exec(input)![1];
     expect(markup).toContain(`for="${inputId}"`);
-    expect(input).not.toContain('aria-describedby');
+    // Without an error the input is described by the persistence note only.
+    const noteId = /aria-describedby="([^" ]+)"/.exec(input)![1];
+    expect(markup).toContain(`<p id="${noteId}">`);
     expect(markup).not.toContain('Not stored in the browser');
     // No clear button without a value.
     expect(markup).not.toContain('>Clear<');
@@ -440,7 +450,8 @@ describe('login proxy field', () => {
     expect(markup).not.toContain('hidden=""');
     const input = /<input[^>]*>/.exec(markup)![0];
     expect(input).toContain('aria-invalid="true"');
-    const errorId = /aria-describedby="([^"]+)"/.exec(input)![1];
+    // The error id comes first, then the persistence note's.
+    const errorId = /aria-describedby="([^" ]+) [^"]+"/.exec(input)![1];
     expect(markup).toMatch(new RegExp(`id="${errorId}"[^>]*role="alert"`));
     expect(markup).toContain(en.auth_login.login_proxy_invalid);
   });

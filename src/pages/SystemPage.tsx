@@ -6,6 +6,7 @@ import {
   useProviderNotifications,
 } from '@/features/providers/ProviderSourceContext';
 import { createVersionApi } from '@/services/api/version';
+import { modelAccess } from '@/features/authFiles/modelAccessRuntime';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
@@ -227,6 +228,9 @@ function SourceSystemPage() {
     try {
       // Refreshes this hub's backend model catalogs, not auth-file credentials.
       await scope.session.management.post('/models/refresh');
+      // The Models screen keeps the hub's model definitions in the shared model-access store;
+      // re-read what it has loaded so it does not keep showing the catalog from before.
+      void modelAccess().refreshLoaded();
       if (!isCurrent()) return;
       await fetchModels({ forceRefresh: true });
       if (!isCurrent()) return;

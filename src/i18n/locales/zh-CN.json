@@ -1264,6 +1264,7 @@
     "login_proxy_clear": "清除",
     "login_proxy_invalid": "代理 URL 无效。请使用 http、https、socks5 或 socks5h 并填写主机（socks5 需要端口），不能包含路径或查询参数。",
     "login_proxy_in_use": "本次登录通过代理",
+    "login_proxy_saved_note": "会作为代理 URL 保存到新凭证上（包含用户名和密码），之后该账号的请求也经由此代理。",
     "success_saved_hint": "凭证已保存，可在认证文件页管理。",
     "sign_up_prompt": "还没有账号？",
     "copied": "已复制"
@@ -1872,7 +1873,8 @@
         "payload_replace_invalid_positions": "请选择该角色的所有消息，或输入非空的正整数位置列表，两者不能同时指定。",
         "payload_replace_invalid_paths": "请至少输入一个非空 JSON 路径。路径不能与角色、all 或 positions 同时指定。",
         "payload_replace_invalid_models": "请至少添加一个模型，模型名称不能为空，且条件必须有效。",
-        "payload_replace_invalid_replacements": "请至少添加一项有效替换。字面量源文本不能为空；正则使用 Go RE2。替换文本为空时会删除匹配文本。"
+        "payload_replace_invalid_replacements": "请至少添加一项有效替换。字面量源文本不能为空；正则使用 Go RE2。替换文本为空时会删除匹配文本。",
+        "payload_replace_blocks_source": "切换到源码前，请先补全或移除未完成的替换规则。"
       },
       "common": {
         "edit": "编辑",
@@ -2328,7 +2330,6 @@
       "activeCount": "{{active}}/{{total}} 活跃"
     },
     "providerNames": {
-      "aiCodeMirror": "AIcodemirror",
       "meta": "Muse (Meta)",
       "gemini": "Gemini",
       "interactions": "Interactions API",
@@ -2391,8 +2392,6 @@
       "urlMode": "{{provider}} URL",
       "urlHint": "不同 URL 的使用规范一致,保存时只会写入当前分组协议对应地址。",
       "urlOptions": {
-        "aiCodeMirrorGlobal": "全球高保线路",
-        "aiCodeMirrorDomestic": "国内优化线路",
         "standard": "普通 URL",
         "direct": "专线直连 URL",
         "domestic": "国内线路",
@@ -2401,8 +2400,6 @@
         "global": "全球"
       },
       "urlOptionDescriptions": {
-        "aiCodeMirrorGlobal": "适用于全球访问的高防护线路。",
-        "aiCodeMirrorDomestic": "针对中国大陆网络优化的线路。",
         "domestic": "面向中国大陆用户和部署在中国大陆网络环境中的业务，通常可获得更低延迟。",
         "overseas": "面向海外部署、跨境访问或需要访问境外模型的业务。",
         "mainlandChinaRecommended": "推荐中国大陆用户和部署在中国大陆网络环境中的业务使用。",

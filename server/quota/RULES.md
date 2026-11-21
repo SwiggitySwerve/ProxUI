@@ -22,10 +22,13 @@ credential UI. The store owns persistence; the collector uses only public APIs.
   `project_id` from the inventory, posted through `/requests/api-call` to the same
   endpoints, in the same order, as the hub-direct card. Only the "Gemini Models"
   group feeds the pool (user direction, 21 Nov 2026); the "Claude and GPT models"
-  group is shown as its own model-lane window. An endpoint can answer 200 with
-  only the Claude/GPT group; that is not a missing Gemini pool, so the next endpoint is
-  asked and the windows of both answers are kept. The pool windows are recorded as
-  missing only when no endpoint reports them. It has no resets: claims are refused
+  group is shown as its own model-lane window. An endpoint can answer 200
+  without one or both Gemini pool windows (a daily host may return only the Claude/GPT
+  group). That is not a missing window yet: the next endpoint is asked until both pool
+  windows are known, the earliest answer stands for whatever it reported, and later
+  answers only fill gaps. A pool window is recorded as missing only when no endpoint
+  reports it. (The hub-direct card stops at the first answer with any Gemini bucket; it
+  only displays what it got.) It has no resets: claims are refused
   before anything is sent, and `/v1/accounts` leaves its accounts out (its cards
   stay hub-direct). Databases from before it are migrated once: `quota_accounts`
   is rebuilt to allow open provider IDs, keeping every row and reference. The

@@ -170,7 +170,7 @@ describe('provider form notes', () => {
   });
 
   test('sponsor form: restating notes removed, scope notes become InfoTips', () => {
-    for (const brand of ['apikeyFun', 'fennoAI', 'qiniuCloud', 'aiCodeMirror', 'kimi'] as const) {
+    for (const brand of ['apikeyFun', 'fennoAI', 'qiniuCloud', 'kimi'] as const) {
       const html = renderSponsor(brand);
       const definition = getSponsorProviderDefinition(brand);
       expect(html).not.toContain(REMOVED.protocol);

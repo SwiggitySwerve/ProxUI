@@ -1266,6 +1266,7 @@
     "login_proxy_clear": "Clear",
     "login_proxy_invalid": "Invalid proxy URL. Use http, https, socks5 or socks5h with a host (socks5 needs a port), and no path or query.",
     "login_proxy_in_use": "Signing in through proxy",
+    "login_proxy_saved_note": "Saved on the new credential as its proxy URL, including any username and password, and used for that account's requests afterwards.",
     "success_saved_hint": "The credential is saved — manage it in Auth Files.",
     "sign_up_prompt": "No account yet?",
     "copied": "Copied"
@@ -1874,7 +1875,8 @@
         "payload_replace_invalid_positions": "Choose all messages of the selected role or enter a non-empty list of positive integer positions, not both.",
         "payload_replace_invalid_paths": "Enter at least one non-blank JSON path. Paths cannot be combined with a role, all, or positions.",
         "payload_replace_invalid_models": "Add at least one model with a non-empty name and valid conditions.",
-        "payload_replace_invalid_replacements": "Add at least one valid replacement. Literal sources cannot be empty. Regex uses Go RE2; an empty replacement deletes the matched text."
+        "payload_replace_invalid_replacements": "Add at least one valid replacement. Literal sources cannot be empty. Regex uses Go RE2; an empty replacement deletes the matched text.",
+        "payload_replace_blocks_source": "Finish or remove the incomplete replacement rule before switching to Source."
       },
       "common": {
         "edit": "Edit",
@@ -2330,7 +2332,6 @@
       "activeCount": "{{active}}/{{total}} active"
     },
     "providerNames": {
-      "aiCodeMirror": "AIcodemirror",
       "meta": "Muse (Meta)",
       "gemini": "Gemini",
       "interactions": "Interactions API",
@@ -2393,8 +2394,6 @@
       "urlMode": "{{provider}} URL",
       "urlHint": "All URLs use the same API conventions. Saving writes only the endpoint for the current grouped protocol.",
       "urlOptions": {
-        "aiCodeMirrorGlobal": "Global high-protection route",
-        "aiCodeMirrorDomestic": "Mainland China optimized route",
         "standard": "Standard URL",
         "direct": "Direct URL",
         "domestic": "China mainland route",
@@ -2403,8 +2402,6 @@
         "global": "Global"
       },
       "urlOptionDescriptions": {
-        "aiCodeMirrorGlobal": "A high-protection route for global access.",
-        "aiCodeMirrorDomestic": "A route optimized for mainland China networks.",
         "domestic": "For users and workloads in mainland China; usually lower latency in mainland networks.",
         "overseas": "For overseas deployments, cross-border access, or workloads that need overseas models.",
         "mainlandChinaRecommended": "Recommended for users and workloads on mainland China networks.",

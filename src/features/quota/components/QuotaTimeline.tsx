@@ -286,7 +286,7 @@ export function QuotaTimeline({
               <Lane
                 key={lane.name}
                 lane={lane}
-                off={offLanes.has(lane.name)}
+                off={offLanes.has(lane.credentialName ?? lane.name)}
                 span={span}
                 now={now}
                 mode={mode}

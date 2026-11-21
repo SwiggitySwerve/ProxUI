@@ -1359,10 +1359,11 @@ export class QuotaCollector {
   }> {
     if (!projectId) return { response: null };
     let lastResponse: unknown = null;
-    // A daily host can answer 200 with only the Claude/GPT group. That answer is kept, and the
-    // next endpoint is asked for the Gemini pool windows instead of recording them as missing.
+    // An endpoint can answer 200 without one or both Gemini pool windows (a daily host may
+    // return only the Claude/GPT group). Its answer is kept and the next endpoint is asked for
+    // what is still missing, instead of recording a pool window as missing too early.
     type Reading = { response: unknown; samples: QuotaSample[]; windows: AccountQuotaWindow[] };
-    let partial = null as Reading | null;
+    let reading = null as Reading | null;
     for (const url of ANTIGRAVITY_QUOTA_URLS) {
       if (signal.aborted) throw new Error('Quota request aborted');
       let response: unknown;
@@ -1388,17 +1389,29 @@ export class QuotaCollector {
       } catch {
         continue;
       }
-      const ids = new Set(parsed.windows.map((window) => window.id));
-      const windows: AccountQuotaWindow[] = [
-        ...parsed.windows,
-        ...(partial?.windows.filter((window) => !ids.has(window.id)) ?? []),
-      ];
-      if (parsed.samples.some((sample) => sample.remainingPercent !== null)) {
-        return { response, samples: parsed.samples, windows };
+      if (reading === null) {
+        reading = { response, samples: parsed.samples, windows: parsed.windows };
+      } else {
+        // The earlier answer stands for what it reported; this one only fills the gaps.
+        const earlier: Reading = reading;
+        const known = new Set(earlier.windows.map((window) => window.id));
+        reading = {
+          response: earlier.response,
+          samples: earlier.samples.map((sample) =>
+            sample.remainingPercent !== null
+              ? sample
+              : (parsed.samples.find((filled) => filled.window === sample.window) ?? sample)
+          ),
+          windows: [
+            ...earlier.windows,
+            ...parsed.windows.filter((window) => !known.has(window.id)),
+          ],
+        };
       }
-      partial = { response: partial?.response ?? response, samples: parsed.samples, windows };
+      // quotaSamples always returns both pool windows, null when the answer lacked one.
+      if (reading.samples.every((sample) => sample.remainingPercent !== null)) return reading;
     }
-    return partial ?? { response: lastResponse };
+    return reading ?? { response: lastResponse };
   }
 
   private async readCatalog(

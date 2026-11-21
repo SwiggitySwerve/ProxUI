@@ -130,7 +130,42 @@ describe('payload replace pipeline', () => {
     const rule = parseVisualValuesFromYaml(source).payloadReplaceRules[0];
     expect(rule.invalid).toBe(true);
     expect(getPayloadReplaceValidationError(rule)).toBeDefined();
-    expect(() => applyPayloadEdit(source, () => ({ debug: true }))).toThrow();
+    // ProxUI: a rule the editor cannot represent must not block other settings, as before
+    // replacement rules were editable. The untouched rule is written back as it was.
+    const output = applyPayloadEdit(source, () => ({ debug: true }));
+    expect(parseVisualValuesFromYaml(output).debug).toBe(true);
+    expect(parseYaml(output).requests.payload).toEqual(parseYaml(source).requests.payload);
+  });
+
+  test('only a replacement-rule draft blocks saving and the switch to YAML', () => {
+    const read = (edit: (values: VisualConfigValues) => Partial<VisualConfigValues>) => {
+      let state!: { blocked: boolean; flagged: boolean };
+      function Harness() {
+        const config = useVisualConfig();
+        const [phase, setPhase] = useState(0);
+        if (phase === 0) {
+          config.loadVisualValuesFromYaml(yaml.replace('positions: [1, 2]', 'positions: [1.5]'));
+          setPhase(1);
+        } else if (phase === 1) {
+          config.setVisualValues(edit(config.visualValues));
+          setPhase(2);
+        } else {
+          state = {
+            blocked: config.payloadReplaceDraftInvalid,
+            flagged: config.visualHasPayloadValidationErrors,
+          };
+        }
+        return null;
+      }
+      renderToStaticMarkup(createElement(Harness));
+      return state;
+    };
+    expect(read(() => ({ debug: true }))).toEqual({ blocked: false, flagged: false });
+    expect(
+      read((values) => ({
+        payloadReplaceRules: values.payloadReplaceRules.map((rule) => ({ ...rule, models: [] })),
+      }))
+    ).toEqual({ blocked: true, flagged: true });
   });
 
   test('quoted sources, duplicate sources and positions survive serialize/reparse in order', () => {
@@ -278,7 +313,18 @@ ${yaml
       const source = yaml.replace('role: user\n          positions: [1, 2]', `paths: ${paths}`);
       const rule = parseVisualValuesFromYaml(source).payloadReplaceRules[0];
       expect(getPayloadReplaceValidationError(rule)).toBe('payload_replace_invalid_paths');
-      expect(() => applyPayloadEdit(source, () => ({ debug: true }))).toThrow();
+      // Rejected once the rules are edited; an unrelated edit leaves the stored rule alone.
+      expect(() =>
+        applyPayloadEdit(source, (values) => ({
+          payloadReplaceRules: values.payloadReplaceRules.map((entry) => ({ ...entry })),
+          payloadDefaultRules: [],
+        }))
+      ).not.toThrow();
+      expect(() =>
+        applyPayloadEdit(source, (values) => ({
+          payloadReplaceRules: [...values.payloadReplaceRules, ...values.payloadReplaceRules],
+        }))
+      ).toThrow();
     }
   );
 
