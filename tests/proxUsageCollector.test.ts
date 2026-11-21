@@ -123,6 +123,28 @@ describe('usage collector with an in-process proxy', () => {
     expect(env.collector.status.state).toBe('stopped');
   });
 
+  test('subscribedAtMs marks each subscription and clears before recovery awaits', async () => {
+    const env = await setup();
+    await ready(env);
+    await eventually(() => env.collector.status.state === 'subscribed');
+    const first = env.collector.status.subscribedAtMs;
+    expect(first).toBe(env.clock.now());
+    const seen: { state: string; subscribedAtMs: number | null }[] = [];
+    env.writer.recovery = async () => {
+      const { state, subscribedAtMs } = env.collector.status;
+      seen.push({ state, subscribedAtMs });
+    };
+    await env.clock.advance(5000);
+    env.proxy.drop();
+    await eventually(() => env.collector.status.retryAtMs !== null);
+    // Status as writer.recovery began, after the monitor and label awaits.
+    expect(seen[0]).toEqual({ state: 'backoff', subscribedAtMs: null });
+    await env.clock.advance(1000);
+    await eventually(() => env.collector.status.state === 'subscribed');
+    expect(env.collector.status.subscribedAtMs).toBe(env.clock.now());
+    expect(env.collector.status.subscribedAtMs!).toBeGreaterThan(first!);
+  });
+
   test('drops a subscription above 50,000 queued payloads and pauses for replay', async () => {
     const env = await setup();
     await ready(env);

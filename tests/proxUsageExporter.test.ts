@@ -295,8 +295,20 @@ test('exporter bearer boundary reports per-source subscription and nullable even
     now: () => 10_000,
     sources: () =>
       [
-        { instance: 'claude-primary', state: 'subscribed', lastEventAtMs: 8000 },
-        { instance: 'codex-primary', state: 'backoff', lastEventAtMs: null },
+        {
+          instance: 'claude-primary',
+          state: 'subscribed',
+          lastEventAtMs: 8000,
+          subscribedAtMs: 7500,
+        },
+        { instance: 'codex-primary', state: 'backoff', lastEventAtMs: null, subscribedAtMs: null },
+        // A stale timestamp outside `subscribed` is never reported.
+        {
+          instance: 'gemini-primary',
+          state: 'replaying',
+          lastEventAtMs: null,
+          subscribedAtMs: 9000,
+        },
       ] as ReturnType<Parameters<typeof createUsageStatusHandler>[0]['sources']>,
     writer: () => ({
       backlog: 0,
@@ -330,12 +342,21 @@ test('exporter bearer boundary reports per-source subscription and nullable even
         instance: 'claude-primary',
         state: 'subscribed',
         subscribed: true,
+        subscribed_at_seconds: 7.5,
         last_event_age_seconds: 2,
       },
       {
         instance: 'codex-primary',
         state: 'backoff',
         subscribed: false,
+        subscribed_at_seconds: null,
+        last_event_age_seconds: null,
+      },
+      {
+        instance: 'gemini-primary',
+        state: 'replaying',
+        subscribed: false,
+        subscribed_at_seconds: null,
         last_event_age_seconds: null,
       },
     ],

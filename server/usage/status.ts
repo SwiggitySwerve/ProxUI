@@ -105,6 +105,10 @@ export function createUsageStatusHandler(options: {
             instance: source.instance,
             state: source.state,
             subscribed: source.state === 'subscribed',
+            subscribed_at_seconds:
+              source.state === 'subscribed' && source.subscribedAtMs !== null
+                ? source.subscribedAtMs / 1000
+                : null,
             last_event_age_seconds:
               source.lastEventAtMs === null
                 ? null

@@ -982,7 +982,11 @@ and success/failed status, token/cache totals, seconds sums/counts, zero-token
 successes and nullable current-rate cost; plus newest event epoch seconds and
 priced-model count. It remains additive during the dual run. Source health reports
 instance, state, subscribed and last-event age in seconds; no event since process
-start is `null`, never a healthy zero age.
+start is `null`, never a healthy zero age. `subscribed_at_seconds` is the epoch
+second the current subscription reached `subscribed` (after AUTH, SUBSCRIBE and
+replay), `null` in every other state; the collector leaves `subscribed` as soon as
+the socket session ends, before its cleanup awaits, so a reconnect always reports a
+new, later value.
 
 `GET /v1/status` carries `eventLoop` (`maxLagMs`, `stallsOver1s`, `lastStallAtMs`) and
 `/v1/exporter` carries `event_loop` (`max_lag_seconds`, `stalls_total`,
