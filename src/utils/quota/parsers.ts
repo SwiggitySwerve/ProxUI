@@ -42,8 +42,8 @@ export function normalizeQuotaFraction(value: unknown): number | null {
     const trimmed = value.trim();
     if (!trimmed) return null;
     if (trimmed.endsWith('%')) {
-      const parsed = Number(trimmed.slice(0, -1));
-      return Number.isFinite(parsed) ? parsed / 100 : null;
+      const parsed = normalizeNumberValue(trimmed.slice(0, -1));
+      return parsed !== null ? parsed / 100 : null;
     }
   }
   return null;

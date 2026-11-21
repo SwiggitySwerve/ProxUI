@@ -313,7 +313,8 @@ export function PoolCard({
     })
   );
   const resetSection = (account: (typeof pool.accounts)[number]) =>
-    openAccounts.has(account.id) && (
+    openAccounts.has(account.id) &&
+    pool.provider !== 'antigravity' && (
       <PoolAccountResets
         key="resets"
         account={account}

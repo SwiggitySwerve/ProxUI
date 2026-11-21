@@ -18,8 +18,12 @@ import type {
 } from '../../src/domain/quotaPool/types';
 import { buildClaudeQuotaWindows } from '../../src/domain/quotaWindows/claude';
 import { buildCodexQuotaWindows } from '../../src/domain/quotaWindows/codex';
+import { decodeAntigravityQuotaWindows } from '../../src/domain/quotaWindows/antigravity';
 import { laneOf } from '../../src/domain/quotaWindows/lanes';
 import {
+  ANTIGRAVITY_CODE_ASSIST_URL,
+  ANTIGRAVITY_QUOTA_URLS,
+  ANTIGRAVITY_REQUEST_HEADERS,
   CLAUDE_PROFILE_URL,
   CLAUDE_USAGE_WINDOW_KEYS,
   CLAUDE_REQUEST_HEADERS,
@@ -30,13 +34,15 @@ import {
 } from '../../src/utils/quota/constants';
 import {
   normalizeCodexAccountCredits,
+  parseAntigravityPayload,
   parseClaudeUsagePayload,
   parseCodexUsagePayload,
 } from '../../src/utils/quota/parsers';
 import { normalizeClaudeUsageSnapshot } from '../../src/services/api/claudeUsage';
 import type { ClaudeUsageSnapshot } from '../../src/types/quota';
 import { isRecord } from '../../src/utils/helpers';
-import { planFromClaudeProfile, planFromCodexUsage } from './plans';
+import { planFromAntigravityCodeAssist, planFromClaudeProfile, planFromCodexUsage } from './plans';
+import { CODE_ASSIST_REQUEST_BODY } from '../../src/services/api/antigravitySubscription';
 import { QuotaStore } from './store';
 import type { InventorySourceState, InventorySourceStatus } from './inventory';
 import { codexCreditExpiries, readAccountResets, withCodexCreditDetails } from './resets';
@@ -108,6 +114,8 @@ interface InventoryAccount {
   account: StoredAccount;
   authIndex: string;
   chatgptAccountId: string | null;
+  /** Antigravity's Cloud Code project, which its quota read names. */
+  projectId: string | null;
 }
 
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -170,6 +178,7 @@ function inventory(payload: unknown, provider: PoolProviderId, nowMs: number): I
         isRecord(file.id_token) && boundedString(file.id_token.chatgpt_account_id, 256)
           ? file.id_token.chatgpt_account_id
           : null,
+      projectId: boundedString(file.project_id, 256) ? file.project_id : null,
       account: {
         id,
         provider,
@@ -185,12 +194,16 @@ function inventory(payload: unknown, provider: PoolProviderId, nowMs: number): I
   return accounts;
 }
 
-export function quotaSamples(
-  provider: PoolProviderId,
-  accountId: string,
-  body: unknown,
-  observedAtMs: number
-): { samples: QuotaSample[]; windows: AccountQuotaWindow[] } {
+/** Antigravity's quota summary as windows; rejects malformed payloads via the shared decoder. */
+function antigravityWindows(body: unknown) {
+  const payload = parseAntigravityPayload(body);
+  if (!payload) throw new Error('Invalid quota response');
+  const { windows, valid } = decodeAntigravityQuotaWindows(payload);
+  if (!valid) throw new Error('Invalid quota response');
+  return windows;
+}
+
+function usageWindows(provider: 'claude' | 'codex', body: unknown) {
   const parsed =
     provider === 'claude'
       ? { provider: 'claude' as const, payload: parseClaudeUsagePayload(body) }
@@ -235,19 +248,53 @@ export function quotaSamples(
       }
     }
   }
+  return parsed.provider === 'claude'
+    ? buildClaudeQuotaWindows(parsed.payload, label)
+    : buildCodexQuotaWindows(parsed.payload, label);
+}
+
+/** ECMAScript Date range limit (±8.64e15 ms); values past it produce Invalid Date / RangeError. */
+const MAX_JS_DATE_MS = 8_640_000_000_000_000;
+
+function validResetAtMs(value: number | null | undefined): boolean {
+  return (
+    value === null ||
+    value === undefined ||
+    (Number.isSafeInteger(value) && Math.abs(value) <= MAX_JS_DATE_MS)
+  );
+}
+
+/** Extracts the payload body from a successful management `/requests/api-call` response. */
+function quotaResponseBody(response: unknown): string | Record<string, unknown> | null {
+  return isRecord(response) &&
+    response.status_code === 200 &&
+    (typeof response.body === 'string' || isRecord(response.body))
+    ? response.body
+    : null;
+}
+
+export function quotaSamples(
+  provider: PoolProviderId,
+  accountId: string,
+  body: unknown,
+  observedAtMs: number
+): { samples: QuotaSample[]; windows: AccountQuotaWindow[] } {
   const windows =
-    parsed.provider === 'claude'
-      ? buildClaudeQuotaWindows(parsed.payload, label)
-      : buildCodexQuotaWindows(parsed.payload, label);
+    provider === 'antigravity' ? antigravityWindows(body) : usageWindows(provider, body);
   const samples: QuotaSample[] = [];
   for (const entry of windows) {
+    const resetAtMs = entry.resetAtMs ?? null;
+    if (!validResetAtMs(resetAtMs)) throw new Error('Invalid quota response');
     const window = laneOf(provider, entry.id);
     if (window !== 'five-hour' && window !== 'weekly') continue;
+    const periodHours = entry.periodHours ?? null;
     if (
+      samples.some((sample) => sample.window === window) ||
       entry.usedPercent === null ||
       !Number.isFinite(entry.usedPercent) ||
       entry.usedPercent < 0 ||
-      entry.usedPercent > 100
+      entry.usedPercent > 100 ||
+      (periodHours !== null && (!Number.isFinite(periodHours) || periodHours <= 0))
     ) {
       throw new Error('Invalid quota response');
     }
@@ -256,8 +303,8 @@ export function quotaSamples(
       window,
       observedAtMs,
       remainingPercent: 100 - entry.usedPercent,
-      resetAtMs: entry.resetAtMs ?? null,
-      periodHours: entry.periodHours ?? null,
+      resetAtMs,
+      periodHours,
     });
   }
   // Explicit missing observations supersede earlier balances without inventing zero usage.
@@ -295,7 +342,7 @@ export function quotaSamples(
  * Log detail for a failed poll: numeric status, retry-after seconds and header names only, so
  * upstream bodies, header values and identities never reach the log.
  */
-function failureDetail(accountId: string, response: unknown): string {
+function failureDetail(response: unknown): string {
   const status =
     isRecord(response) && typeof response.status_code === 'number'
       ? response.status_code
@@ -308,7 +355,7 @@ function failureDetail(accountId: string, response: unknown): string {
   const retry = Object.entries(headers).find(([name]) => name.toLowerCase() === 'retry-after')?.[1];
   const seconds =
     Array.isArray(retry) && /^\d{1,6}$/.test(String(retry[0])) ? String(retry[0]) : 'none';
-  return `${status} account=${accountId.slice(-8)} retry-after=${seconds} headers=${names.join(',') || 'none'}`;
+  return `${status} retry-after=${seconds} headers=${names.join(',') || 'none'}`;
 }
 
 /** Enumerates each instance once, then collects supported read-only quota observations. */
@@ -377,11 +424,17 @@ export class QuotaCollector {
         if (!source.instanceId || seen.has(source.instanceId))
           throw new Error('Duplicate quota source');
         seen.add(source.instanceId);
-        // A source that claims only other kinds (an Antigravity hub) holds no pooled quota.
-        const pooled =
-          !source.providers ||
-          source.providers.some((provider) => QUOTA_PROVIDERS.some((id) => id === provider));
-        return pooled ? [Object.freeze({ ...source, providers: QUOTA_PROVIDERS })] : [];
+        // Claude and Codex are inventoried together on any source that declares either (or
+        // declares nothing); Antigravity only where declared. A source that claims none of them
+        // holds no pooled quota.
+        const declared = source.providers;
+        const providers = QUOTA_PROVIDERS.filter((id) =>
+          id === 'antigravity'
+            ? declared?.includes(id) === true
+            : !declared ||
+              declared.some((provider) => provider === 'claude' || provider === 'codex')
+        );
+        return providers.length ? [Object.freeze({ ...source, providers })] : [];
       });
     } else {
       if (!options.fetcher) throw new Error('Legacy quota injection requires a fetcher');
@@ -463,6 +516,7 @@ export class QuotaCollector {
     return this.collectionSources.map((source) => ({
       instanceId: source.instanceId!,
       sourceLabel: source.label,
+      providers: source.providers,
     }));
   }
 
@@ -761,7 +815,8 @@ export class QuotaCollector {
           key,
           signal,
           new Map([[accountId, current.planObservedAtMs ?? null]]),
-          entry.chatgptAccountId
+          entry.chatgptAccountId,
+          entry.projectId
         );
       } catch {
         if (!signal.aborted) this.addIssue(source, stored.provider, 'quota-unavailable');
@@ -820,25 +875,38 @@ export class QuotaCollector {
     if (account.provider === 'codex') {
       plan = planFromCodexUsage(usageBody);
     } else {
-      // Claude names the plan only in its profile; plans change rarely, so ask every few hours.
+      // Claude names the plan only in its profile and Antigravity only in loadCodeAssist; plans
+      // change rarely, so ask every few hours.
       const observedAt = storedPlans.get(account.id) ?? null;
       const attemptedAt = this.profileAttempts.get(account.id) ?? null;
       const last = Math.max(observedAt ?? -Infinity, attemptedAt ?? -Infinity);
       if (this.profileAttempts.has(account.id) && this.now() - last < PLAN_REFRESH_MS) return;
       this.profileAttempts.set(account.id, this.now());
       try {
-        const response = await this.request(source, 'requests/api-call', key, signal, {
-          authIndex,
-          method: 'GET',
-          url: CLAUDE_PROFILE_URL,
-          header: CLAUDE_REQUEST_HEADERS,
-        });
-        if (isRecord(response) && response.status_code === 200) {
-          const billing = billingFromClaudeProfile(response.body);
-          if (billing && !signal.aborted && this.store.isLive(account.id)) {
-            this.latestBilling.set(account.id, billing);
+        if (account.provider === 'antigravity') {
+          const response = await this.request(source, 'requests/api-call', key, signal, {
+            authIndex,
+            method: 'POST',
+            url: ANTIGRAVITY_CODE_ASSIST_URL,
+            header: ANTIGRAVITY_REQUEST_HEADERS,
+            data: CODE_ASSIST_REQUEST_BODY,
+          });
+          if (isRecord(response) && response.status_code === 200)
+            plan = planFromAntigravityCodeAssist(response.body);
+        } else {
+          const response = await this.request(source, 'requests/api-call', key, signal, {
+            authIndex,
+            method: 'GET',
+            url: CLAUDE_PROFILE_URL,
+            header: CLAUDE_REQUEST_HEADERS,
+          });
+          if (isRecord(response) && response.status_code === 200) {
+            const billing = billingFromClaudeProfile(response.body);
+            if (billing && !signal.aborted && this.store.isLive(account.id)) {
+              this.latestBilling.set(account.id, billing);
+            }
+            plan = planFromClaudeProfile(response.body);
           }
-          plan = planFromClaudeProfile(response.body);
         }
       } catch {
         return;
@@ -988,7 +1056,8 @@ export class QuotaCollector {
     key: string,
     outerSignal: AbortSignal,
     storedPlans: Map<string, number | null>,
-    chatgptAccountId: string | null
+    chatgptAccountId: string | null,
+    projectId: string | null = null
   ): Promise<boolean> {
     if (!this.store.isLive(account.id)) return false;
     const own = new AbortController();
@@ -1003,7 +1072,8 @@ export class QuotaCollector {
         key,
         AbortSignal.any([outerSignal, own.signal]),
         storedPlans,
-        chatgptAccountId
+        chatgptAccountId,
+        projectId
       );
     } finally {
       controllers.delete(own);
@@ -1020,40 +1090,48 @@ export class QuotaCollector {
     key: string,
     signal: AbortSignal,
     storedPlans: Map<string, number | null>,
-    chatgptAccountId: string | null
+    chatgptAccountId: string | null,
+    projectId: string | null
   ): Promise<boolean> {
     let samples: QuotaSample[];
     let windows: AccountQuotaWindow[];
     let usageBody: unknown;
     let upstream: unknown;
     try {
-      const claude = account.provider === 'claude';
-      const response = await this.request(source, 'requests/api-call', key, signal, {
-        authIndex,
-        method: 'GET',
-        url: claude ? ANTHROPIC_API_ORIGIN + ANTHROPIC_RESET_GRANT_STATUS_PATH : CODEX_USAGE_URL,
-        header: claude ? CLAUDE_REQUEST_HEADERS : CODEX_REQUEST_HEADERS,
-      });
-      upstream = response;
-      if (
-        !isRecord(response) ||
-        response.status_code !== 200 ||
-        !(typeof response.body === 'string' || isRecord(response.body))
-      ) {
-        throw new Error('Quota request unavailable');
+      if (account.provider === 'antigravity') {
+        const result = await this.readAntigravityQuota(
+          account.id,
+          source,
+          key,
+          signal,
+          authIndex,
+          projectId
+        );
+        upstream = result.response;
+        if (!result.samples || !result.windows) throw new Error('Quota request unavailable');
+        ({ samples, windows } = result);
+        usageBody = isRecord(result.response) ? result.response.body : undefined;
+      } else {
+        const claude = account.provider === 'claude';
+        const response = await this.request(source, 'requests/api-call', key, signal, {
+          authIndex,
+          method: 'GET',
+          url: claude
+            ? ANTHROPIC_API_ORIGIN + ANTHROPIC_RESET_GRANT_STATUS_PATH
+            : CODEX_USAGE_URL,
+          header: claude ? CLAUDE_REQUEST_HEADERS : CODEX_REQUEST_HEADERS,
+        });
+        upstream = response;
+        const body = quotaResponseBody(response);
+        if (body === null) {
+          throw new Error('Quota request unavailable');
+        }
+        ({ samples, windows } = quotaSamples(account.provider, account.id, body, this.now()));
+        usageBody = body;
       }
-      ({ samples, windows } = quotaSamples(
-        account.provider,
-        account.id,
-        response.body,
-        this.now()
-      ));
-      usageBody = response.body;
     } catch {
       if (!signal.aborted && this.store.isLive(account.id)) {
-        console.error(
-          `Quota request failed: ${account.provider} ${failureDetail(account.id, upstream)}`
-        );
+        console.error(`Quota request failed: ${account.provider} ${failureDetail(upstream)}`);
         this.addIssue(source, account.provider, 'quota-unavailable');
         this.store.markAccountError(account.id, this.now());
       }
@@ -1076,7 +1154,7 @@ export class QuotaCollector {
               dollarWindows: snapshot.dollarWindows,
             });
           }
-        } else {
+        } else if (account.provider === 'codex') {
           this.latestCredits.set(
             account.id,
             normalizeCodexAccountCredits(parseCodexUsagePayload(usageBody)?.credits)
@@ -1100,6 +1178,55 @@ export class QuotaCollector {
       await this.recordPlan(account, authIndex, source, key, signal, usageBody, storedPlans);
     }
     return !signal.aborted && this.store.isLive(account.id);
+  }
+
+  /**
+   * Antigravity's quota summary for the credential's Cloud Code project, from the same endpoints,
+   * in the same order, as the hub-direct card (`ANTIGRAVITY_QUOTA_URLS`): each endpoint is
+   * validated in turn so a transport failure or malformed 200 continues to the next while
+   * cancellation stops immediately. No project id means nothing can be read.
+   */
+  private async readAntigravityQuota(
+    accountId: string,
+    source: CollectionSource,
+    key: string,
+    signal: AbortSignal,
+    authIndex: string,
+    projectId: string | null
+  ): Promise<{
+    response: unknown;
+    samples?: QuotaSample[];
+    windows?: AccountQuotaWindow[];
+  }> {
+    if (!projectId) return { response: null };
+    let lastResponse: unknown = null;
+    for (const url of ANTIGRAVITY_QUOTA_URLS) {
+      if (signal.aborted) throw new Error('Quota request aborted');
+      let response: unknown;
+      try {
+        response = await this.request(source, 'requests/api-call', key, signal, {
+          authIndex,
+          method: 'POST',
+          url,
+          header: ANTIGRAVITY_REQUEST_HEADERS,
+          data: JSON.stringify({ project: projectId }),
+        });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        lastResponse = null;
+        continue;
+      }
+      lastResponse = response;
+      const body = quotaResponseBody(response);
+      if (body === null) continue;
+      try {
+        const parsed = quotaSamples('antigravity', accountId, body, this.now());
+        return { response, ...parsed };
+      } catch {
+        continue;
+      }
+    }
+    return { response: lastResponse };
   }
 
   private async readInventory(source: CollectionSource, signal: AbortSignal) {
@@ -1248,7 +1375,7 @@ export class QuotaCollector {
     let cursor = 0;
     const worker = async () => {
       while (cursor < accounts.length && !signal.aborted) {
-        const { account, authIndex, chatgptAccountId, source, key } = accounts[cursor++];
+        const { account, authIndex, chatgptAccountId, projectId, source, key } = accounts[cursor++];
         await this.pollAccount(
           account,
           authIndex,
@@ -1256,7 +1383,8 @@ export class QuotaCollector {
           key,
           signal,
           storedPlans,
-          chatgptAccountId
+          chatgptAccountId,
+          projectId
         );
       }
     };

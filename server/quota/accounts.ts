@@ -3,13 +3,13 @@ import type { AccountBilling } from '../../src/domain/accountBilling';
 import { maskIdentifier } from '../../src/domain/quotaPool/mask';
 import type {
   ServerAccount,
+  ServerAccountProvider,
   ServerAccountWindow,
   ServerAccountsBody,
 } from '../../src/domain/quotaPool/accounts';
 import type {
   AccountQuotaWindow,
   AccountResets,
-  PoolProviderId,
   PoolWindow,
 } from '../../src/domain/quotaPool/types';
 import { laneOf, poolWindowId } from '../../src/domain/quotaWindows/lanes';
@@ -19,7 +19,7 @@ import { STALE_MS, type QuotaSample, type StoredAccount } from './types';
 import { weeklyOnlyAccountIds } from './values';
 
 /** What the stored weekly/five-hour samples say when no window list is held in memory. */
-const SAMPLE_LABEL_KEYS: Record<PoolProviderId, Record<PoolWindow, string>> = {
+const SAMPLE_LABEL_KEYS: Record<ServerAccountProvider, Record<PoolWindow, string>> = {
   claude: { 'five-hour': 'claude_quota.five_hour', weekly: 'claude_quota.seven_day' },
   codex: { 'five-hour': 'codex_quota.primary_window', weekly: 'codex_quota.secondary_window' },
 };
@@ -40,7 +40,7 @@ export interface AccountsInput {
   collection: Pick<ServerAccountsBody, 'lastRefreshAtMs' | 'nextRefreshAtMs' | 'refreshing'>;
 }
 
-function storedWindows(provider: PoolProviderId, samples: readonly QuotaSample[]) {
+function storedWindows(provider: ServerAccountProvider, samples: readonly QuotaSample[]) {
   return samples.map((sample): ServerAccountWindow => ({
     id: poolWindowId(provider, sample.window),
     lane: sample.window,
@@ -51,7 +51,7 @@ function storedWindows(provider: PoolProviderId, samples: readonly QuotaSample[]
   }));
 }
 
-function liveWindows(provider: PoolProviderId, windows: readonly AccountQuotaWindow[]) {
+function liveWindows(provider: ServerAccountProvider, windows: readonly AccountQuotaWindow[]) {
   return windows.map((window): ServerAccountWindow => ({
     id: window.id,
     lane: laneOf(provider, window.id),
@@ -62,6 +62,10 @@ function liveWindows(provider: PoolProviderId, windows: readonly AccountQuotaWin
     periodHours: window.periodHours ?? null,
   }));
 }
+
+type ServerStoredAccount = StoredAccount & { provider: ServerAccountProvider };
+const isServerAccount = (account: StoredAccount): account is ServerStoredAccount =>
+  !account.retired && (account.provider === 'claude' || account.provider === 'codex');
 
 /**
  * The read model behind `GET /v1/accounts`: one entry per non-retired account. A disabled account
@@ -77,8 +81,9 @@ export function buildAccounts(input: AccountsInput): ServerAccountsBody {
     list.push(sample);
     samples.set(sample.accountId, list);
   }
+  // Claude and Codex only: Antigravity cards stay hub-direct, and browsers reject other providers.
   const live = input.accounts
-    .filter((account) => !account.retired)
+    .filter(isServerAccount)
     .sort(
       (a, b) =>
         (a.instanceId ?? '').localeCompare(b.instanceId ?? '') ||

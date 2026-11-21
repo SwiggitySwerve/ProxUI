@@ -1,4 +1,8 @@
-import type { PoolProviderId, PoolWindow } from '../../src/domain/quotaPool/types';
+import type {
+  PoolProviderId,
+  PoolWindow,
+  ResetProviderId,
+} from '../../src/domain/quotaPool/types';
 
 export interface StoredAccount {
   id: string;
@@ -21,7 +25,11 @@ export interface StoredAccount {
   firstSampleAtMs?: number | null;
 }
 
-export const QUOTA_PROVIDERS: readonly PoolProviderId[] = Object.freeze(['claude', 'codex']);
+export const QUOTA_PROVIDERS: readonly PoolProviderId[] = Object.freeze([
+  'claude',
+  'codex',
+  'antigravity',
+]);
 
 /** Stored in place of a retired account's file name; its email is cleared. */
 export const RETIRED_ACCOUNT_NAME = 'retired';
@@ -38,6 +46,8 @@ export interface InventoryChange {
 export interface QuotaSourceView {
   instanceId: string;
   sourceLabel: string;
+  /** The pool providers collected from this source; absent when not known. */
+  providers?: readonly PoolProviderId[];
 }
 
 export interface QuotaSample {
@@ -60,7 +70,7 @@ export interface ResetReading {
 export interface ResetEvent {
   id: number;
   accountId: string;
-  provider: PoolProviderId;
+  provider: ResetProviderId;
   /** Claude: session, weekly, fable or full. Codex: its credit kind, `codex_rate_limits`. */
   kind: string;
   grantId: string | null;

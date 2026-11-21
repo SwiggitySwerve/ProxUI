@@ -17,6 +17,7 @@ import type {
   XaiBillingSummary,
   XaiProductUsageSummary,
 } from '@/types';
+import { isRecord } from '@/utils/helpers';
 import { normalizeNumberValue, normalizeQuotaFraction, normalizeStringValue } from './parsers';
 import { parseOffsetSecondsToMs, resolveResetMs } from './resetInstants';
 
@@ -64,30 +65,51 @@ function antigravityPeriodHours(window: string | undefined): number | null {
   }
 }
 
-export function buildAntigravityQuotaGroups(
-  payload: AntigravityQuotaSummaryPayload
-): AntigravityQuotaGroup[] {
-  const groups = Array.isArray(payload.groups) ? payload.groups : [];
+/**
+ * Single-pass decoder for Antigravity quota summaries. Returns the parsed groups alongside
+ * `valid`, which is false whenever `groups`, any group/bucket entry, or any bucket fraction is
+ * malformed or outside [0, 1]. The hub-direct card consumes `groups` leniently; the history
+ * collector requires `valid` so malformed responses fall through to the next endpoint.
+ */
+export function decodeAntigravityQuotaGroups(payload: AntigravityQuotaSummaryPayload): {
+  groups: AntigravityQuotaGroup[];
+  valid: boolean;
+} {
+  let valid = Array.isArray(payload.groups);
+  const rawGroups = Array.isArray(payload.groups) ? payload.groups : [];
 
-  return groups
+  const groups = rawGroups
     .map((group, groupIndex): AntigravityQuotaGroup | null => {
+      if (!isRecord(group) || !Array.isArray(group.buckets)) {
+        valid = false;
+        return null;
+      }
       const label =
         normalizeStringValue(group.displayName ?? group.display_name) ??
         `Quota Group ${groupIndex + 1}`;
       const groupId = toStableId(label, `quota-group-${groupIndex + 1}`);
-      const buckets = Array.isArray(group.buckets) ? group.buckets : [];
-      const parsedBuckets = buckets
+      const parsedBuckets = group.buckets
         .map((bucket, bucketIndex): AntigravityQuotaBucket | null => {
+          if (!isRecord(bucket)) {
+            valid = false;
+            return null;
+          }
           const remainingFraction = normalizeQuotaFraction(
             bucket.remainingFraction ?? bucket.remaining_fraction
           );
-          if (remainingFraction === null) return null;
+          if (remainingFraction === null) {
+            valid = false;
+            return null;
+          }
+          if (remainingFraction < 0 || remainingFraction > 1) {
+            valid = false;
+          }
 
           const window = normalizeStringValue(bucket.window) ?? undefined;
           const rawId =
             normalizeStringValue(bucket.bucketId ?? bucket.bucket_id) ??
             `${groupId}-${window ?? 'bucket'}-${bucketIndex + 1}`;
-          const label =
+          const bucketLabel =
             normalizeStringValue(bucket.displayName ?? bucket.display_name) ??
             normalizeStringValue(bucket.description) ??
             window ??
@@ -98,7 +120,7 @@ export function buildAntigravityQuotaGroups(
 
           return {
             id: rawId,
-            label,
+            label: bucketLabel,
             window,
             remainingFraction,
             resetTime,
@@ -124,6 +146,14 @@ export function buildAntigravityQuotaGroups(
       };
     })
     .filter((group): group is AntigravityQuotaGroup => group !== null);
+
+  return { groups, valid };
+}
+
+export function buildAntigravityQuotaGroups(
+  payload: AntigravityQuotaSummaryPayload
+): AntigravityQuotaGroup[] {
+  return decodeAntigravityQuotaGroups(payload).groups;
 }
 
 function toInt(value: unknown): number | null {

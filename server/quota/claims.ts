@@ -3,7 +3,7 @@ import type { AccountBilling } from '../../src/domain/accountBilling';
 import type {
   AccountQuotaWindow,
   AccountResets,
-  PoolProviderId,
+  ResetProviderId,
 } from '../../src/domain/quotaPool/types';
 import {
   AnthropicResetGrantError,
@@ -45,9 +45,11 @@ export class ResetClaimRefusal extends Error {
   }
 }
 
+type ResettableAccount = StoredAccount & { provider: ResetProviderId };
+
 export interface AccountReading {
   accountId: string;
-  provider: PoolProviderId;
+  provider: ResetProviderId;
   observedAtMs: number | null;
   windows: readonly AccountQuotaWindow[];
   resets: AccountResets | null;
@@ -125,14 +127,17 @@ export class ResetClaims {
       );
     if (!account || account.disabled || account.retired)
       throw new ResetClaimRefusal(404, { error: 'Unknown account' });
+    if (account.provider === 'antigravity')
+      throw new ResetClaimRefusal(400, { error: 'Antigravity accounts have no resets to claim' });
+    const resettable: ResettableAccount = { ...account, provider: account.provider };
     if (
-      account.provider === 'claude' &&
+      resettable.provider === 'claude' &&
       (!request.grantId || !ANTHROPIC_RESET_GRANT_ID_RE.test(request.grantId))
     )
       throw new ResetClaimRefusal(400, { error: 'A Claude claim needs a valid grantId' });
     const existing = this.store.resetEventByRequestId(request.clientRequestId);
     if (existing) {
-      if (existing.accountId !== account.id || existing.grantId !== (request.grantId ?? null))
+      if (existing.accountId !== resettable.id || existing.grantId !== (request.grantId ?? null))
         throw new ResetClaimRefusal(409, { error: 'Request id already used for another claim' });
       if (existing.outcome === 'pending')
         throw new ResetClaimRefusal(409, { error: 'Claim in progress' });
@@ -142,12 +147,12 @@ export class ResetClaims {
           replayed: true,
           refreshed: false,
           event: existing,
-          account: this.accountReading(account),
+          account: this.accountReading(resettable),
         };
       }
       this.assertRetryable(existing);
     } else {
-      const open = this.store.latestUnknownResetEvent(account.id, this.now() - RETRY_WINDOW_MS);
+      const open = this.store.latestUnknownResetEvent(resettable.id, this.now() - RETRY_WINDOW_MS);
       if (open)
         throw new ResetClaimRefusal(409, {
           error: 'An earlier claim for this account is unresolved',
@@ -155,31 +160,31 @@ export class ResetClaims {
           clientRequestId: open.clientRequestId,
         });
     }
-    if (this.flights.has(account.id))
+    if (this.flights.has(resettable.id))
       throw new ResetClaimRefusal(409, { error: 'Another claim for this account is in progress' });
-    this.flights.add(account.id);
+    this.flights.add(resettable.id);
     try {
-      const before = existing?.before ?? this.collector.reading(account.id);
+      const before = existing?.before ?? this.collector.reading(resettable.id);
       let sent: Sent | null;
       try {
-        sent = await this.collector.withManagedAccount(account.id, (managed) =>
-          account.provider === 'claude'
-            ? this.sendClaude(managed, account, request, existing, before)
-            : this.sendCodex(managed, account, request, existing, before)
+        sent = await this.collector.withManagedAccount(resettable.id, (managed) =>
+          resettable.provider === 'claude'
+            ? this.sendClaude(managed, resettable, request, existing, before)
+            : this.sendCodex(managed, resettable, request, existing, before)
         );
       } catch (error) {
         if (error instanceof ResetClaimRefusal) throw error;
         throw new ResetClaimRefusal(502, { error: 'Reset claim could not reach the hub' });
       }
       if (!sent) throw new ResetClaimRefusal(404, { error: 'Unknown account' });
-      return await this.finish(account, sent);
+      return await this.finish(resettable, sent);
     } finally {
-      this.flights.delete(account.id);
+      this.flights.delete(resettable.id);
     }
   }
 
   /** Newest first. Names and emails only when `reveal`, like `/v1/pools`. */
-  events(filter: { provider?: PoolProviderId; sinceMs?: number; reveal?: boolean }) {
+  events(filter: { provider?: ResetProviderId; sinceMs?: number; reveal?: boolean }) {
     const events = this.store.listResetEvents(filter);
     if (!filter.reveal) return events;
     const accounts = new Map(this.store.listAccounts().map((entry) => [entry.id, entry]));
@@ -201,7 +206,7 @@ export class ResetClaims {
       });
   }
 
-  private accountReading(account: StoredAccount): AccountReading {
+  private accountReading(account: ResettableAccount): AccountReading {
     return {
       accountId: account.id,
       provider: account.provider,
@@ -212,7 +217,7 @@ export class ResetClaims {
     };
   }
 
-  private async finish(account: StoredAccount, sent: Sent): Promise<ResetClaimResult> {
+  private async finish(account: ResettableAccount, sent: Sent): Promise<ResetClaimResult> {
     const { event, outcome } = sent;
     const settledAtMs = sent.settled ? this.now() : null;
     try {
@@ -256,7 +261,7 @@ export class ResetClaims {
   }
 
   private record(
-    account: StoredAccount,
+    account: ResettableAccount,
     request: ResetClaimRequest,
     kind: string,
     before: ResetReading | null,
@@ -281,7 +286,7 @@ export class ResetClaims {
 
   private async sendClaude(
     managed: ManagedAccount,
-    account: StoredAccount,
+    account: ResettableAccount,
     request: ResetClaimRequest,
     existing: ResetEvent | null,
     before: ResetReading | null
@@ -370,7 +375,7 @@ export class ResetClaims {
 
   private async sendCodex(
     managed: ManagedAccount,
-    account: StoredAccount,
+    account: ResettableAccount,
     request: ResetClaimRequest,
     existing: ResetEvent | null,
     before: ResetReading | null

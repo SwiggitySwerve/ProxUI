@@ -1,7 +1,10 @@
 import type { AccountBilling } from '../accountBilling';
 import type { ClaudeDollarWindow, ClaudeExtraUsage } from '../../types/quota';
 import type { QuotaLane } from '../quotaWindows/lanes';
-import type { AccountResets, PoolProviderId } from './types';
+import type { AccountResets } from './types';
+
+/** Providers served from prox-history's `/v1/accounts` read model (Antigravity stays hub-direct). */
+export type ServerAccountProvider = 'claude' | 'codex';
 
 /**
  * Public contract of `GET /v1/accounts`: prox-history's per-account read model for Claude and
@@ -24,7 +27,7 @@ export interface ServerAccount {
   /** `${instanceId}:${provider}:${sha256}`, which a browser builds from a source and auth index. */
   sourceAccountId: string | null;
   instanceId: string | null;
-  provider: PoolProviderId;
+  provider: ServerAccountProvider;
   disabled: boolean;
   /**
    * `disabled` serves the last stored weekly/five-hour sample, aged by `observedAtMs`; the

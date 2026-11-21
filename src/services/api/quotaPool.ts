@@ -1,4 +1,4 @@
-import type { PoolDashboard, PoolProviderId } from '@/domain/quotaPool/types';
+import type { PoolDashboard, ResetProviderId } from '@/domain/quotaPool/types';
 import { apiClient } from './client';
 
 export interface PoolQuery {
@@ -16,7 +16,7 @@ export interface ResetEventView {
   id: number;
   /** The server's stored account id (a pool row's `id`). */
   accountId: string;
-  provider: PoolProviderId;
+  provider: ResetProviderId;
   /** Claude: session, weekly, fable or full. Codex: `codex_rate_limits`. */
   kind: string;
   outcome: string;
@@ -50,7 +50,7 @@ export function createQuotaPoolApi() {
     /** Spend one reset through the server, which records it (POST /v1/resets/claim). */
     claimReset: (body: { accountId: string; clientRequestId: string; grantId?: string }) =>
       client.post<ResetClaimResponse>('/prox/resets/claim', body),
-    resetEvents: (provider: PoolProviderId, signal: AbortSignal) =>
+    resetEvents: (provider: ResetProviderId, signal: AbortSignal) =>
       client.get<{ events: ResetEventView[] }>('/prox/resets/events', {
         params: { provider },
         signal,
