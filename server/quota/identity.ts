@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { PoolProviderId } from '../../src/domain/quotaPool/types';
+import type { PoolProviderId, ResetProviderId } from '../../src/domain/quotaPool/types';
 
 /** The legacy digest is retained so attribution never rewrites sample foreign keys. */
 export function legacyAccountId(provider: PoolProviderId, authIndex: string): string {
@@ -11,7 +11,7 @@ export function sourceAccountId(instanceId: string, legacyId: string): string {
 }
 
 export interface LegacySourceMapping {
-  provider: PoolProviderId;
+  provider: ResetProviderId;
   instanceId: string;
 }
 

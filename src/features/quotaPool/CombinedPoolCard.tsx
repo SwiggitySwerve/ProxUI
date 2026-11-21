@@ -1,7 +1,8 @@
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatPoolNumber } from './presentation';
-import type { PoolDashboard, PoolProviderId, QuotaPool } from '@/domain/quotaPool/types';
+import type { PoolDashboard, QuotaPool } from '@/domain/quotaPool/types';
+import { isBuiltInPoolProvider } from '@/domain/quotaPool/providers';
 import { poolKey } from './poolOrder';
 import { PoolGraph } from './PoolGraph';
 import { PoolGraphToggle } from './PoolGraphToggle';
@@ -19,7 +20,7 @@ export function CombinedPoolCard({
 }: {
   pools: QuotaPool[];
   dashboard: PoolDashboard;
-  provider: PoolProviderId | 'all';
+  provider: string;
   mode: ChartMode;
   savedData: boolean;
   /** The page's one "Refresh now", beside a partial or stale notice. */
@@ -41,6 +42,10 @@ export function CombinedPoolCard({
   const windowLabel = t(`quota_pool.${dashboard.window === 'weekly' ? 'weekly' : 'five_hour'}`);
   // Count the accounts that hold the total back, as each provider card does.
   const accounts = pools.flatMap((pool) => pool.accounts);
+  const estimatedPlanAccounts = pools
+    .filter((pool) => !isBuiltInPoolProvider(pool.provider))
+    .flatMap((pool) => pool.accounts)
+    .filter((account) => !account.plan.known && !account.disabled && account.status !== 'no-limit');
   const count = (status: (typeof accounts)[number]['status'][]) =>
     accounts.filter((account) => status.includes(account.status)).length;
   // A total with estimated accounts is still shown; its note says so instead of "withheld".
@@ -136,6 +141,14 @@ export function CombinedPoolCard({
       {/* What the selected rate counts, from About these numbers, so the number isn't a guess. */}
       {mode !== 'remaining' && (
         <p className={styles.rateDefinition}>{t(`quota_pool.${mode}_definition`)}</p>
+      )}
+      {total?.series && estimatedPlanAccounts.length > 0 && (
+        <p className={styles.stateNote}>
+          {t('quota_pool.account_count', { count: estimatedPlanAccounts.length })} ·{' '}
+          {t('quota_pool.account_plan_unknown', {
+            points: formatPoolNumber(estimatedPlanAccounts[0].plan.capacityPoints, i18n.language),
+          })}
+        </p>
       )}
       {/* Partial or stale data withholds or estimates the total; say why under the headline, as the provider cards do. */}
       {(headline === null || estimated > 0) &&

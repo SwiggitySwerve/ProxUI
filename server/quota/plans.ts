@@ -1,4 +1,6 @@
-import type { PoolProviderId } from '../../src/domain/quotaPool/types';
+import type { PoolProfile } from '../../src/domain/providerCatalog';
+import { isBuiltInPoolProvider } from '../../src/domain/quotaPool/providers';
+import type { BuiltInPoolProviderId, PoolProviderId } from '../../src/domain/quotaPool/types';
 import { isRecord } from '../../src/utils/helpers';
 import { normalizePlanType, parseCodexUsagePayload } from '../../src/utils/quota/parsers';
 import { parseAntigravitySubscriptionSummary } from '../../src/services/api/antigravitySubscription';
@@ -12,7 +14,10 @@ import { parseAntigravitySubscriptionSummary } from '../../src/services/api/anti
  * Antigravity reports it as `g1-ultra-tier` or `g1-ultra-lite-tier`, both named "Google AI Ultra".
  * Unknown plans count as one unit and are marked unknown.
  */
-const PLANS: Record<PoolProviderId, Record<string, { multiplier: number; label: string }>> = {
+const PLANS: Record<
+  BuiltInPoolProviderId,
+  Record<string, { multiplier: number; label: string }>
+> = {
   claude: {
     claude_pro: { multiplier: 1, label: 'Pro' },
     default_claude_pro: { multiplier: 1, label: 'Pro' },
@@ -35,13 +40,21 @@ const PLANS: Record<PoolProviderId, Record<string, { multiplier: number; label: 
 };
 
 export const POINTS_PER_UNIT = 100;
+const owns = (record: object, key: string) => Object.prototype.hasOwnProperty.call(record, key);
 
 export function planWeight(
   provider: PoolProviderId,
-  plan: string | null | undefined
+  plan: string | null | undefined,
+  overrides?: PoolProfile['planUnits'],
+  displayName?: string
 ): { multiplier: number; label: string | null; known: boolean } {
-  const entry = plan ? PLANS[provider][plan] : undefined;
-  return entry ? { ...entry, known: true } : { multiplier: 1, label: plan || null, known: false };
+  if (isBuiltInPoolProvider(provider)) {
+    const entry = plan && owns(PLANS[provider], plan) ? PLANS[provider][plan] : undefined;
+    return entry ? { ...entry, known: true } : { multiplier: 1, label: plan || null, known: false };
+  }
+  const key = plan ?? '*';
+  const units = overrides && owns(overrides, key) ? overrides[key] : undefined;
+  return { multiplier: units ?? 1, label: displayName ?? plan ?? null, known: units !== undefined };
 }
 
 /** ChatGPT's usage response names the plan, e.g. "pro" or "promax". */

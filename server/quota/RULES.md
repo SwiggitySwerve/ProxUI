@@ -7,17 +7,17 @@ window conversion belongs to `src/domain/quotaWindows`, shared with the original
 credential UI. The store owns persistence; the collector uses only public APIs.
 
 - Production membership, origins and per-instance key files come only from the
-  validated deployment manifest. A collector pins a copied source list and its
-  revision for its process lifetime; applying another revision requires stopping
-  it and restarting. Stopping aborts in-flight requests and prevents their
-  subsequent writes.
+  validated deployment manifest. `applySources` admits new instance IDs on the
+  next read and records the revision. Existing bindings stay pinned, even when
+  the next manifest omits them or changes their origin or key file reference.
+  Stopping aborts in-flight requests and prevents their subsequent writes.
   Each instance is inventoried once, including all supported Claude/Codex kinds,
   and Antigravity only on an instance that declares `antigravity` (the Gemini hub,
   which therefore has an Antigravity pool and no Claude or Codex ones). Other kinds
-  never trigger adapters, downloads or inference. An instance whose declared
-  providers include none of the three is not a quota source: it is never read and
-  has no pools, issues or inventory status. Pools exist only for the providers a
-  source is collected for (`QuotaSourceView.providers`).
+  use a normalized reader only when a fresh provider catalog reports them active
+  with a supported reader. Full collections and inventory sync probe the catalog
+  on each instance. A 404, failed probe or malformed response preserves the last
+  catalog and skips generic account retirement and polling for that read.
 - Antigravity (Gemini) quota is `retrieveUserQuotaSummary` for the credential's
   `project_id` from the inventory, posted through `/requests/api-call` to the same
   endpoints, in the same order, as the hub-direct card. Only the "Gemini Models"
@@ -25,7 +25,8 @@ credential UI. The store owns persistence; the collector uses only public APIs.
   group is shown as its own model-lane window. It has no resets: claims are refused
   before anything is sent, and `/v1/accounts` leaves its accounts out (its cards
   stay hub-direct). Databases from before it are migrated once: `quota_accounts`
-  is rebuilt to allow the provider, keeping every row and reference.
+  is rebuilt to allow open provider IDs, keeping every row and reference. The
+  same migration applies to databases that already allow Antigravity.
 - Identity and complete-inventory retirement belong to an instance/provider pair.
   Failed, incomplete or malformed inventories retire nothing in that instance;
   another instance continues independently. Issues carry their owning instance.
@@ -51,6 +52,8 @@ credential UI. The store owns persistence; the collector uses only public APIs.
   retired account is purged 24 hours after `retiredAtMs`: absence alone (an unmounted auth
   directory looks the same) is not proof of intent. The collector forgets a retired account's
   in-memory readings, aborts its polls and persists nothing for an account that is no longer live.
+  A delete sync with an `instanceId` matches deleted names only on that hub, including when
+  multiple syncs are queued together. Callers that omit it retain the old all-source behavior.
 - Dashboard arithmetic runs separately for each instance/provider using the same
   source-local rules below. Equal emails, filenames or auth indices do not merge
   occurrences. Multiple same-provider sources expose unavailable combined values
@@ -81,6 +84,19 @@ credential UI. The store owns persistence; the collector uses only public APIs.
   "No 5-hour limit" like Quota Management.
 - Weekly and five-hour windows are separate. Model-scoped, monthly, dollar and
   reset-credit balances are not added to those pools.
+- `GET /v1/pools` shows providers with no credentials as `awaitingAuth` and generic
+  credential accounts as `unpooled` until an operator enables a profile on that
+  instance. Neither section contributes to combined totals. The collector sends
+  only the auth index to the hub's normalized quota endpoint. Latest generic
+  windows stay in memory. Only selected account-wide buckets enter pooled history.
+  Each sample keeps its bucket ID so changing the mapping preserves the old rows
+  without mixing two limits. A lane left unset has no contribution. Plan weights
+  use the operator's per-plan overrides, with `*` reserved for a missing plan ID.
+  Without an override the reading counts as 100 points at full capacity and the
+  dashboard flags the plan as unknown. `PUT /v1/pool-profiles` accepts validated
+  account-wide window IDs. `GET` lists the profiles and `DELETE` removes one by
+  its `instanceId` and `provider` query parameters. All three require management
+  authentication.
 - Each account is its own stream and totals aggregate what the streams know (user direction,
   16 Nov 2026: per-stream collection, fault-tolerant aggregation). An account whose sample is
   older than 15 minutes, or whose poll failed, is `stale`/`error` and never 0: in the pool total

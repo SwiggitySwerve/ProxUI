@@ -28,6 +28,8 @@ function fixture() {
     latestSamples: () => [],
     firstSampleAtMs: () => null,
     firstSampleTimes: () => new Map(),
+    listProviderCatalog: () => [],
+    listPoolProfiles: () => [],
   } as unknown as QuotaStore;
   const collector = {
     refreshing: false,

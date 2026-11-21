@@ -5,7 +5,7 @@ import { cleanupHarnesses, deferred, file, harness, NOW, until } from './helpers
 afterEach(cleanupHarnesses);
 
 describe('inventory-only sync', () => {
-  test('reads only the credential lists and never calls a usage endpoint', async () => {
+  test('reads catalogs and credential lists and never calls a usage endpoint', async () => {
     const h = harness();
     h.lists['codex-primary'] = [file('codex', 'a'), file('codex', 'b')];
     h.lists['claude-primary'] = [file('claude', 'c')];
@@ -13,7 +13,9 @@ describe('inventory-only sync', () => {
     expect(change.added).toHaveLength(3);
     expect(h.calls.map((call) => `${call.instanceId} ${call.path}`).sort()).toEqual([
       'claude-primary /credentials',
+      'claude-primary /providers',
       'codex-primary /credentials',
+      'codex-primary /providers',
     ]);
     expect(h.store.listAccounts().map((account) => account.retired)).toEqual([false, false, false]);
     expect(h.collector.inventorySyncedAtMs).toBe(NOW);

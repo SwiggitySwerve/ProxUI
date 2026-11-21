@@ -218,6 +218,111 @@ $pool-error: #ff5252;
   object-fit: contain;
   flex-shrink: 0;
 }
+.providerMonogram {
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--pool-accent) 18%, var(--bg-secondary));
+  color: var(--pool-accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+.discovered {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+}
+.discoveredCard {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+}
+.discoveredHeading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+
+  h3 {
+    margin: 0;
+    font-size: inherit;
+    overflow-wrap: anywhere;
+  }
+  small {
+    color: var(--text-secondary);
+    font-size: inherit;
+    font-weight: 400;
+  }
+}
+.discoveredAccounts {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+
+  p span,
+  dt {
+    color: var(--text-secondary);
+  }
+  dl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+  }
+  dl div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px;
+  }
+  dd {
+    font-variant-numeric: tabular-nums;
+  }
+}
+.profileDetails {
+  margin-top: 4px;
+
+  summary {
+    width: fit-content;
+    padding-block: 10px;
+    cursor: pointer;
+  }
+}
+.profileForm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 12px;
+  padding-block: 4px 8px;
+
+  label {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+  select,
+  input {
+    width: 100%;
+  }
+  input {
+    min-height: 44px;
+    padding-inline: 10px;
+    border: 1px solid var(--border-primary);
+    border-radius: 10px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+  p {
+    width: 100%;
+  }
+}
 .count {
   color: var(--text-tertiary);
   font-size: 13px;

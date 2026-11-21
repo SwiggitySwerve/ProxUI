@@ -357,7 +357,13 @@ describe('enumerated quota sources', () => {
     await f.collector.refresh();
     expect(
       f.calls
-        .filter((call) => !call.body)
+        .filter((call) => call.url.pathname.endsWith('/credentials'))
+        .map((call) => call.instanceId)
+        .sort()
+    ).toEqual(['source-a', 'source-b', 'source-c']);
+    expect(
+      f.calls
+        .filter((call) => call.url.pathname.endsWith('/providers'))
         .map((call) => call.instanceId)
         .sort()
     ).toEqual(['source-a', 'source-b', 'source-c']);
@@ -380,7 +386,10 @@ describe('enumerated quota sources', () => {
         ]).toContain(call.body.url);
         expect(call.body.authIndex).toBe('same-index');
         expect(Object.keys(call.body).sort()).toEqual(['authIndex', 'header', 'method', 'url']);
-      } else expect(call.url.pathname).toBe('/v8/management/credentials');
+      } else
+        expect(['/v8/management/credentials', '/v8/management/providers']).toContain(
+          call.url.pathname
+        );
     }
     expect(f.calls.filter((call) => call.body)).toHaveLength(7);
     expect(
@@ -640,7 +649,7 @@ describe('enumerated quota sources', () => {
     expect(f.store.listSamples(0, NOW + MANUAL_REFRESH_INTERVAL_MS)).toHaveLength(8);
   });
 
-  test('a source claiming only non-pool providers is never read; an Antigravity one only for Antigravity', async () => {
+  test('a non-pool source without a catalog is only probed; an Antigravity source keeps its pool', async () => {
     const f = fixture();
     const extra = (instanceId: string, providers: string[]) => {
       const managementKeyFile = join(temporary(), `${instanceId}.key`);
@@ -674,7 +683,9 @@ describe('enumerated quota sources', () => {
     });
     cleanups.push(() => collector.stop());
     await collector.refresh();
-    expect(f.calls.some((call) => call.instanceId === 'xai-only')).toBe(false);
+    expect(
+      f.calls.filter((call) => call.instanceId === 'xai-only').map((call) => call.url.pathname)
+    ).toEqual(['/v8/management/providers']);
     // Inventoried, but it lists no Antigravity credential, so no usage API is called there.
     expect(f.calls.filter((call) => call.instanceId === 'antigravity-only' && call.body)).toEqual(
       []
@@ -683,6 +694,7 @@ describe('enumerated quota sources', () => {
       'source-a',
       'source-b',
       'source-c',
+      'xai-only',
       'antigravity-only',
     ]);
     expect(

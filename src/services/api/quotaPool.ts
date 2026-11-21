@@ -1,4 +1,5 @@
-import type { PoolDashboard, ResetProviderId } from '@/domain/quotaPool/types';
+import type { PoolProfile } from '@/domain/providerCatalog';
+import type { PoolDashboard, PoolProfileUpdate, ResetProviderId } from '@/domain/quotaPool/types';
 import { apiClient } from './client';
 
 export interface PoolQuery {
@@ -39,6 +40,8 @@ export function createQuotaPoolApi() {
     connection,
     get: (params: PoolQuery, signal: AbortSignal) =>
       client.get<PoolDashboard>('/prox/pools', { params, signal }),
+    saveProfile: (profile: PoolProfileUpdate, signal: AbortSignal) =>
+      client.put<{ profile: PoolProfile }>('/prox/pool-profiles', profile, { signal }),
     refreshAccount: (accountId: string, signal: AbortSignal) =>
       client.post<{ refreshed: boolean; retryAtMs?: number | null }>(
         '/prox/refresh',

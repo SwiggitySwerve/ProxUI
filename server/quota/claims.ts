@@ -129,6 +129,8 @@ export class ResetClaims {
       throw new ResetClaimRefusal(404, { error: 'Unknown account' });
     if (account.provider === 'antigravity')
       throw new ResetClaimRefusal(400, { error: 'Antigravity accounts have no resets to claim' });
+    if (account.provider !== 'claude' && account.provider !== 'codex')
+      throw new ResetClaimRefusal(400, { error: 'This provider has no supported resets to claim' });
     const resettable: ResettableAccount = { ...account, provider: account.provider };
     if (
       resettable.provider === 'claude' &&
