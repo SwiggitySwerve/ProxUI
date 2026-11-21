@@ -73,6 +73,7 @@ export function ConfigPage() {
     visualParseError,
     visualValidationErrors,
     visualHasPayloadValidationErrors,
+    payloadReplaceDraftInvalid,
     loadVisualValuesFromYaml,
     rebaseVisualValuesFromYaml,
     applyVisualChangesToYaml,
@@ -156,6 +157,14 @@ export function ConfigPage() {
       }
 
       if (nextMode === 'source') {
+        if (payloadReplaceDraftInvalid) {
+          // The draft cannot be written as YAML yet; say so instead of failing the switch.
+          showNotification(
+            t('config_management.visual.validation.payload_replace_blocks_source'),
+            'warning'
+          );
+          return;
+        }
         if (visualDirty) {
           // content may be an earlier local source preview, not a server readback.
           const nextContent = applyVisualChangesToYaml(doc.content, 'draft');
@@ -182,6 +191,7 @@ export function ConfigPage() {
       doc,
       loadVisualValuesFromYaml,
       mode,
+      payloadReplaceDraftInvalid,
       showNotification,
       t,
       visualDirty,
@@ -288,12 +298,7 @@ export function ConfigPage() {
       case 'advanced':
         return <SectionAdvanced {...sectionProps} />;
       case 'payload':
-        return (
-          <SectionPayload
-            {...sectionProps}
-            hasPayloadValidationErrors={visualHasPayloadValidationErrors}
-          />
-        );
+        return <SectionPayload {...sectionProps} />;
     }
   };
 

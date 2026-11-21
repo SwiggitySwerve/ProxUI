@@ -1359,6 +1359,11 @@ export class QuotaCollector {
   }> {
     if (!projectId) return { response: null };
     let lastResponse: unknown = null;
+    // An endpoint can answer 200 without one or both Gemini pool windows (a daily host may
+    // return only the Claude/GPT group). Its answer is kept and the next endpoint is asked for
+    // what is still missing, instead of recording a pool window as missing too early.
+    type Reading = { response: unknown; samples: QuotaSample[]; windows: AccountQuotaWindow[] };
+    let reading = null as Reading | null;
     for (const url of ANTIGRAVITY_QUOTA_URLS) {
       if (signal.aborted) throw new Error('Quota request aborted');
       let response: unknown;
@@ -1378,14 +1383,35 @@ export class QuotaCollector {
       lastResponse = response;
       const body = quotaResponseBody(response);
       if (body === null) continue;
+      let parsed: ReturnType<typeof quotaSamples>;
       try {
-        const parsed = quotaSamples('antigravity', accountId, body, this.now());
-        return { response, ...parsed };
+        parsed = quotaSamples('antigravity', accountId, body, this.now());
       } catch {
         continue;
       }
+      if (reading === null) {
+        reading = { response, samples: parsed.samples, windows: parsed.windows };
+      } else {
+        // The earlier answer stands for what it reported; this one only fills the gaps.
+        const earlier: Reading = reading;
+        const known = new Set(earlier.windows.map((window) => window.id));
+        reading = {
+          response: earlier.response,
+          samples: earlier.samples.map((sample) =>
+            sample.remainingPercent !== null
+              ? sample
+              : (parsed.samples.find((filled) => filled.window === sample.window) ?? sample)
+          ),
+          windows: [
+            ...earlier.windows,
+            ...parsed.windows.filter((window) => !known.has(window.id)),
+          ],
+        };
+      }
+      // quotaSamples always returns both pool windows, null when the answer lacked one.
+      if (reading.samples.every((sample) => sample.remainingPercent !== null)) return reading;
     }
-    return { response: lastResponse };
+    return reading ?? { response: lastResponse };
   }
 
   private async readCatalog(

@@ -177,6 +177,8 @@ export interface CloakInput {
   mode: string;
   strictMode: boolean;
   sensitiveWordsText: string;
+  sensitiveWordsReplace: Record<string, string>;
+  sensitivePatternsReplace: { pattern: string; replacement: string }[];
   cacheUserId: boolean;
 }
 
