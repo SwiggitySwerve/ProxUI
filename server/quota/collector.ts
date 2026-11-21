@@ -9,7 +9,7 @@ import { readFile } from 'node:fs/promises';
 import type { DeploymentSource } from '../../src/domain/providerSources/types';
 import { loadSourceManifest } from '../providerSources/config';
 import { LEGACY_SOURCE_MAPPING, legacyAccountId } from './identity';
-import { parseProviderCatalog } from '../../src/domain/providerCatalog';
+import { parseProviderCatalog, type ProviderCatalog } from '../../src/domain/providerCatalog';
 import { isBuiltInPoolProvider } from '../../src/domain/quotaPool/providers';
 import { discoveredPoolSamples } from './discoveredQuota';
 import type { TFunction } from 'i18next';
@@ -103,6 +103,31 @@ interface CollectionSource {
   upstreamOrigin: string;
   managementKeyFile: string;
   providers: readonly BuiltInPoolProviderId[];
+  /** The manifest's own provider list for this source, when it declares one. */
+  declaredProviders?: readonly string[];
+}
+
+/**
+ * The catalog entries Quota Management shows for one source: every provider with a credential,
+ * and a provider still waiting for one only when it can be signed in to (it has OAuth) and this
+ * source is where it belongs. That is the hub's `accepted_providers` when it declares them;
+ * otherwise the source's declared providers plus plugin providers no other source declares, the
+ * same rule Auth Files uses (src/features/authFiles/awaitingProviders.ts).
+ */
+export function sourceCatalogEntries(
+  catalog: ProviderCatalog,
+  declared: readonly string[],
+  claimedElsewhere: ReadonlySet<string>
+): ProviderCatalog['providers'] {
+  const accepted = catalog.acceptedProviders ? new Set(catalog.acceptedProviders) : null;
+  return catalog.providers.filter((entry) => {
+    if (entry.credentials.total > 0) return true;
+    if (!entry.oauth) return false;
+    return accepted
+      ? accepted.has(entry.id)
+      : declared.includes(entry.id) ||
+          (entry.source === 'plugin' && !claimedElsewhere.has(entry.id));
+  });
 }
 
 /** One live account of its validated source, as handed to `withManagedAccount`. */
@@ -147,7 +172,11 @@ function collectionSource(source: DeploymentSource): CollectionSource {
       ? declared?.includes(id) === true
       : !declared || declared.some((provider) => provider === 'claude' || provider === 'codex')
   );
-  return Object.freeze({ ...source, providers: Object.freeze(providers) });
+  return Object.freeze({
+    ...source,
+    providers: Object.freeze(providers),
+    ...(declared ? { declaredProviders: declared } : {}),
+  });
 }
 
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -167,7 +196,21 @@ function boundedString(value: unknown, max: number): value is string {
   );
 }
 
-function inventory(payload: unknown, provider: PoolProviderId, nowMs: number): InventoryAccount[] {
+/**
+ * The one provider a listed credential is counted under. Default: its runtime provider. A
+ * discovered plugin credential that names its login entry (`oauth_provider`) is counted under that
+ * entry instead, unless its runtime provider is the one with a quota reader (ProxD's fetch uses
+ * the runtime provider), so each credential is one account however the hub catalogues it.
+ */
+type CredentialIdentity = (kind: string, portal: string | null) => string;
+const runtimeIdentity: CredentialIdentity = (kind) => kind;
+
+function inventory(
+  payload: unknown,
+  provider: PoolProviderId,
+  nowMs: number,
+  identityOf: CredentialIdentity = runtimeIdentity
+): InventoryAccount[] {
   if (
     !isRecord(payload) ||
     !Array.isArray(payload.files) ||
@@ -192,13 +235,10 @@ function inventory(payload: unknown, provider: PoolProviderId, nowMs: number): I
     ) {
       throw new Error('Invalid quota inventory');
     }
-    // ProxD catalogues a plugin credential under its login entry (`oauth_provider`) when that
-    // differs from its runtime provider; discovered providers are grouped the same way.
-    const portal =
-      !isBuiltInPoolProvider(provider) && boundedString(file.oauth_provider, 64)
-        ? file.oauth_provider.toLowerCase()
-        : null;
-    if ((portal ?? kind) !== provider) continue;
+    const portal = boundedString(file.oauth_provider, 64)
+      ? file.oauth_provider.toLowerCase()
+      : null;
+    if (identityOf(kind, portal) !== provider) continue;
     if (
       !boundedString(file.auth_index, 256) ||
       !boundedString(file.name, 1024) ||
@@ -1389,7 +1429,16 @@ export class QuotaCollector {
       return null;
     if (seq !== undefined) {
       if (seq < (this.appliedCatalogSeq.get(instanceId) ?? 0)) return null;
-      this.store.replaceProviderCatalog(instanceId, catalog.providers, this.now());
+      const elsewhere = new Set(
+        this.collectionSources.flatMap((other) =>
+          other.instanceId === instanceId ? [] : (other.declaredProviders ?? [])
+        )
+      );
+      this.store.replaceProviderCatalog(
+        instanceId,
+        sourceCatalogEntries(catalog, source.declaredProviders ?? [], elsewhere),
+        this.now()
+      );
       this.appliedCatalogSeq.set(instanceId, seq);
     }
     return catalog;
@@ -1429,10 +1478,14 @@ export class QuotaCollector {
     }
     if (!readers.size) return { key, groups: [] };
     const payload = await this.request(source, 'credentials', key, signal);
+    const identityOf: CredentialIdentity = (kind, portal) =>
+      portal && !isBuiltInPoolProvider(kind) && readers.get(kind) !== true && readers.has(portal)
+        ? portal
+        : kind;
     const groups: InventoryGroup[] = [...readers].map(([provider, poll]) => ({
       provider,
       poll,
-      accounts: inventory(payload, provider, this.now()),
+      accounts: inventory(payload, provider, this.now(), identityOf),
     }));
     return { key, groups };
   }

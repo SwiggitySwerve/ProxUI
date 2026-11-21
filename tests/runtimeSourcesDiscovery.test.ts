@@ -95,6 +95,9 @@ function options(fetcher: typeof fetch, extra: Partial<ResolveOptions> = {}): Re
 const instances = (...entries: Record<string, unknown>[]) =>
   parseInstancesFile({ instances: entries });
 const kimi = { id: 'kimi-primary', provider: 'kimi', base_url: 'http://127.0.0.1:8323' };
+/** A run-time hub's public route: its id and a digest of the address it was admitted at. */
+const route = (id: string, origin: string) =>
+  `/${id}-${createHash('sha256').update(origin).digest('hex').slice(0, 8)}`;
 const KIMI = 'http://127.0.0.1:8323';
 const ids = (manifest: SourceManifest) => manifest.sources.map((source) => source.instanceId);
 const outcome = (result: { outcomes: readonly { id: string }[] }, id: string) =>
@@ -170,7 +173,7 @@ describe('effective manifest admission', () => {
     expect(result.manifest.sources.at(-1)).toEqual({
       instanceId: 'kimi-primary',
       label: 'kimi-primary',
-      publicBasePath: '/kimi-primary',
+      publicBasePath: route('kimi-primary', KIMI),
       aliases: [],
       authScope: 'homelab-management',
       // The hub's own list, not the single provider its entry names.
@@ -196,18 +199,20 @@ describe('effective manifest admission', () => {
     expect(result.discovery.sources.at(-1)).toEqual({
       instanceId: 'kimi-primary',
       label: 'kimi-primary',
-      publicBasePath: '/kimi-primary',
+      publicBasePath: route('kimi-primary', KIMI),
       aliases: [],
       authScope: 'homelab-management',
       providers: ['kimi'],
     });
     expect(JSON.stringify(result.discovery)).not.toContain('8323');
     expect(result.routes).toContain(
-      `location ^~ /kimi-primary/v8/management/ {\n  proxy_pass ${KIMI}/v8/management/;\n}`
+      `location ^~ ${route('kimi-primary', KIMI)}/v8/management/ {\n  proxy_pass ${KIMI}/v8/management/;\n}`
     );
     expect(result.routes).toContain(
       'location = /prox/sources.json { alias /etc/nginx/runtime/sources.json; }'
     );
+    // Lets prox-sources-apply see which revision the live Nginx serves.
+    expect(result.routes).toContain(`return 200 "${result.revision}";`);
   });
 
   test('the order of instances.json does not change the revision', async () => {
@@ -225,6 +230,13 @@ describe('effective manifest admission', () => {
     );
     expect(ids(forward.manifest).slice(2)).toEqual(['kimi-primary', 'lima']);
     expect(reversed.revision).toBe(forward.revision);
+  });
+
+  test('a hub may own provider ids that use the catalog slug rule', async () => {
+    const { fetcher } = network({ [KIMI]: catalog('kimi-primary', ['orbit_reader', '9lives']) });
+    const result = await resolveEffectiveManifest(base(), instances(kimi), options(fetcher));
+    expect(outcome(result, 'kimi-primary')?.state).toBe('admitted');
+    expect(result.manifest.sources.at(-1)?.providers).toEqual(['orbit_reader', '9lives']);
   });
 
   test('a hub without accepted_providers owns the provider its entry names', async () => {
@@ -331,21 +343,11 @@ describe('effective manifest admission', () => {
     expect(outcome(second, 'kimi-primary')?.state).toBe('rejected');
   });
 
-  test('baked sources win on id and on public path, without a probe', async () => {
+  test('baked sources win on id, without a probe', async () => {
     const moved = { id: 'claude-primary', provider: 'kimi', base_url: KIMI };
-    const pathClash = { id: 'codex', provider: 'kimi', base_url: KIMI };
-    const { fetcher, calls } = network({ [KIMI]: catalog('codex') });
-    const result = await resolveEffectiveManifest(
-      base(),
-      instances(moved, pathClash),
-      options(fetcher)
-    );
+    const { fetcher, calls } = network({ [KIMI]: catalog('claude-primary') });
+    const result = await resolveEffectiveManifest(base(), instances(moved), options(fetcher));
     expect(outcome(result, 'claude-primary')).toEqual({ id: 'claude-primary', state: 'base' });
-    expect(outcome(result, 'codex')).toEqual({
-      id: 'codex',
-      state: 'rejected',
-      reason: 'Duplicate source route',
-    });
     expect(calls).toEqual([]);
     expect(result.manifest).toEqual(base());
   });
@@ -418,18 +420,55 @@ describe('last-known-good membership', () => {
     expect(result.manifest).toEqual(base());
   });
 
-  test('an admitted hub keeps its address; a moved entry is not probed', async () => {
+  test('a hub at a new address gets a new route, so old sessions cannot follow it', async () => {
     const previous = await admitted();
     const moved = { ...kimi, base_url: 'http://127.0.0.1:8499' };
-    const { fetcher, calls } = network({ [moved.base_url]: catalog('kimi-primary', ['kimi']) });
+    const { fetcher } = network({ [moved.base_url]: catalog('kimi-primary', ['kimi']) });
     const result = await resolveEffectiveManifest(
       base(),
       instances(moved),
       options(fetcher, { previous })
     );
-    expect(calls).toEqual([]);
-    expect(outcome(result, 'kimi-primary')?.state).toBe('retained');
-    expect(result.manifest).toEqual(previous);
+    expect(outcome(result, 'kimi-primary')?.state).toBe('admitted');
+    const paths = (manifest: SourceManifest) =>
+      manifest.sources.filter((s) => s.instanceId === 'kimi-primary').map((s) => s.publicBasePath);
+    expect(paths(previous)).toEqual([route('kimi-primary', KIMI)]);
+    expect(paths(result.manifest)).toEqual([route('kimi-primary', moved.base_url)]);
+    expect(route('kimi-primary', KIMI)).not.toBe(route('kimi-primary', moved.base_url));
+  });
+
+  test('a healthy member cannot take a provider another healthy member holds', async () => {
+    const lima = { id: 'lima', provider: 'lima', base_url: 'http://127.0.0.1:8400' };
+    const first = await resolveEffectiveManifest(
+      base(),
+      instances(kimi, lima),
+      options(
+        network({ [KIMI]: catalog('kimi-primary', ['kimi']), [lima.base_url]: catalog('lima') })
+          .fetcher
+      )
+    );
+    // Both answer; lima, listed first, now also claims kimi.
+    const result = await resolveEffectiveManifest(
+      base(),
+      instances(lima, kimi),
+      options(
+        network({
+          [KIMI]: catalog('kimi-primary', ['kimi']),
+          [lima.base_url]: catalog('lima', ['lima', 'kimi']),
+        }).fetcher,
+        { previous: first.manifest }
+      )
+    );
+    expect(outcome(result, 'kimi-primary')?.state).toBe('admitted');
+    expect(outcome(result, 'lima')).toEqual({
+      id: 'lima',
+      state: 'retained',
+      reason: 'Provider declared by more than one source',
+    });
+    const providers = (id: string) =>
+      result.manifest.sources.find((source) => source.instanceId === id)?.providers;
+    expect(providers('kimi-primary')).toEqual(['kimi']);
+    expect(providers('lima')).toEqual(['lima']);
   });
 
   test('an offline member keeps its provider against a healthy member listed first', async () => {
@@ -493,7 +532,8 @@ describe('prox-sources-apply', () => {
       hubs,
       validate: async (_staging: string) => {},
       reload: async () => {},
-      verify: async (_admitted: readonly { instanceId: string }[]) => {},
+      verify: async (_revision: string, _added: readonly { instanceId: string }[]) => {},
+      seed: false,
     };
     const run = () =>
       applyRuntimeSources({
@@ -510,10 +550,11 @@ describe('prox-sources-apply', () => {
           steps.push(`reload:${existsSync(join(runtimeDir, 'sources.json'))}`);
           await state.reload();
         },
-        verify: async (admitted) => {
-          steps.push(`verify:${admitted.map((source) => source.instanceId).join(',')}`);
-          await state.verify(admitted);
+        verify: async (revision, added) => {
+          steps.push(`verify:${added.map((source) => source.instanceId).join(',')}`);
+          await state.verify(revision, added);
         },
+        seed: state.seed,
       });
     // A leftover staging directory shows up as an entry, so "intact" also means cleaned up.
     const snapshot = (): Record<string, string> =>
@@ -563,7 +604,7 @@ describe('prox-sources-apply', () => {
       expect(staging.startsWith(runtimeDir)).toBe(true);
       staged = readdirSync(staging).sort();
       expect(readFileSync(join(staging, 'provider-routes.conf'), 'utf8')).toContain(
-        '/kimi-primary/'
+        `${route('kimi-primary', KIMI)}/`
       );
     };
     await run();
@@ -614,7 +655,7 @@ describe('prox-sources-apply', () => {
       throw new Error('reload failed');
     };
     await expect(run()).rejects.toThrow('reload failed');
-    expect(routesDuringReload).toContain('/lima/');
+    expect(routesDuringReload).toContain(`${route('lima', lima.base_url)}/`);
     expect(snapshot()).toEqual(before);
 
     // The next run is not confused by the failed one.
@@ -634,13 +675,40 @@ describe('prox-sources-apply', () => {
     steps.length = 0;
     await expect(run()).rejects.toThrow('does not route');
     // Reloaded onto the new routes, then back onto the previous ones.
-    expect(steps).toEqual([
-      'validate:true',
-      'reload:true',
-      'verify:kimi-primary,lima',
-      'reload:true',
-    ]);
+    // Only the binding new in this run is asked; kimi-primary was verified when it was admitted.
+    expect(steps).toEqual(['validate:true', 'reload:true', 'verify:lima', 'reload:true']);
     expect(snapshot()).toEqual(before);
+  });
+
+  test('an offline hub kept from before does not hold back a new admission', async () => {
+    const { instancesPath, state, steps, run, snapshot } = setup(both);
+    await run();
+    state.hubs = { [lima.base_url]: both[lima.base_url] };
+    writeFileSync(instancesPath, JSON.stringify({ instances: [kimi, lima] }));
+    steps.length = 0;
+    const result = await run();
+    expect(outcome(result, 'kimi-primary')?.state).toBe('retained');
+    expect(steps).toEqual(['validate:true', 'reload:true', 'verify:lima']);
+    expect(snapshot()['sources.json']).toContain('"lima"');
+  });
+
+  test('--seed publishes the baked sources without Nginx, once', async () => {
+    const { state, steps, run, snapshot } = setup(both);
+    state.seed = true;
+    const seeded = await run();
+    expect(steps).toEqual(['validate:false']);
+    expect(seeded.outcomes).toEqual([]);
+    expect(Object.keys(snapshot()).sort()).toEqual([
+      'effective-manifest.json',
+      'provider-routes.conf',
+      'sources.json',
+    ]);
+    expect(snapshot()['sources.json']).not.toContain('kimi-primary');
+    await expect(run()).rejects.toThrow('Already seeded');
+    state.seed = false;
+    steps.length = 0;
+    await run();
+    expect(steps).toEqual(['validate:true', 'reload:true', 'verify:kimi-primary']);
   });
 
   test('a first run whose routes are not served leaves nothing behind', async () => {

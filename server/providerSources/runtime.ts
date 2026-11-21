@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { parseProviderCatalog } from '../../src/domain/providerCatalog/validate';
 import { validateSourceManifest } from '../../src/domain/providerSources/manifest';
@@ -184,7 +185,9 @@ function planCandidate(base: SourceManifest, candidate: HubCandidate): Planned |
   const source = {
     instanceId: candidate.id,
     label: candidate.label ?? candidate.id,
-    publicBasePath: `/${candidate.id}`,
+    // The route names the binding, not just the hub: a hub re-added at another address gets a
+    // new route, so a browser session opened on the old one can never reach the new upstream.
+    publicBasePath: `/${candidate.id}-${createHash('sha256').update(candidate.upstreamOrigin).digest('hex').slice(0, 8)}`,
     aliases: [],
     upstreamOrigin: candidate.upstreamOrigin,
   };
@@ -257,14 +260,6 @@ export async function resolveEffectiveManifest(
       .map(async (candidate) => {
         const plan = planCandidate(base, candidate);
         if (typeof plan === 'string') return { candidate, failure: plan };
-        // An open browser session stays bound to a hub's route, so an admitted hub keeps its address.
-        const was = prior.get(candidate.id);
-        if (was && was.upstreamOrigin !== plan.upstreamOrigin)
-          return {
-            candidate,
-            failure:
-              'An admitted hub keeps its address; remove its entry, apply, then add it again',
-          };
         const failure = conflict(base, base.sources, plan);
         if (failure) return { candidate, failure };
         let key: string;
@@ -302,7 +297,7 @@ export async function resolveEffectiveManifest(
   }
   for (const id of listed) if (baseIds.has(id)) outcomes.push({ id, state: 'base' });
   // Members that failed keep their last-known-good place first, so a healthy hub cannot take a
-  // provider from one that is only offline; then members, then newcomers, are admitted.
+  // provider from one that is only offline; then healthy members, then newcomers.
   for (const { candidate, failure, plan, probe } of probed) {
     if (failure !== undefined) fail(candidate.id, failure);
     else if (probe.state !== 'verified')
@@ -317,6 +312,16 @@ export async function resolveEffectiveManifest(
   const verified = probed
     .filter((entry) => entry.failure === undefined && entry.probe.state === 'verified')
     .sort((a, b) => Number(!prior.has(a.candidate.id)) - Number(!prior.has(b.candidate.id)));
+  // Every healthy member's last-known-good binding is reserved before any claim changes, so a
+  // member changing its claims can never take a provider another member already holds.
+  const reserved = new Map<string, DeploymentSource>();
+  for (const { candidate } of verified) {
+    const kept = prior.get(candidate.id);
+    if (kept && conflict(base, sources, kept) === null) {
+      sources.push(kept);
+      reserved.set(candidate.id, kept);
+    }
+  }
   for (const { candidate, plan, probe } of verified) {
     if (plan === undefined || probe?.state !== 'verified') continue;
     const owned = [
@@ -325,10 +330,17 @@ export async function resolveEffectiveManifest(
       ),
     ];
     const source = { ...plan, ...(owned.length ? { providers: owned } : {}) };
-    const taken = conflict(base, sources, source);
-    if (taken) fail(candidate.id, taken);
+    const kept = reserved.get(candidate.id);
+    const taken = conflict(
+      base,
+      sources.filter((entry) => entry !== kept),
+      source
+    );
+    if (taken && kept) outcomes.push({ id: candidate.id, state: 'retained', reason: taken });
+    else if (taken) fail(candidate.id, taken);
     else {
-      sources.push(source);
+      if (kept) sources.splice(sources.indexOf(kept), 1, source);
+      else sources.push(source);
       outcomes.push({ id: candidate.id, state: 'admitted' });
     }
   }

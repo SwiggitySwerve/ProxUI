@@ -14,6 +14,12 @@ export function generateSourceRoutes(
       ? `location = /prox/sources.json { alias ${discoveryFile}; }\n`
       : 'location = /prox/sources.json { try_files /prox/sources.json =404; }\n'
   );
+  // Run-time routes say which revision Nginx is serving, so prox-sources-apply can confirm a
+  // reload took effect without depending on any hub being up.
+  if (discoveryFile)
+    routes.push(
+      `location = /prox/routes-revision {\n  default_type text/plain;\n  return 200 "${revision}";\n}\n`
+    );
   for (const source of manifest.sources) {
     for (const base of [source.publicBasePath, ...source.aliases]) {
       routes.push(

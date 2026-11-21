@@ -1,3 +1,4 @@
+import { isValidProviderId } from '@/domain/providerCatalog/types';
 import { containsControlCharacters } from '@/utils/helpers';
 import type { DeploymentSource, PublicSource, SourceDiscovery, SourceManifest } from './types';
 
@@ -67,9 +68,10 @@ function providers(value: unknown): readonly string[] {
   if (!Array.isArray(value) || !value.length) throw new Error('Invalid source providers');
   return Object.freeze(
     value.map((entry) => {
-      const result = id(entry);
-      if (result === 'anthropic') throw new Error('Source providers use the credential type');
-      return result;
+      // Provider ids follow the catalog's slug rule (underscores allowed), not the instance rule.
+      if (!isValidProviderId(entry)) throw new Error('Invalid source identifier');
+      if (entry === 'anthropic') throw new Error('Source providers use the credential type');
+      return entry;
     })
   );
 }

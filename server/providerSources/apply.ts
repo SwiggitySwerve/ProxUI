@@ -25,10 +25,17 @@ export interface ApplyOptions extends Omit<ResolveOptions, 'previous' | 'discove
   /** Makes the running Nginx load the routes; rejects when it did not. */
   readonly reload: () => Promise<void>;
   /**
-   * Resolves once the running Nginx routes each run-time hub to the instance it was admitted as
-   * (a reload is acknowledged before the workers switch); rejects when it does not in time.
+   * Resolves once the running Nginx serves `revision` (a reload is acknowledged before the
+   * workers switch) and routes each binding in `added`, the run-time hubs new in this revision,
+   * to the instance it was admitted as; rejects when it does not in time. Hubs kept from before
+   * are not asked, so one that is offline cannot hold back another's admission.
    */
-  readonly verify: (admitted: readonly DeploymentSource[]) => Promise<void>;
+  readonly verify: (revision: string, added: readonly DeploymentSource[]) => Promise<void>;
+  /**
+   * First run only: publish the baked sources alone, without touching Nginx, so the directory can
+   * be mounted before any hub is admitted. Refused once a manifest has been published.
+   */
+  readonly seed?: boolean;
 }
 
 export interface ApplyResult {
@@ -59,7 +66,11 @@ export async function applyRuntimeSources(options: ApplyOptions): Promise<ApplyR
   const published = await readOptional(live(EFFECTIVE_MANIFEST));
   const previous =
     published === null ? null : describeSourceManifest(JSON.parse(published)).manifest;
-  const instances = parseInstancesFile(JSON.parse(await readFile(options.instancesPath, 'utf8')));
+  if (options.seed && published !== null)
+    throw new Error('Already seeded; run without --seed to apply instances.json');
+  const instances = options.seed
+    ? { candidates: [], rejected: [] }
+    : parseInstancesFile(JSON.parse(await readFile(options.instancesPath, 'utf8')));
   const resolved = await resolveEffectiveManifest(base, instances, {
     ...options,
     previous,
@@ -86,6 +97,12 @@ export async function applyRuntimeSources(options: ApplyOptions): Promise<ApplyR
       await chmod(staged(name), mode);
     }
     await options.validate(staging);
+    if (options.seed) {
+      // Nothing serves the directory yet: no reload, nothing to verify.
+      for (const name of [RUNTIME_ROUTES, EFFECTIVE_MANIFEST, RUNTIME_DISCOVERY])
+        await rename(staged(name), live(name));
+      return { ...result, changed: true };
+    }
     const [previousManifest, previousRoutes] = current;
     /** Puts a live file back as it was before this run (absent stays absent). */
     const restore = async (name: string, content: string | null, mode: number) => {
@@ -98,9 +115,12 @@ export async function applyRuntimeSources(options: ApplyOptions): Promise<ApplyR
     try {
       await options.reload();
       reloaded = true;
-      const baked = new Set(base.sources.map((source) => source.instanceId));
+      const binding = (source: DeploymentSource) =>
+        JSON.stringify([source.instanceId, source.publicBasePath, source.upstreamOrigin]);
+      const known = new Set([...base.sources, ...(previous?.sources ?? [])].map(binding));
       await options.verify(
-        resolved.manifest.sources.filter((source) => !baked.has(source.instanceId))
+        resolved.revision,
+        resolved.manifest.sources.filter((source) => !known.has(binding(source)))
       );
       // prox-history follows the manifest and browsers follow discovery, so discovery goes last.
       await rename(staged(EFFECTIVE_MANIFEST), live(EFFECTIVE_MANIFEST));

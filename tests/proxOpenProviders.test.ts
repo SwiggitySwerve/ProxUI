@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHandler } from '../server/app';
 import { ResetClaims } from '../server/quota/claims';
-import { QuotaCollector } from '../server/quota/collector';
+import { QuotaCollector, sourceCatalogEntries } from '../server/quota/collector';
 import { decodeNormalizedQuota } from '../src/domain/quotaWindows/normalized';
 import { QuotaStore } from '../server/quota/store';
 import { HOUR_MS, MANUAL_REFRESH_INTERVAL_MS } from '../server/quota/types';
@@ -174,7 +174,8 @@ function entry(
     pluginId: id,
     logo: null,
     lifecycle,
-    oauth: null,
+    // A login plugin: its waiting card can offer Connect.
+    oauth: { flow: 'browser', aliases: [], manualCallback: true, webui: true, domains: [] },
     credentials: {
       total: lifecycle === 'awaiting_auth' ? 0 : 1,
       active: lifecycle === 'active' ? 1 : 0,
@@ -339,6 +340,59 @@ function fixture(initial: readonly string[] = ['hub-a']) {
 }
 
 describe('discovery and additive collection', () => {
+  test('waiting cards: only what this source can sign in to and owns', () => {
+    const awaiting = (id: string, extra: Partial<ProviderCatalogEntry> = {}) => ({
+      ...entry(id, 'awaiting_auth'),
+      ...extra,
+    });
+    const catalog = {
+      schemaVersion: 1 as const,
+      instanceId: 'hub-a',
+      acceptedProviders: null,
+      providers: [
+        awaiting(PROVIDER),
+        // A built-in this source does not declare (every hub lists every built-in).
+        awaiting('kimi', { source: 'builtin' }),
+        awaiting('codex', { source: 'builtin' }),
+        // Another source declares this plugin provider.
+        awaiting(OTHER_PROVIDER),
+        // Nothing to sign in to.
+        awaiting('quota-only', { oauth: null }),
+        // A provider with a credential always stays.
+        entry('with-credential', 'active'),
+      ],
+    };
+    const ids = (entries: readonly ProviderCatalogEntry[]) => entries.map(({ id }) => id);
+    expect(ids(sourceCatalogEntries(catalog, ['codex'], new Set([OTHER_PROVIDER])))).toEqual([
+      PROVIDER,
+      'codex',
+      'with-credential',
+    ]);
+    // A hub that declares its providers gets exactly those.
+    expect(
+      ids(sourceCatalogEntries({ ...catalog, acceptedProviders: ['kimi'] }, ['codex'], new Set()))
+    ).toEqual(['kimi', 'with-credential']);
+  });
+
+  test('a credential whose runtime provider has the reader is one account under that provider', async () => {
+    const f = fixture();
+    try {
+      // The hub lists both the login entry (no reader) and the runtime provider (the reader).
+      f.catalog('hub-a', entry(PROVIDER, 'active', false), entry('orbit-runtime'));
+      f.credentials.set('hub-a', [
+        { ...credential('orbit-runtime'), oauth_provider: PROVIDER } as ReturnType<
+          typeof credential
+        >,
+      ]);
+      await f.collector.refresh();
+      const accounts = f.store.listAccounts().filter((account) => !account.retired);
+      expect(accounts.map(({ provider }) => provider)).toEqual(['orbit-runtime']);
+      expect(f.calls.filter(({ path }) => path.endsWith('/quota/fetch'))).toHaveLength(1);
+    } finally {
+      f.close();
+    }
+  });
+
   test('a plugin credential is collected under its login entry, even while it needs attention', async () => {
     const f = fixture();
     try {

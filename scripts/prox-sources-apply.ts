@@ -42,22 +42,31 @@ const PROX_ORIGIN = 'http://127.0.0.1:18318';
 const VERIFY_DEADLINE_MS = 15_000;
 
 /**
- * Asks the running Nginx, through each admitted hub's public route, who answers there; retries
- * until every route reaches its instance or the deadline passes.
+ * Waits until the running Nginx serves `revision`, then asks it, through each new binding's public
+ * route, who answers there; retries until all match or the deadline passes.
  */
 function verifyRoutes(keyFile: string) {
-  return async (admitted: readonly DeploymentSource[]): Promise<void> => {
-    if (!admitted.length) return;
+  return async (revision: string, added: readonly DeploymentSource[]): Promise<void> => {
     const key = (await readFile(keyFile, 'utf8')).trim();
+    const get = (path: string, auth: boolean) =>
+      fetch(`${PROX_ORIGIN}${path}`, {
+        headers: auth ? { Authorization: `Bearer ${key}` } : {},
+        redirect: 'error',
+        signal: AbortSignal.timeout(3_000),
+      });
+    const serving = async () => {
+      try {
+        const response = await get('/prox/routes-revision', false);
+        return response.ok && (await response.text()).trim() === revision;
+      } catch {
+        return false;
+      }
+    };
     const routed = async (source: DeploymentSource) => {
       try {
-        const response = await fetch(
-          `${PROX_ORIGIN}${source.publicBasePath}${MANAGEMENT_API_PREFIX}/providers`,
-          {
-            headers: { Authorization: `Bearer ${key}` },
-            redirect: 'error',
-            signal: AbortSignal.timeout(3_000),
-          }
+        const response = await get(
+          `${source.publicBasePath}${MANAGEMENT_API_PREFIX}/providers`,
+          true
         );
         const body: unknown = response.ok ? await response.json() : null;
         return (
@@ -70,13 +79,21 @@ function verifyRoutes(keyFile: string) {
       }
     };
     const deadline = Date.now() + VERIFY_DEADLINE_MS;
-    let pending = [...admitted];
-    while (pending.length) {
-      const results = await Promise.all(pending.map(routed));
-      pending = pending.filter((_, index) => !results[index]);
-      if (!pending.length) return;
+    let live = false;
+    let pending = [...added];
+    for (;;) {
+      live ||= await serving();
+      if (live) {
+        const results = await Promise.all(pending.map(routed));
+        pending = pending.filter((_, index) => !results[index]);
+        if (!pending.length) return;
+      }
       if (Date.now() > deadline)
-        throw new Error(`Nginx does not route ${pending.map((s) => s.instanceId).join(', ')}`);
+        throw new Error(
+          live
+            ? `Nginx does not route ${pending.map((s) => s.instanceId).join(', ')}`
+            : `Nginx is not serving routes revision ${revision}`
+        );
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
   };
@@ -89,6 +106,7 @@ if (import.meta.main) {
       instances: { type: 'string' },
       'runtime-dir': { type: 'string' },
       'history-key-file': { type: 'string' },
+      seed: { type: 'boolean' },
     },
   });
   const home = homedir();
@@ -114,6 +132,7 @@ if (import.meta.main) {
       validate: validateStaged,
       reload: reloadNginx,
       verify: verifyRoutes(historyKeyFile),
+      seed: values.seed ?? false,
     });
     for (const { id, state, reason } of result.outcomes)
       console.log(`${id}: ${state}${reason ? ` (${reason})` : ''}`);
