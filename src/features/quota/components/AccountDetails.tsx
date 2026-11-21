@@ -15,7 +15,11 @@ import { formatPoolDate } from '@/features/quotaPool/presentation';
 import type { QuotaCardState } from '../providers';
 import type { QuotaProviderType } from '../providers/types';
 import type { useClaudeResetGrants } from '../providers/claude/ClaudeResetGrants';
-import { claudeResetGrantName, remainingClaudeResetGrants } from '../providers/claude/presentation';
+import {
+  claudeResetGrantName,
+  groupClaudeResetGrants,
+  remainingClaudeResetGrants,
+} from '../providers/claude/presentation';
 import { ClaudeBalanceFacts } from './ClaudeBalanceFacts';
 import { formatMetric } from '../providers/plugin/presentation';
 import { formatUsdFromCents, formatXaiProductPercent } from '../providers/xai/presentation';
@@ -28,6 +32,8 @@ type Props = {
   name: string;
   claudeReset?: ReturnType<typeof useClaudeResetGrants>;
   reset?: { disabled: boolean; onClick: () => void };
+  /** The account is switched off: its resets are shown but cannot be used. */
+  accountOff?: boolean;
   /** Starts expanded; the user can still collapse it. */
   defaultOpen?: boolean;
   /**
@@ -36,6 +42,11 @@ type Props = {
    * height on every card. The host places this element and gives it its rows.
    */
   rows?: boolean;
+  /**
+   * A card's tight layout: label and value on one line, the held count beside the reset status,
+   * one row per reset grant and the unreported balances named once. Nothing is left out.
+   */
+  compact?: boolean;
 };
 
 /** Both quota hosts use this one disclosure and the same fact states. */
@@ -45,8 +56,10 @@ export function AccountDetails({
   name,
   claudeReset,
   reset,
+  accountOff = false,
   defaultOpen,
   rows,
+  compact = false,
 }: Props) {
   const { t, i18n } = useTranslation();
   const now = useNow();
@@ -69,13 +82,19 @@ export function AccountDetails({
   const xai = provider === 'xai' && quota ? (quota as XaiQuotaState).billing : null;
   const plugin = provider === 'plugin' && quota ? (quota as PluginQuotaState) : null;
   const held = codex ? codex.rateLimitResetCreditsAvailableCount : claudeReset?.count;
-  const resetReason = claudeReset
+  const usualResetReason = claudeReset
     ? claudeReset.message
       ? t(`claude_reset.${claudeReset.message}`)
       : claudeReset.busy
         ? t('quota_pool.reset_loading')
         : claudeReset.blocked
-          ? t(held == null ? 'quota_pool.reset_loading' : 'quota_pool.reset_claude_unavailable')
+          ? t(
+              held == null
+                ? claudeReset.served
+                  ? 'quota_pool.reset_not_reported_reason'
+                  : 'quota_pool.reset_loading'
+                : 'quota_pool.reset_claude_unavailable'
+            )
           : t('quota_pool.reset_usable')
     : held === 0
       ? t('quota_pool.reset_none')
@@ -84,6 +103,8 @@ export function AccountDetails({
         : (held ?? 0) > 0
           ? t('quota_pool.reset_usable')
           : t('quota_pool.reset_not_reported_reason');
+  const resetReason =
+    accountOff && (held ?? 0) > 0 ? t('account_details.reset_account_off') : usualResetReason;
   const resetAction = claudeReset
     ? {
         label: t(
@@ -104,9 +125,13 @@ export function AccountDetails({
           ...reset,
         }
       : undefined;
+  // Compact: the held count joins the status line under the action ("Usable now · 3 held").
+  const heldInNote = compact && resetAction !== undefined && held != null;
   return (
     <details
-      className={rows ? `${styles.details} ${styles.rows}` : styles.details}
+      className={[styles.details, rows && styles.rows, compact && styles.compact]
+        .filter(Boolean)
+        .join(' ')}
       open={defaultOpen}
       style={
         {
@@ -120,7 +145,7 @@ export function AccountDetails({
       }
     >
       <summary>{t('account_details.title')}</summary>
-      <FactPanel>
+      <FactPanel compact={compact}>
         <FactSection title={t('quota_pool.facts_billing')}>
           {(codex || claude) && (
             <BillingFacts
@@ -186,14 +211,23 @@ export function AccountDetails({
           <FactSection
             title={t('quota_pool.resets')}
             tone="accent"
-            {...(resetAction ? { action: resetAction, note: resetReason } : { action: undefined })}
+            {...(resetAction
+              ? {
+                  action: resetAction,
+                  note: heldInNote
+                    ? `${resetReason} · ${t('account_details.held', { count: held })}`
+                    : resetReason,
+                }
+              : { action: undefined })}
           >
-            <Fact
-              label={t('quota_pool.reset_held_label')}
-              {...(held == null
-                ? missing('quota_pool.reset_not_reported_reason')
-                : known(held === 0 ? t('quota_pool.reset_none') : held))}
-            />
+            {!heldInNote && (
+              <Fact
+                label={t('quota_pool.reset_held_label')}
+                {...(held == null
+                  ? missing('quota_pool.reset_not_reported_reason')
+                  : known(held === 0 ? t('quota_pool.reset_none') : held))}
+              />
+            )}
             {codex?.rateLimitResetCredits?.map((credit, index) => (
               <Fact
                 key={credit.id || index}
@@ -208,25 +242,51 @@ export function AccountDetails({
                 reason={codex.rateLimitResetCreditsError}
               />
             )}
-            {remainingClaudeResetGrants(claudeReset?.grants ?? []).map((grant) => (
-              <Fact
-                key={grant.id}
-                label={claudeResetGrantName(grant, t)}
-                {...(parseIsoToMs(grant.endsAt) === null
-                  ? missing('claude_reset.expiry_unknown')
-                  : {
-                      state: 'known',
-                      value: date(parseIsoToMs(grant.endsAt)!),
-                      aside: t('claude_reset.count', {
-                        left: grant.resetsLeft,
-                        total: grant.resetsTotal,
-                      }),
-                    })}
-              />
-            ))}
+            {!compact &&
+              remainingClaudeResetGrants(claudeReset?.grants ?? []).map((grant) => (
+                <Fact
+                  key={grant.id}
+                  label={claudeResetGrantName(grant, t)}
+                  {...(parseIsoToMs(grant.endsAt) === null
+                    ? missing('claude_reset.expiry_unknown')
+                    : {
+                        state: 'known',
+                        value: date(parseIsoToMs(grant.endsAt)!),
+                        aside: t('claude_reset.count', {
+                          left: grant.resetsLeft,
+                          total: grant.resetsTotal,
+                        }),
+                      })}
+                />
+              ))}
+            {/* Compact: a row of kind badge and expiry per group of resets that end together,
+                then one muted line with what is left and the upstream descriptions, cut short
+                with the whole text as its tooltip. */}
+            {compact &&
+              groupClaudeResetGrants(remainingClaudeResetGrants(claudeReset?.grants ?? []), t).map(
+                (row) => {
+                  const left = t('claude_reset.count_short', { left: row.left, total: row.total });
+                  return (
+                    <Fact
+                      key={row.id}
+                      label={
+                        <span className={styles.grantKind} data-kind={row.kind}>
+                          {t(`claude_reset.kind_${row.kind}`)}
+                          {row.count > 1 && ` × ${row.count}`}
+                        </span>
+                      }
+                      note={[left, ...row.descriptions].join(' · ')}
+                      clampNote
+                      {...(row.at === null
+                        ? missing('claude_reset.expiry_unknown')
+                        : { state: 'known', value: date(row.at) })}
+                    />
+                  );
+                }
+              )}
           </FactSection>
         )}
-        {claude && <ClaudeBalanceFacts quota={claude} formatDate={date} />}
+        {claude && <ClaudeBalanceFacts quota={claude} formatDate={date} compact={compact} />}
         {plugin && plugin.summary.length > 0 && (
           <FactSection title={t('account_details.balances')}>
             {plugin.summary.map((metric) => (

@@ -4,6 +4,7 @@
 
 import type {
   ClaudeUsagePayload,
+  CodexAccountCredits,
   CodexUsagePayload,
   KimiUsagePayload,
   XaiBillingPayload,
@@ -41,8 +42,8 @@ export function normalizeQuotaFraction(value: unknown): number | null {
     const trimmed = value.trim();
     if (!trimmed) return null;
     if (trimmed.endsWith('%')) {
-      const parsed = Number(trimmed.slice(0, -1));
-      return Number.isFinite(parsed) ? parsed / 100 : null;
+      const parsed = normalizeNumberValue(trimmed.slice(0, -1));
+      return parsed !== null ? parsed / 100 : null;
     }
   }
   return null;
@@ -168,6 +169,21 @@ export function parseCodexUsagePayload(payload: unknown): CodexUsagePayload | nu
   }
   return null;
 }
+
+export const normalizeCodexAccountCredits = (
+  credits: CodexAccountCredits | null | undefined
+): { balance: string | null; unlimited: boolean } => {
+  const value = credits?.balance;
+  const balance =
+    typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : null;
+  return {
+    balance:
+      balance && /^\d+(?:\.\d+)?$/.test(balance) && Number.isFinite(Number(balance))
+        ? balance
+        : null,
+    unlimited: credits?.unlimited === true,
+  };
+};
 
 export function parseKimiUsagePayload(payload: unknown): KimiUsagePayload | null {
   if (payload === undefined || payload === null) return null;

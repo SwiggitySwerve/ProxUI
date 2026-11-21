@@ -167,17 +167,37 @@ describe('dashboard evidence and privacy', () => {
       dashboard([account()], [sample(now, 50)], { reveal: true }).pools[0].accounts[0].email
     ).toBe('private@example.test');
   });
-  test('missing windows and stale balances are unknown, not zero', () => {
+  test('an account that never reported is unknown, not zero', () => {
     expect(dashboard([account()], []).pools[0].remainingPoints).toBeNull();
+  });
+  test('a stale account adds its last reading to the total, flagged as estimated', () => {
+    // One quiet stream never blanks the total: its last reading stands in, and the pool says so.
     const stale = dashboard([account()], [sample(now - STALE_MS - 1, 50)]).pools[0];
-    expect(stale.remainingPoints).toBeNull();
+    expect(stale.remainingPoints).toBe(50);
+    expect(stale.estimatedCount).toBe(1);
     expect(stale.forecastState).toBe('stale');
     expect(stale.projected).toEqual([]);
   });
-  test('expired windows are unknown until another successful observation', () => {
+  test('a window that reset since the last reading counts as refilled, flagged as estimated', () => {
     const pool = dashboard([account()], [sample(now, 2, { resetAtMs: now })]).pools[0];
-    expect(pool.remainingPoints).toBeNull();
+    expect(pool.remainingPoints).toBe(100);
+    expect(pool.estimatedCount).toBe(1);
     expect(pool.nextResetAtMs).toBeNull();
+  });
+  test('a fresh pool reports no estimates', () => {
+    expect(dashboard([account()], [sample(now, 50)]).pools[0].estimatedCount).toBe(0);
+  });
+  test('fresh and stale streams aggregate; rates come from the streams that have them', () => {
+    const samples = [
+      sample(now - 600_000, 60),
+      sample(now, 50),
+      sample(now - STALE_MS - 600_000, 90, { accountId: 'b' }),
+      sample(now - STALE_MS - 1, 80, { accountId: 'b' }),
+    ];
+    const pool = dashboard([account('a'), account('b')], samples).pools[0];
+    expect(pool.remainingPoints).toBe(50 + 80);
+    expect(pool.estimatedCount).toBe(1);
+    expect(pool.burnPointsPerHour).toBe(60);
   });
   test('missing observations immediately supersede balances and break rate intervals', () => {
     const samples = [sample(now - 600_000, 60), sample(now, 0, { remainingPercent: null })];
@@ -217,10 +237,13 @@ describe('dashboard evidence and privacy', () => {
   });
   test('failed polls count once the latest sample is stale or absent', () => {
     const stale = [sample(now - STALE_MS - 1, 50)];
-    for (const samples of [stale, []]) {
-      const pool = dashboard([account('a', { lastErrorAtMs: now })], samples).pools[0];
+    for (const [samples, total] of [
+      [stale, 50],
+      [[], null],
+    ] as const) {
+      const pool = dashboard([account('a', { lastErrorAtMs: now })], [...samples]).pools[0];
       expect(pool.accounts[0].status).toBe('error');
-      expect(pool.remainingPoints).toBeNull();
+      expect(pool.remainingPoints).toBe(total);
     }
   });
   test('inventory failure preserves uncertainty even when previous quota samples are current', () => {
@@ -276,6 +299,52 @@ describe('dashboard evidence and privacy', () => {
     const samples = [sample(now - HOUR_MS, 0, { remainingPercent: null }), sample(now, 50)];
     const recorded = dashboard([account()], samples).pools[0].recorded;
     expect(recorded.map((p) => p.remainingPoints)).toEqual([null, null, 50]);
+  });
+  describe('an account silent while others report (e.g. disabled for a while)', () => {
+    // One quiet account never blanks the pool: its own readings fill its share of the total.
+    const minutes = 60_000;
+    const steady = Array.from({ length: 25 }, (_, i) => sample(now - 2 * HOUR_MS + i * 5 * minutes, 50));
+    const at = (recorded: { atMs: number; remainingPoints: number | null }[], t: number) =>
+      recorded.find((p) => p.atMs === t)?.remainingPoints;
+    const run = (
+      before: number,
+      after: number,
+      afterPatch: Partial<QuotaSample> = {},
+      beforePatch: Partial<QuotaSample> = {}
+    ) =>
+      dashboard(
+        [account('a'), account('b')],
+        [
+          ...steady,
+          sample(now - 2 * HOUR_MS, before, { accountId: 'b', ...beforePatch }),
+          sample(now, after, { accountId: 'b', ...afterPatch }),
+        ]
+      ).pools[0].recorded;
+    test('is a straight line between its own readings when both sides share a reset cycle', () => {
+      // b read 90, went silent, then read 80 in the same cycle: halfway it held 85.
+      expect(at(run(90, 80), now - HOUR_MS)).toBe(50 + 85);
+    });
+    test('holds its last reading when its balance rose across the gap (a reset was used)', () => {
+      expect(at(run(80, 95), now - HOUR_MS)).toBe(50 + 80);
+    });
+    test('holds its last reading while its cycle has not reset, even if the next one is in a new cycle', () => {
+      expect(at(run(90, 80, { resetAtMs: now + 200 * HOUR_MS }), now - HOUR_MS)).toBe(50 + 90);
+    });
+    test('counts a window that reset during the silence as refilled', () => {
+      // b's cycle ended at now - 90 min with no reading since: the reset restored it to 100%.
+      expect(
+        at(run(10, 95, { resetAtMs: now + 100 * HOUR_MS }, { resetAtMs: now - 90 * minutes }), now - HOUR_MS)
+      ).toBe(50 + 100);
+    });
+    test('an explicit missing observation is still unknown', () => {
+      expect(at(run(90, 0, {}, { remainingPercent: null }), now - HOUR_MS)).toBeNull();
+    });
+    test('the current total takes its last reading too, and says it is an estimate', () => {
+      const data = dashboard([account('a'), account('b')], [...steady, sample(now - 2 * HOUR_MS, 90, { accountId: 'b' })]);
+      expect(data.pools[0].remainingPoints).toBe(50 + 90);
+      expect(data.pools[0].estimatedCount).toBe(1);
+      expect(data.pools[0].projected).toEqual([]);
+    });
   });
   test('an account added later joins the history at its first sample instead of blanking it', () => {
     const minutes = 60_000;
@@ -389,6 +458,102 @@ describe('accounts without a five-hour limit', () => {
       }
     ).pools[0];
     expect(pool.accounts[0].status).toBe('stale');
+  });
+});
+
+describe('Codex accounts whose provider reports only a weekly window', () => {
+  const codex = (id: string, patch: Partial<StoredAccount> = {}) =>
+    account(id, { provider: 'codex', plan: 'pro', ...patch });
+  // One successful read writes both lanes at the same instant: the weekly balance, and a null
+  // five-hour sample when the payload has no five-hour window.
+  const weekly = (accountId: string, at = now) => sample(at, 17, { accountId, periodHours: 168 });
+  const missingFiveHour = (accountId: string, at = now) =>
+    sample(at, 0, {
+      accountId,
+      window: 'five-hour',
+      remainingPercent: null,
+      resetAtMs: null,
+      periodHours: null,
+    });
+  const fiveHour = (accountId: string, remaining: number, at = now) =>
+    sample(at, remaining, { accountId, window: 'five-hour', periodHours: 5 });
+  const codexPool = (view: ReturnType<typeof dashboard>) =>
+    view.pools.find((pool) => pool.provider === 'codex')!;
+  const view = (accounts: StoredAccount[], samples: QuotaSample[]) =>
+    dashboard(accounts, samples, { window: 'five-hour' });
+
+  test('is no-limit in the five-hour pool, outside its capacity, and does not withhold the total', () => {
+    const accounts = [codex('c'), codex('d')];
+    const samples = [
+      weekly('c'),
+      missingFiveHour('c'),
+      fiveHour('d', 60, now - 600_000),
+      fiveHour('d', 50),
+    ];
+    const result = view(accounts, samples);
+    const pool = codexPool(result);
+    expect(pool.accounts.find((a) => a.id === 'c')?.status).toBe('no-limit');
+    expect(pool.accounts.find((a) => a.id === 'c')?.noFiveHourLimit).toBe(true);
+    expect(pool.accountCount).toBe(2);
+    expect(pool.eligibleCount).toBe(1);
+    expect(pool.capacityPoints).toBe(1000);
+    expect(pool.forecastState).not.toBe('partial');
+    expect(pool.remainingPoints).toBe(500);
+    expect(result.combined?.codex.series?.remainingPoints).not.toBeNull();
+  });
+  test('a pool of only such accounts says so instead of withholding', () => {
+    const pool = codexPool(view([codex('c')], [weekly('c'), missingFiveHour('c')]));
+    expect(pool.forecastState).toBe('no-limit');
+    expect(pool.eligibleCount).toBe(0);
+  });
+  test('the weekly pool still counts that account, and flags it', () => {
+    const pool = codexPool(dashboard([codex('c')], [weekly('c'), missingFiveHour('c')]));
+    expect(pool.accounts[0].status).toBe('ok');
+    expect(pool.accounts[0].noFiveHourLimit).toBe(true);
+    expect(pool.eligibleCount).toBe(1);
+  });
+  test('an account that reports a five-hour window is unchanged', () => {
+    const pool = codexPool(view([codex('c')], [weekly('c'), fiveHour('c', 40)]));
+    expect(pool.accounts[0].status).toBe('ok');
+    expect(pool.accounts[0].noFiveHourLimit).toBeFalsy();
+    expect(pool.eligibleCount).toBe(1);
+    expect(pool.capacityPoints).toBe(1000);
+  });
+  test('a reading with no weekly window either stays missing, not no-limit', () => {
+    const empty = sample(now, 0, { window: 'weekly', remainingPercent: null });
+    const pool = codexPool(view([codex('c')], [empty, missingFiveHour('c')]));
+    expect(pool.accounts[0].status).toBe('missing-window');
+    expect(pool.accounts[0].noFiveHourLimit).toBeFalsy();
+    expect(pool.forecastState).toBe('partial');
+  });
+  test('a failed read is still errored, and a stale answer is not proof', () => {
+    const old = now - STALE_MS - 1;
+    const failed = codexPool(view(
+      [codex('c', { lastSeenAtMs: old, lastErrorAtMs: now })],
+      [weekly('c', old), missingFiveHour('c', old)]
+    ));
+    expect(failed.accounts[0].status).toBe('error');
+    expect(failed.forecastState).not.toBe('no-limit');
+    const stale = codexPool(view(
+      [codex('c', { lastSeenAtMs: old })],
+      [weekly('c', old), missingFiveHour('c', old)]
+    ));
+    expect(stale.accounts[0].status).toBe('stale');
+  });
+  test('a later five-hour reading supersedes an earlier weekly-only one', () => {
+    const pool = codexPool(view(
+      [codex('c')],
+      [weekly('c', now - 600_000), missingFiveHour('c', now - 600_000), weekly('c'), fiveHour('c', 40)]
+    ));
+    expect(pool.accounts[0].status).toBe('ok');
+    expect(pool.accounts[0].noFiveHourLimit).toBeFalsy();
+  });
+  test('Claude Pro without a five-hour window stays unknown (the rule is unchanged)', () => {
+    const pool = view(
+      [account('p', { plan: 'claude_pro' })],
+      [sample(now, 17, { accountId: 'p' }), missingFiveHour('p')]
+    ).pools.find((entry) => entry.provider === 'claude')!;
+    expect(pool.accounts[0].status).toBe('missing-window');
   });
 });
 

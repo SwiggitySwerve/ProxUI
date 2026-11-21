@@ -7,12 +7,21 @@ import type { AuthFileItem, ClaudeQuotaState } from '@/types';
 import { getStatusFromError, resolveQuotaErrorMessage } from '@/utils/quota';
 import { getQuotaCacheKey } from '@/utils/quota/identity';
 import { isRuntimeOnlyAuthFile, type QuotaProviderType } from '@/features/authFiles/constants';
+import { isCredentialDisabled } from '@/features/authFiles/credentialFacts';
 import { Button } from '@/components/ui/Button';
 import { IconRefreshCw } from '@/components/ui/icons';
 import { bindQuotaClasses } from '@/features/quota/types';
+import { resetAccountName } from '@/features/quota/logic';
 import type { QuotaCardState } from '@/features/quota/providers';
 import { useAuthFilesSource, useAuthFilesNotifications } from '../AuthFilesSourceContext';
 import { hasClaudeUsageData } from '@/features/quota/providers/claude/data';
+import { QuotaFreshness } from '@/features/quota/components/QuotaFreshness';
+import { beginLoading } from '@/features/quota/quotaLoading';
+import { isQuotaFresh } from '@/features/quota/quotaFreshness';
+import { providerSources } from '@/stores/useProviderSources';
+import { useServerAccountsStore } from '@/stores/useServerAccountsStore';
+import { refreshServedFile, serverReadNotice } from '@/features/quotaPool/serverQuota';
+import { useServedByServer, useServerAccount } from '@/features/quotaPool/useServerQuota';
 import {
   selectQuotaSlotState,
   type QuotaSlotState,
@@ -39,13 +48,21 @@ export type AuthFileQuotaSectionProps = {
 
 export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
   const { file, quotaType, disableControls } = props;
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const sourceScope = useAuthFilesSource();
   const useQuotaStore = sourceScope.quotaStore;
   const { showNotification, showConfirmation } = useAuthFilesNotifications();
   const [resettingQuota, setResettingQuota] = useState(false);
   const adapter = sourceScope.quotaAdapters[quotaType];
   const cacheKey = getQuotaCacheKey(file);
+  // Switched off: its quota is still read, but it serves nothing and its resets stay unspent.
+  const accountOff = isCredentialDisabled(file);
+  // Claude and Codex accounts of a source the history server covers are read there, not on the
+  // hub; a switched-off one is the named exception: its explicit Refresh is the live hub read.
+  const instanceId = sourceScope.session.owner.instanceId;
+  const served = useServedByServer(instanceId, quotaType) && !isRuntimeOnlyAuthFile(file);
+  const serverAccount = useServerAccount(instanceId, quotaType, file);
+  const [serverReading, setServerReading] = useState(false);
 
   const quota = useQuotaStore((state) => {
     if (quotaType === 'antigravity')
@@ -61,23 +78,21 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
   });
   const retainedClaudeUsage =
     quotaType === 'claude' && hasClaudeUsageData(quota as ClaudeQuotaState | undefined);
+  const fetchedAt = useQuotaStore((state) => state.fetchedAt[cacheKey]);
+  const nextReadAt = useQuotaStore((state) => state.nextReadAt[cacheKey]);
 
   const updateQuotaState = useQuotaStore(
     (state) => state[adapter.storeSetter] as unknown as QuotaMapUpdater
   );
 
-  const refreshQuotaForFile = useCallback(async () => {
+  const readQuotaForFile = useCallback(async () => {
     if (disableControls || !sourceScope.isCurrent()) return;
     if (isRuntimeOnlyAuthFile(file)) return;
-    if (file.disabled) return;
     if (quota?.status === 'loading' || resettingQuota) return;
 
     const cacheGeneration = captureQuotaCacheGeneration(file.name, sourceScope.quotaStore);
 
-    updateQuotaState((prev) => ({
-      ...prev,
-      [cacheKey]: adapter.buildLoadingState(),
-    }));
+    const release = beginLoading(adapter, sourceScope.quotaStore, [cacheKey]);
 
     try {
       const data = await adapter.fetchQuota(file, t);
@@ -90,7 +105,7 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
         showNotification(t('auth_files.quota_refresh_success', { name: file.name }), 'success');
       });
     } catch (err: unknown) {
-      if (!sourceScope.isCurrent()) return;
+      if (!sourceScope.isCurrent()) return release();
       const message = err instanceof Error ? err.message : t('common.unknown_error');
       const status = getStatusFromError(err);
       commitIfQuotaCacheCurrent(cacheGeneration, () => {
@@ -117,20 +132,74 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
     updateQuotaState,
   ]);
 
+  // A reading under a minute old is kept (quotaFreshness.ts); force: after a reset claim, which
+  // changed the quota the last reading shows.
+  const refreshQuotaForFile = useCallback(
+    (options?: { force?: boolean }) => {
+      if (served && !accountOff) {
+        // After a claim the server has already been asked (accountSync.ts): read its numbers.
+        if (options?.force) return void useServerAccountsStore.getState().pollFresh();
+        if (serverReading || disableControls || !sourceScope.isCurrent()) return;
+        setServerReading(true);
+        void refreshServedFile({
+          owner: sourceScope.session.owner,
+          file,
+          store: sourceScope.quotaStore,
+        })
+          .then((outcome) => {
+            if (!sourceScope.isCurrent()) return;
+            const notice = serverReadNotice(outcome, {
+              name: file.name,
+              t,
+              language: i18n.language,
+              readAtMs: sourceScope.quotaStore.getState().fetchedAt[cacheKey],
+              nowMs: Date.now(),
+            });
+            showNotification(notice.text, notice.type);
+          })
+          .finally(() => setServerReading(false));
+        return;
+      }
+      const readAt = sourceScope.quotaStore.getState().fetchedAt[cacheKey];
+      if (!options?.force && isQuotaFresh(readAt, Date.now())) {
+        showNotification(t('auth_files.quota_reused', { name: file.name }), 'info');
+        return;
+      }
+      // A card's read can be several requests (Claude: usage and profile); the hub proves the
+      // key with the first (services/api/authGate.ts).
+      providerSources.armAuthProbes();
+      void readQuotaForFile();
+    },
+    [
+      accountOff,
+      cacheKey,
+      disableControls,
+      file,
+      i18n.language,
+      readQuotaForFile,
+      served,
+      serverReading,
+      showNotification,
+      sourceScope,
+      t,
+    ]
+  );
+
   const resetQuotaForFile = useCallback(() => {
     if (disableControls || !sourceScope.isCurrent()) return;
     if (isRuntimeOnlyAuthFile(file)) return;
-    if (file.disabled) return;
+    if (accountOff) return;
     if (quota?.status === 'loading') return;
     if (resettingQuota) return;
 
     const resetQuota = adapter.resetQuota;
     if (!resetQuota) return;
 
+    const name = resetAccountName(file);
     showConfirmation({
-      title: t('codex_quota.reset_confirm_title'),
-      message: t('codex_quota.reset_confirm_message', { name: file.name }),
-      confirmText: t('codex_quota.reset_confirm_button'),
+      title: t('quota_pool.reset_confirm_title'),
+      message: t('codex_quota.reset_confirm_message', { name }),
+      confirmText: t('quota_pool.use_reset'),
       variant: 'primary',
       onConfirm: async () => {
         const cacheGeneration = captureQuotaCacheGeneration(file.name, sourceScope.quotaStore);
@@ -143,13 +212,13 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
               ...prev,
               [cacheKey]: adapter.buildSuccessState(data),
             }));
-            showNotification(t('codex_quota.reset_success', { name: file.name }), 'success');
+            showNotification(t('codex_quota.reset_success', { name }), 'success');
           });
         } catch (err: unknown) {
           if (!sourceScope.isCurrent()) return;
           const message = err instanceof Error ? err.message : t('common.unknown_error');
           commitIfQuotaCacheCurrent(cacheGeneration, () => {
-            showNotification(t('codex_quota.reset_failed', { name: file.name, message }), 'error');
+            showNotification(t('codex_quota.reset_failed', { name, message }), 'error');
           });
         } finally {
           setResettingQuota(false);
@@ -157,6 +226,7 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
       },
     });
   }, [
+    accountOff,
     adapter,
     cacheKey,
     disableControls,
@@ -171,14 +241,18 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
   ]);
 
   const quotaStatus = quota?.status ?? 'idle';
-  const canRefreshQuota = !disableControls && !file.disabled && !resettingQuota;
+  const canRefreshQuota = !disableControls && !resettingQuota;
   const claudeReset = useClaudeResetGrants(
     file,
     quotaType === 'claude' && quotaStatus !== 'idle',
     !canRefreshQuota || quotaStatus === 'loading',
     quota,
     refreshQuotaForFile,
-    adapter.resetGrants
+    adapter.resetGrants,
+    accountOff,
+    // Served from the history server: its reading shows the held resets, and the hub is read
+    // for the grants only when the claim dialog opens (a named exception).
+    served && quotaType === 'claude' ? { resets: serverAccount?.resets ?? null } : undefined
   );
   // A plain boolean: handing the store-derived value on directly costs the compiler's memoization.
   const hasQuotaData = quotaStatus === 'success' || retainedClaudeUsage === true;
@@ -190,10 +264,12 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
   );
   const failureText = t(`${adapter.i18nPrefix}.load_failed`, { message: quotaErrorMessage });
   // A refresh mid-claim would drop the claim's result and its follow-up refresh.
-  const refreshDisabled = !canRefreshQuota || quotaStatus === 'loading' || claudeReset.busy;
+  const refreshDisabled =
+    !canRefreshQuota || quotaStatus === 'loading' || serverReading || claudeReset.busy;
   const refresh = () => {
     if (!claudeReset.busy) void refreshQuotaForFile();
   };
+  const reading = slot.kind === 'loading' || (slot.kind === 'loaded' && slot.refreshing);
   // Account details belong to read quota; Claude's reset grants are read even after a failure.
   const showDetails = slot.kind === 'loaded' || (slot.kind === 'failed' && quotaType === 'claude');
 
@@ -203,18 +279,21 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
       stateText={
         slot.kind === 'idle'
           ? t('auth_files.quota_not_loaded')
-          : slot.kind === 'loading' || (slot.kind === 'loaded' && slot.refreshing)
+          : reading
             ? t('common.loading')
             : slot.kind === 'failed' || (slot.kind === 'loaded' && slot.stale)
               ? t('auth_files.quota_failed')
-              : ''
+              : slot.kind === 'loaded' && (
+                  <QuotaFreshness fetchedAt={fetchedAt} nextReadAtMs={nextReadAt} />
+                )
       }
       stateTitle={slot.kind === 'failed' || slot.kind === 'loaded' ? failureText : undefined}
       danger={slot.kind === 'failed' || (slot.kind === 'loaded' && slot.stale)}
+      accountOff={accountOff}
       withDetails={showDetails}
       refresh={{
         disabled: refreshDisabled,
-        spinning: quotaStatus === 'loading',
+        spinning: quotaStatus === 'loading' || serverReading,
         title: t('auth_files.quota_refresh_hint'),
         onClick: refresh,
       }}
@@ -249,12 +328,15 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
           name={file.name}
           defaultOpen
           rows
+          compact
+          accountOff={accountOff}
           claudeReset={quotaType === 'claude' ? claudeReset : undefined}
           reset={
             quotaType === 'codex' && adapter.resetQuota
               ? {
                   disabled:
                     !canRefreshQuota ||
+                    accountOff ||
                     quotaStatus === 'loading' ||
                     !quota ||
                     !adapter.canResetQuota?.(quota),
@@ -305,14 +387,17 @@ function QuotaSlotFrame({
   stateText,
   stateTitle,
   danger = false,
+  accountOff = false,
   withDetails = false,
   refresh,
   children,
 }: {
   state: QuotaSlotState['kind'];
-  stateText: string;
+  stateText: ReactNode;
   stateTitle?: string;
   danger?: boolean;
+  /** The credential is switched off: the header says so beside the quota it still reads. */
+  accountOff?: boolean;
   /** Account details follow; without them the state's message takes the rest of the frame. */
   withDetails?: boolean;
   refresh: { disabled: boolean; spinning: boolean; title: string; onClick: () => void };
@@ -329,6 +414,11 @@ function QuotaSlotFrame({
     >
       <div className={styles.quotaHead}>
         <span className={styles.quotaEyebrow}>{t('auth_files.quota_slot_label')}</span>
+        {accountOff && (
+          <span className={styles.quotaOff} title={t('quota_management.account_off_hint')}>
+            {t('quota_management.account_off')}
+          </span>
+        )}
         <span
           className={`${styles.quotaState} ${danger ? styles.quotaStateDanger : ''}`}
           title={stateTitle}

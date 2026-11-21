@@ -5,6 +5,7 @@
 
 import { isRuntimeOnlyAuthFile } from '@/features/authFiles/constants';
 import type { AuthFileItem } from '@/types';
+import { maskIdentifier } from '@/domain/quotaPool/mask';
 import {
   isAntigravityQuotaFile,
   isClaudeQuotaFile,
@@ -12,7 +13,7 @@ import {
   isDevinQuotaFile,
   isKimiQuotaFile,
   isMetaQuotaFile,
-  isEnabledPluginQuotaFile,
+  isPluginQuotaTarget,
   isXaiQuotaFile,
 } from './providers/filters';
 import type { QuotaProviderType } from './providers/types';
@@ -25,7 +26,7 @@ const QUOTA_FILTER_MAP: Record<QuotaProviderType, (file: AuthFileItem) => boolea
   devin: isDevinQuotaFile,
   kimi: isKimiQuotaFile,
   meta: isMetaQuotaFile,
-  plugin: isEnabledPluginQuotaFile,
+  plugin: isPluginQuotaTarget,
   xai: isXaiQuotaFile,
 };
 
@@ -48,12 +49,12 @@ export function canRefreshQuotaAfterList(
 }
 
 export const resolveQuotaProviderType = (file: AuthFileItem): QuotaProviderType | null =>
-  isEnabledPluginQuotaFile(file)
+  isPluginQuotaTarget(file)
     ? 'plugin'
     : (QUOTA_TAB_ORDER.find((type) => QUOTA_FILTER_MAP[type](file)) ?? null);
 
 /**
- * 把文件列表归类为额度条目：不支持额度或已停用的文件被过滤，
+ * 把文件列表归类为额度条目：不支持额度的文件被过滤，已停用的保留（读额度不等于使用账号），
  * 结果按 QUOTA_TAB_ORDER 分组排列（'全部' tab 的卡片顺序即由此决定）。
  */
 export function classifyQuotaFiles(files: AuthFileItem[]): QuotaFileEntry[] {
@@ -156,3 +157,11 @@ export function paginate<T>(items: T[], page: number, pageSize: number): QuotaPa
     totalPages,
   };
 }
+
+/**
+ * The account a reset dialog or its notice names, masked the way the pool's rows are: the server
+ * builds that identifier from the same address-or-file-name, so both read alike, and a dialog never
+ * shows the full address or the credential file name that embeds it.
+ */
+export const resetAccountName = (file: AuthFileItem) =>
+  maskIdentifier((typeof file.email === 'string' && file.email) || file.name);

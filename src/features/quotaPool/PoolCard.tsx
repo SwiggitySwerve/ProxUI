@@ -30,6 +30,9 @@ import { metricField, type ChartMode } from './chartGeometry';
 import { DAY_MS } from '@/utils/time/durations';
 import { useNow } from '@/hooks/useNow';
 import type { AccountResetKind, AccountResets } from '@/domain/quotaPool/types';
+import { laneOf, poolWindowId } from '@/domain/quotaWindows/lanes';
+import { profileWindowId } from '@/domain/quotaWindows/normalized';
+import { isBuiltInPoolProvider } from '@/domain/quotaPool/providers';
 import type { TFunction } from 'i18next';
 import { heldResetKinds, sumResetKinds, wasSpent, type ResetKindCount } from './resetAccounts';
 import { PoolAccountResets, ResetKindCounts } from './PoolAccountResets';
@@ -37,6 +40,7 @@ import { PoolChart } from './PoolChart';
 import { PoolGraph } from './PoolGraph';
 import { PoolGraphToggle } from './PoolGraphToggle';
 import { PoolProviderMark } from './PoolProviderMark';
+import { poolProviderLabel, poolProviderStyle, quotaWindowLabel } from './providerPresentation';
 import { poolChip, type PoolChipIcon } from './model/poolChip';
 import { sortAccounts, type AccountSort } from './model/accountOrder';
 import { formatPoolDate, formatPoolNumber, formatPoolPercent, isLowQuota } from './presentation';
@@ -204,6 +208,13 @@ export function PoolCard({
       date(value)
     );
   const windowLabel = t(`quota_pool.${dashboard.window === 'weekly' ? 'weekly' : 'five_hour'}`);
+  const profile = dashboard.poolProfiles?.find(
+    (entry) => entry.instanceId === pool.instanceId && entry.provider === pool.provider
+  );
+  const unmapped = profile !== undefined && profileWindowId(profile, dashboard.window) === null;
+  const noLimitLabel = unmapped
+    ? `${windowLabel} · ${t('provider_catalog.pool_profile_none')}`
+    : t('quota_pool.no_window_limit', { window: windowLabel });
   const balanceLabel = t('quota_pool.window_remaining', { window: windowLabel });
   const showRosterControls = pool.accounts.length > ROSTER_CONTROLS_MIN;
   const accountName = (account: (typeof pool.accounts)[number]) =>
@@ -221,15 +232,20 @@ export function PoolCard({
         ? staleAccounts
         : [];
   const affectedIds = new Set(affectedAccounts.map((account) => account.id));
-  const stateNote =
-    pool.forecastState === 'partial' && missingAccounts.length
-      ? t('quota_pool.unavailable_count', {
-          count: missingAccounts.length,
-          total: pool.accountCount,
-        })
-      : pool.forecastState === 'stale' && staleAccounts.length
-        ? t('quota_pool.stale_count', { count: staleAccounts.length, total: pool.accountCount })
-        : t(`quota_pool.state_note.${pool.forecastState}`, { window: windowLabel });
+  // A total with estimated accounts is still shown; the note says so instead of "withheld".
+  const estimated = pool.remainingPoints !== null ? (pool.estimatedCount ?? 0) : 0;
+  const stateNote = unmapped
+    ? noLimitLabel
+    : estimated > 0
+      ? t('quota_pool.estimated_count', { count: estimated, total: pool.accountCount })
+      : pool.forecastState === 'partial' && missingAccounts.length
+        ? t('quota_pool.unavailable_count', {
+            count: missingAccounts.length,
+            total: pool.accountCount,
+          })
+        : pool.forecastState === 'stale' && staleAccounts.length
+          ? t('quota_pool.stale_count', { count: staleAccounts.length, total: pool.accountCount })
+          : t(`quota_pool.state_note.${pool.forecastState}`, { window: windowLabel });
   const showAffected = () => {
     setAffectedOnly(true);
     setLowOnly(false);
@@ -253,14 +269,14 @@ export function PoolCard({
   const showNow = mode !== 'remaining' || !(forecastWithheld && pool.burnPointsPerHour === null);
   // Claude names its weekly windows "7-day"; the page calls that window Weekly everywhere.
   // The columns show remaining percentages, so the headings say "remaining", not "limit".
-  const limitLabel = (limit: (typeof pool.accounts)[number]['windows'][number]) =>
-    limit.id === 'five-hour'
-      ? t('quota_pool.five_hour_remaining')
-      : limit.id === 'seven-day' || limit.id === 'weekly'
-        ? t('quota_pool.weekly_remaining')
-        : limit.id === 'seven-day-opus'
-          ? t('quota_pool.weekly_opus_remaining')
-          : t(limit.labelKey, limit.labelParams);
+  const limitLabel = (limit: (typeof pool.accounts)[number]['windows'][number]) => {
+    if (!isBuiltInPoolProvider(pool.provider)) return quotaWindowLabel(t, limit);
+    const lane = laneOf(pool.provider, limit.id);
+    if (lane === 'five-hour') return t('quota_pool.five_hour_remaining');
+    if (lane === 'weekly') return t('quota_pool.weekly_remaining');
+    if (limit.id === 'seven-day-opus') return t('quota_pool.weekly_opus_remaining');
+    return quotaWindowLabel(t, limit);
+  };
   const query = rosterQuery.trim().toLowerCase();
   const matchingAccounts = pool.accounts.filter(
     (account) => !query || accountName(account).toLowerCase().includes(query)
@@ -290,12 +306,9 @@ export function PoolCard({
   }, []);
   // The pool balance is the sample of one limit (server/quota/collector.ts): the 5-hour
   // limit, or the provider's weekly one. Mark that column instead of repeating it.
-  const countedLimitId =
-    dashboard.window === 'five-hour'
-      ? 'five-hour'
-      : pool.provider === 'claude'
-        ? 'seven-day'
-        : 'weekly';
+  const countedLimitId = isBuiltInPoolProvider(pool.provider)
+    ? poolWindowId(pool.provider, dashboard.window)
+    : profile && profileWindowId(profile, dashboard.window);
   const balanceHasColumn = limitColumns.some((column) => column.id === countedLimitId);
   // A wide column that shows a Low mark or "Unavailable" on any row reserves a status slot, as wide as
   // its widest mark, on every row, so the values and bars of the whole column start at one x.
@@ -313,7 +326,8 @@ export function PoolCard({
     })
   );
   const resetSection = (account: (typeof pool.accounts)[number]) =>
-    openAccounts.has(account.id) && (
+    openAccounts.has(account.id) &&
+    (pool.provider === 'claude' || pool.provider === 'codex') && (
       <PoolAccountResets
         key="resets"
         account={account}
@@ -407,9 +421,12 @@ export function PoolCard({
       )}
     </div>
   );
+  const providerLabel = poolProviderLabel(t, pool.provider, pool.displayName);
+  const appearance = poolProviderStyle(pool.provider);
   return (
     <article
-      className={`${styles.pool} ${styles[pool.provider]}`}
+      className={`${styles.pool} ${appearance.className ?? ''}`}
+      style={appearance.style}
       aria-labelledby={`${id}-title`}
       data-forecast-state={pool.forecastState}
       data-chart-mode={mode}
@@ -421,7 +438,7 @@ export function PoolCard({
           <div className={styles.poolTitle}>
             <PoolProviderMark provider={pool.provider} />
             <h2 id={`${id}-title`}>
-              {t(`quota_pool.${pool.provider}`)}
+              {providerLabel}
               {pool.sourceLabel && <small> · {pool.sourceLabel}</small>}
             </h2>
             <div className={styles.poolMeta}>
@@ -454,19 +471,21 @@ export function PoolCard({
             </div>
           </div>
           <span className={styles.reorder}>
-            <PoolGraphToggle
-              minimized={minimized}
-              onToggle={() => setMinimized((value) => !value)}
-              label={`${t(`quota_pool.${pool.provider}`)}${pool.sourceLabel ? ` · ${pool.sourceLabel}` : ''}`}
-              controls={`${id}-plot`}
-            />
+            {pool.forecastState !== 'no-limit' && (
+              <PoolGraphToggle
+                minimized={minimized}
+                onToggle={() => setMinimized((value) => !value)}
+                label={`${providerLabel}${pool.sourceLabel ? ` · ${pool.sourceLabel}` : ''}`}
+                controls={`${id}-plot`}
+              />
+            )}
             {/* A move that can't happen (first or last card) isn't drawn. */}
             {move?.up && (
               <button
                 type="button"
                 onClick={move.up}
-                aria-label={t('quota_pool.move_up', { pool: t(`quota_pool.${pool.provider}`) })}
-                title={t('quota_pool.move_up', { pool: t(`quota_pool.${pool.provider}`) })}
+                aria-label={t('quota_pool.move_up', { pool: providerLabel })}
+                title={t('quota_pool.move_up', { pool: providerLabel })}
               >
                 <IconArrowUp size={16} aria-hidden="true" />
                 {t('quota_pool.move_up_short')}
@@ -476,8 +495,8 @@ export function PoolCard({
               <button
                 type="button"
                 onClick={move.down}
-                aria-label={t('quota_pool.move_down', { pool: t(`quota_pool.${pool.provider}`) })}
-                title={t('quota_pool.move_down', { pool: t(`quota_pool.${pool.provider}`) })}
+                aria-label={t('quota_pool.move_down', { pool: providerLabel })}
+                title={t('quota_pool.move_down', { pool: providerLabel })}
               >
                 <IconArrowDown size={16} aria-hidden="true" />
                 {t('quota_pool.move_down_short')}
@@ -491,13 +510,12 @@ export function PoolCard({
           data-rate={mode !== 'remaining'}
           data-no-limit={pool.forecastState === 'no-limit'}
         >
-          {/* Rate views read label, then number; Remaining keeps its caption beside the number. */}
-          {mode !== 'remaining' && headlineContext}
+          {/* Rate views read label, then number; Remaining keeps its caption beside the number.
+              A pool with no limit in this window has no scale to caption. */}
+          {mode !== 'remaining' && pool.forecastState !== 'no-limit' && headlineContext}
           <strong>
             {pool.forecastState === 'no-limit' ? (
-              <span className={styles.unavailableValue}>
-                {t('quota_pool.no_window_limit', { window: windowLabel })}
-              </span>
+              <span className={styles.unavailableValue}>{noLimitLabel}</span>
             ) : pool[metricField[mode]] === null ? (
               // A muted word in the number slot, so a withheld total never passes for a value.
               <span className={styles.unavailableValue}>{t('quota_pool.value_withheld')}</span>
@@ -509,7 +527,7 @@ export function PoolCard({
               </>
             )}
           </strong>
-          {mode === 'remaining' && headlineContext}
+          {mode === 'remaining' && pool.forecastState !== 'no-limit' && headlineContext}
         </div>
         {/* Every view has the same two groups: "Now" holds the one measured fact the headline
             doesn't show (the burn rate, or in rate views the balance), "Forecast" the projections. */}
@@ -531,10 +549,16 @@ export function PoolCard({
                     <dt>{t('quota_pool.account_remaining', { window: windowLabel })}</dt>
                     {/* The number takes the value style; "of 300 points" the headline unit's muted style. */}
                     <dd>
-                      {number(pool.remainingPoints)}{' '}
-                      <small>
-                        {t('quota_pool.of_capacity', { capacity: number(pool.capacityPoints) })}
-                      </small>
+                      {pool.forecastState === 'no-limit' ? (
+                        noLimitLabel
+                      ) : (
+                        <>
+                          {number(pool.remainingPoints)}{' '}
+                          <small>
+                            {t('quota_pool.of_capacity', { capacity: number(pool.capacityPoints) })}
+                          </small>
+                        </>
+                      )}
                     </dd>
                   </div>
                 )}
@@ -587,16 +611,19 @@ export function PoolCard({
           )}
         </p>
       )}
-      <PoolGraph title={t('quota_pool.history_forecast')} id={`${id}-plot`} minimized={minimized}>
-        <PoolChart
-          key={`${mode}-${dashboard.fromMs}`}
-          pool={pool}
-          dashboard={dashboard}
-          mode={mode}
-          savedData={savedData}
-          minimized={minimized}
-        />
-      </PoolGraph>
+      {/* No limit in this window means nothing to chart; the note above already says so. */}
+      {pool.forecastState !== 'no-limit' && (
+        <PoolGraph title={t('quota_pool.history_forecast')} id={`${id}-plot`} minimized={minimized}>
+          <PoolChart
+            key={`${mode}-${dashboard.fromMs}`}
+            pool={pool}
+            dashboard={dashboard}
+            mode={mode}
+            savedData={savedData}
+            minimized={minimized}
+          />
+        </PoolGraph>
+      )}
       <section ref={accountsRef} className={styles.accounts} aria-labelledby={`${id}-accounts`}>
         <h3 id={`${id}-accounts`} ref={accountsHeadingRef} tabIndex={-1}>
           <span className={styles.accountsHeading}>
@@ -854,9 +881,9 @@ export function PoolCard({
                         )}
                     </span>
                     <small className={styles.accountPlan}>
-                      {account.plan.known && account.plan.label
+                      {account.plan.known
                         ? t('quota_pool.account_plan', {
-                            plan: account.plan.label,
+                            plan: account.plan.label ?? t('quota_pool.plan_column'),
                             points: number(account.plan.capacityPoints),
                           })
                         : t('quota_pool.account_plan_unknown', {
@@ -879,7 +906,7 @@ export function PoolCard({
                         </span>
                       </>
                     ) : account.status === 'no-limit' ? (
-                      t('quota_pool.no_window_limit', { window: windowLabel })
+                      noLimitLabel
                     ) : account.status === 'missing-window' || account.status === 'error' ? (
                       t('quota_pool.window_unavailable', { window: windowLabel })
                     ) : (
@@ -891,9 +918,7 @@ export function PoolCard({
                       {isLowQuota(account.remainingPercent) && lowMark}
                       {/* An account without this limit says so in the value slot, once. */}
                       {account.status === 'no-limit' ? (
-                        <span className={styles.noLimitValue}>
-                          {t('quota_pool.no_window_limit', { window: windowLabel })}
-                        </span>
+                        <span className={styles.noLimitValue}>{noLimitLabel}</span>
                       ) : account.remainingPercent === null ? (
                         '—'
                       ) : (

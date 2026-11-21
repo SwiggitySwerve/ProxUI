@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import '../src/i18n/index';
+import i18n from '../src/i18n/index';
 import { QuotaTimeline } from '../src/features/quota/components/QuotaTimeline';
+import { formatPoolDate } from '../src/features/quotaPool/presentation';
 import type { QuotaFileEntry } from '../src/features/quota/logic';
 import { buildKimiQuotaRows } from '../src/utils/quota';
 
@@ -46,6 +47,33 @@ describe('QuotaTimeline rendering', () => {
     expect(markup).toMatch(
       /<button type="button" aria-label="[^"]+" title="[^"]+">08\/02<\/button>/
     );
+  });
+
+  test('a switched-off account keeps its lane, marked as off', () => {
+    const quota = {
+      status: 'success' as const,
+      windows: [
+        {
+          label: '7-day',
+          usedPercent: 25,
+          resetAtMs: new Date(2026, 7, 1, 12).getTime(),
+          periodHours: 168,
+        },
+      ],
+    };
+    const render = (disabled: boolean) =>
+      renderToStaticMarkup(
+        createElement(QuotaTimeline, {
+          ...baseProps,
+          entries: [{ file: { ...entries[0].file, disabled }, type: 'claude' }],
+          quotaFor: () => quota,
+        })
+      );
+    const off = i18n.t('quota_management.account_off');
+    expect(render(true)).toContain('data-off="true"');
+    expect(render(true)).toContain(`>${off}</span>`);
+    expect(render(false)).not.toContain('data-off');
+    expect(render(false)).not.toContain(`>${off}</span>`);
   });
 
   test('keeps the panel and controls visible when 5-hour mode has no matching lanes', () => {
@@ -148,7 +176,13 @@ describe('QuotaTimeline rendering', () => {
     );
 
     expect(markup).toContain('role="img"');
-    expect(markup).toContain('08/03 12:00');
+    // Granted and expiry dates read in the pool's format, like every other reset expiry.
+    expect(markup).toContain(
+      `Expires: ${formatPoolDate(Date.parse('2026-08-03T12:00:00Z'), 'en')}`
+    );
+    expect(markup).toContain(
+      `Granted: ${formatPoolDate(Date.parse('2026-07-20T12:00:00Z'), 'en')}`
+    );
   });
 
   test('stays hidden before any credential exposes a usable quota window', () => {

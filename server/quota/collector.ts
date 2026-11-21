@@ -3,22 +3,36 @@ import {
   billingFromCodexSubscription,
   type AccountBilling,
 } from '../../src/domain/accountBilling';
+import { buildApiCallApi } from '../../src/services/api/apiCall';
 import { readJson } from '../http/readJson';
 import { readFile } from 'node:fs/promises';
 import type { DeploymentSource } from '../../src/domain/providerSources/types';
 import { loadSourceManifest } from '../providerSources/config';
 import { LEGACY_SOURCE_MAPPING, legacyAccountId } from './identity';
+import {
+  ownsWaitingProvider,
+  parseProviderCatalog,
+  type ProviderCatalog,
+} from '../../src/domain/providerCatalog';
+import { isBuiltInPoolProvider } from '../../src/domain/quotaPool/providers';
+import { discoveredPoolSamples } from './discoveredQuota';
 import type { TFunction } from 'i18next';
 import type {
   AccountQuotaWindow,
   AccountResets,
+  BuiltInPoolProviderId,
   PoolDashboard,
   PoolProviderId,
-  PoolWindow,
 } from '../../src/domain/quotaPool/types';
 import { buildClaudeQuotaWindows } from '../../src/domain/quotaWindows/claude';
 import { buildCodexQuotaWindows } from '../../src/domain/quotaWindows/codex';
+import { decodeAntigravityQuotaWindows } from '../../src/domain/quotaWindows/antigravity';
+import { laneOf } from '../../src/domain/quotaWindows/lanes';
+import { decodeNormalizedQuota } from '../../src/domain/quotaWindows/normalized';
 import {
+  ANTIGRAVITY_CODE_ASSIST_URL,
+  ANTIGRAVITY_QUOTA_URLS,
+  ANTIGRAVITY_REQUEST_HEADERS,
   CLAUDE_PROFILE_URL,
   CLAUDE_USAGE_WINDOW_KEYS,
   CLAUDE_REQUEST_HEADERS,
@@ -27,9 +41,17 @@ import {
   CODEX_RATE_LIMIT_RESET_CREDITS_URL,
   CODEX_REQUEST_HEADERS,
 } from '../../src/utils/quota/constants';
-import { parseClaudeUsagePayload, parseCodexUsagePayload } from '../../src/utils/quota/parsers';
+import {
+  normalizeCodexAccountCredits,
+  parseAntigravityPayload,
+  parseClaudeUsagePayload,
+  parseCodexUsagePayload,
+} from '../../src/utils/quota/parsers';
+import { normalizeClaudeUsageSnapshot } from '../../src/services/api/claudeUsage';
+import type { ClaudeUsageSnapshot } from '../../src/types/quota';
 import { isRecord } from '../../src/utils/helpers';
-import { planFromClaudeProfile, planFromCodexUsage } from './plans';
+import { planFromAntigravityCodeAssist, planFromClaudeProfile, planFromCodexUsage } from './plans';
+import { CODE_ASSIST_REQUEST_BODY } from '../../src/services/api/antigravitySubscription';
 import { QuotaStore } from './store';
 import type { InventorySourceState, InventorySourceStatus } from './inventory';
 import { codexCreditExpiries, readAccountResets, withCodexCreditDetails } from './resets';
@@ -45,9 +67,12 @@ import {
   type InventoryChange,
   type QuotaSample,
   type QuotaSourceView,
+  type ResetReading,
   type StoredAccount,
 } from './types';
 
+/** A targeted read of one account starts at most this often. */
+const ACCOUNT_REFRESH_FLOOR_MS = 20_000;
 const PLAN_REFRESH_MS = 6 * 60 * 60 * 1000;
 /** Codex credit details are re-read at most this often while their count is unchanged. */
 const RESET_CREDITS_REFRESH_MS = 60 * 60 * 1000;
@@ -55,6 +80,7 @@ const RESET_CREDITS_REFRESH_MS = 60 * 60 * 1000;
 const RESET_CREDITS_RETRY_MS = 15 * 60 * 1000;
 /** Inventory-only syncs start at least this far apart, so a burst cannot hammer CLI-Proxy. */
 const SYNC_FLOOR_MS = 1000;
+const CATALOG_TIMEOUT_MS = 3_000;
 /**
  * A read already in flight when the user deletes a credential can see the deletion and retire
  * (and scrub) the account before the explicit delete sync names it. The names of accounts retired
@@ -72,7 +98,7 @@ type CollectorOptions = CollectorDependencies &
   (
     | { sources: readonly DeploymentSource[]; revision: string }
     // Compatibility for existing injected tests only. Production always supplies the manifest.
-    | { keyFile: string; origins?: Record<PoolProviderId, string>; fetcher: typeof fetch }
+    | { keyFile: string; origins?: Record<string, string>; fetcher: typeof fetch }
   );
 
 interface CollectionSource {
@@ -80,13 +106,75 @@ interface CollectionSource {
   label: string;
   upstreamOrigin: string;
   managementKeyFile: string;
-  providers: readonly PoolProviderId[];
+  providers: readonly BuiltInPoolProviderId[];
+  /** The manifest's own provider list for this source, when it declares one. */
+  declaredProviders?: readonly string[];
+}
+
+/**
+ * The catalog entries Quota Management shows for one source: every provider with a credential,
+ * and a waiting provider where Auth Files shows it too (`ownsWaitingProvider`) and that can be
+ * signed in to, since its card offers Connect.
+ */
+export function sourceCatalogEntries(
+  catalog: ProviderCatalog,
+  declared: readonly string[],
+  claimedElsewhere: readonly string[]
+): ProviderCatalog['providers'] {
+  return catalog.providers.filter(
+    (entry) =>
+      entry.credentials.total > 0 ||
+      (entry.oauth !== null && ownsWaitingProvider(catalog, entry, declared, claimedElsewhere))
+  );
+}
+
+/** One live account of its validated source, as handed to `withManagedAccount`. */
+export interface ManagedAccount {
+  provider: PoolProviderId;
+  authIndex: string;
+  chatgptAccountId: string | null;
+  /** The hub's `/requests/api-call`, shaped as the shared src/services/api helpers expect. */
+  api: ReturnType<typeof buildApiCallApi>;
+  /** Any other management POST. Throws unless the hub answers 2xx. */
+  post(path: string, body: Record<string, unknown>): Promise<unknown>;
 }
 
 interface InventoryAccount {
   account: StoredAccount;
   authIndex: string;
   chatgptAccountId: string | null;
+  /** Antigravity's Cloud Code project, which its quota read names. */
+  projectId: string | null;
+}
+
+interface InventoryGroup {
+  provider: PoolProviderId;
+  accounts: InventoryAccount[];
+  poll: boolean;
+}
+
+type DeleteScopes = ReadonlyMap<string | undefined, ReadonlySet<string>>;
+
+function deletionNames(scopes: DeleteScopes, instanceId: string | undefined) {
+  const common = scopes.get(undefined);
+  const scoped = scopes.get(instanceId);
+  return common && scoped && common !== scoped
+    ? new Set([...common, ...scoped])
+    : (scoped ?? common);
+}
+
+function collectionSource(source: DeploymentSource): CollectionSource {
+  const declared = source.providers;
+  const providers = QUOTA_PROVIDERS.filter((id) =>
+    id === 'antigravity'
+      ? declared?.includes(id) === true
+      : !declared || declared.some((provider) => provider === 'claude' || provider === 'codex')
+  );
+  return Object.freeze({
+    ...source,
+    providers: Object.freeze(providers),
+    ...(declared ? { declaredProviders: declared } : {}),
+  });
 }
 
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -131,6 +219,8 @@ function inventory(payload: unknown, provider: PoolProviderId, nowMs: number): I
     ) {
       throw new Error('Invalid quota inventory');
     }
+    // A credential is always its runtime provider, the id /credentials and quota fetch report and
+    // ProxD catalogues every credential under; its login entry never changes which account it is.
     if (kind !== provider) continue;
     if (
       !boundedString(file.auth_index, 256) ||
@@ -149,6 +239,7 @@ function inventory(payload: unknown, provider: PoolProviderId, nowMs: number): I
         isRecord(file.id_token) && boundedString(file.id_token.chatgpt_account_id, 256)
           ? file.id_token.chatgpt_account_id
           : null,
+      projectId: boundedString(file.project_id, 256) ? file.project_id : null,
       account: {
         id,
         provider,
@@ -164,12 +255,16 @@ function inventory(payload: unknown, provider: PoolProviderId, nowMs: number): I
   return accounts;
 }
 
-function quotaSamples(
-  provider: PoolProviderId,
-  accountId: string,
-  body: unknown,
-  observedAtMs: number
-): { samples: QuotaSample[]; windows: AccountQuotaWindow[] } {
+/** Antigravity's quota summary as windows; rejects malformed payloads via the shared decoder. */
+function antigravityWindows(body: unknown) {
+  const payload = parseAntigravityPayload(body);
+  if (!payload) throw new Error('Invalid quota response');
+  const { windows, valid } = decodeAntigravityQuotaWindows(payload);
+  if (!valid) throw new Error('Invalid quota response');
+  return windows;
+}
+
+function usageWindows(provider: 'claude' | 'codex', body: unknown) {
   const parsed =
     provider === 'claude'
       ? { provider: 'claude' as const, payload: parseClaudeUsagePayload(body) }
@@ -200,21 +295,67 @@ function quotaSamples(
       throw new Error('Invalid quota response');
     }
   }
+  // A missing five-hour window is proof only when the provider's slot is absent or null: the
+  // builders skip any falsy window, so `false`, `0` or `""` there would pass as "no such limit".
+  if (provider === 'codex') {
+    for (const key of ['rate_limit', 'rateLimit']) {
+      const limit = payload[key];
+      if (!isRecord(limit)) continue;
+      for (const slot of ['primary_window', 'primaryWindow', 'secondary_window', 'secondaryWindow']) {
+        const window = limit[slot];
+        if (window !== undefined && window !== null && !isRecord(window)) {
+          throw new Error('Invalid quota response');
+        }
+      }
+    }
+  }
+  return parsed.provider === 'claude'
+    ? buildClaudeQuotaWindows(parsed.payload, label)
+    : buildCodexQuotaWindows(parsed.payload, label);
+}
+
+/** ECMAScript Date range limit (±8.64e15 ms); values past it produce Invalid Date / RangeError. */
+const MAX_JS_DATE_MS = 8_640_000_000_000_000;
+
+function validResetAtMs(value: number | null | undefined): boolean {
+  return (
+    value === null ||
+    value === undefined ||
+    (Number.isSafeInteger(value) && Math.abs(value) <= MAX_JS_DATE_MS)
+  );
+}
+
+/** Extracts the payload body from a successful management `/requests/api-call` response. */
+function quotaResponseBody(response: unknown): string | Record<string, unknown> | null {
+  return isRecord(response) &&
+    response.status_code === 200 &&
+    (typeof response.body === 'string' || isRecord(response.body))
+    ? response.body
+    : null;
+}
+
+export function quotaSamples(
+  provider: BuiltInPoolProviderId,
+  accountId: string,
+  body: unknown,
+  observedAtMs: number
+): { samples: QuotaSample[]; windows: AccountQuotaWindow[] } {
   const windows =
-    parsed.provider === 'claude'
-      ? buildClaudeQuotaWindows(parsed.payload, label)
-      : buildCodexQuotaWindows(parsed.payload, label);
+    provider === 'antigravity' ? antigravityWindows(body) : usageWindows(provider, body);
   const samples: QuotaSample[] = [];
   for (const entry of windows) {
-    let window: PoolWindow;
-    if (entry.id === 'five-hour') window = 'five-hour';
-    else if (entry.id === (provider === 'claude' ? 'seven-day' : 'weekly')) window = 'weekly';
-    else continue;
+    const resetAtMs = entry.resetAtMs ?? null;
+    if (!validResetAtMs(resetAtMs)) throw new Error('Invalid quota response');
+    const window = laneOf(provider, entry.id);
+    if (window !== 'five-hour' && window !== 'weekly') continue;
+    const periodHours = entry.periodHours ?? null;
     if (
+      samples.some((sample) => sample.window === window) ||
       entry.usedPercent === null ||
       !Number.isFinite(entry.usedPercent) ||
       entry.usedPercent < 0 ||
-      entry.usedPercent > 100
+      entry.usedPercent > 100 ||
+      (periodHours !== null && (!Number.isFinite(periodHours) || periodHours <= 0))
     ) {
       throw new Error('Invalid quota response');
     }
@@ -223,8 +364,8 @@ function quotaSamples(
       window,
       observedAtMs,
       remainingPercent: 100 - entry.usedPercent,
-      resetAtMs: entry.resetAtMs ?? null,
-      periodHours: entry.periodHours ?? null,
+      resetAtMs,
+      periodHours,
     });
   }
   // Explicit missing observations supersede earlier balances without inventing zero usage.
@@ -253,6 +394,7 @@ function quotaSamples(
           ? Math.min(100, Math.max(0, 100 - entry.usedPercent))
           : null,
       resetAtMs: entry.resetAtMs ?? null,
+      periodHours: entry.periodHours ?? null,
     })),
   };
 }
@@ -261,7 +403,7 @@ function quotaSamples(
  * Log detail for a failed poll: numeric status, retry-after seconds and header names only, so
  * upstream bodies, header values and identities never reach the log.
  */
-function failureDetail(accountId: string, response: unknown): string {
+function failureDetail(response: unknown): string {
   const status =
     isRecord(response) && typeof response.status_code === 'number'
       ? response.status_code
@@ -274,13 +416,13 @@ function failureDetail(accountId: string, response: unknown): string {
   const retry = Object.entries(headers).find(([name]) => name.toLowerCase() === 'retry-after')?.[1];
   const seconds =
     Array.isArray(retry) && /^\d{1,6}$/.test(String(retry[0])) ? String(retry[0]) : 'none';
-  return `${status} account=${accountId.slice(-8)} retry-after=${seconds} headers=${names.join(',') || 'none'}`;
+  return `${status} retry-after=${seconds} headers=${names.join(',') || 'none'}`;
 }
 
 /** Enumerates each instance once, then collects supported read-only quota observations. */
 export class QuotaCollector {
-  private readonly collectionSources: readonly CollectionSource[];
-  readonly revision: string | undefined;
+  private collectionSources: readonly CollectionSource[] = [];
+  private appliedRevision: string | undefined;
   private readonly fetcher: typeof fetch;
   private readonly now: () => number;
   private inFlight: Promise<void> | null = null;
@@ -295,6 +437,20 @@ export class QuotaCollector {
   private readonly billingAttempts = new Map<string, number>();
   private readonly latestBilling = new Map<string, AccountBilling>();
   private readonly latestWindows = new Map<string, AccountQuotaWindow[]>();
+  /** Claude's extra usage and dollar balances from the usage payload; memory-only, never pooled. */
+  private readonly latestBalances = new Map<
+    string,
+    Pick<ClaudeUsageSnapshot, 'extraUsage' | 'dollarWindows'>
+  >();
+  /** Codex credit balance and unlimited flag from the usage payload; memory-only, never pooled. */
+  private readonly latestCredits = new Map<
+    string,
+    { balance: string | null; unlimited: boolean }
+  >();
+  private readonly latestReadingAt = new Map<string, number>();
+  private readonly latestDiscoveredPlanLabels = new Map<string, string>();
+  /** Reset claims in progress, so a full collection starts only after them like after a poll. */
+  private readonly claimFlights = new Set<Promise<unknown>>();
   private readonly latestResets = new Map<string, AccountResets>();
   private readonly resetCreditAttempts = new Map<string, number>();
   /** Codex credit expiries from the details endpoint, keyed by account, with the count they list. */
@@ -306,15 +462,19 @@ export class QuotaCollector {
   /** Per source: the last inventory read started, and the newest one whose result was applied. */
   private readonly inventorySeq = new Map<string, number>();
   private readonly appliedInventorySeq = new Map<string, number>();
+  private readonly appliedCatalogSeq = new Map<string, number>();
   private readonly inventoryStates = new Map<string, InventorySourceState>();
   private syncedAtMs: number | null = null;
   private syncRunning: Promise<void> | null = null;
-  private syncQueued: { names: Set<string>; promise: Promise<InventoryChange> } | null = null;
+  private syncQueued: {
+    scopes: Map<string | undefined, Set<string>>;
+    promise: Promise<InventoryChange>;
+  } | null = null;
   private lastSyncStartedAtMs: number | null = null;
   private syncController = new AbortController();
   private readonly retiredNames = new Map<
     string,
-    { name: string; sourceId: string; atMs: number }
+    { name: string; provider: PoolProviderId; source: CollectionSource; atMs: number }
   >();
   /** In-flight polls per account, so removing an account can abort them. */
   private readonly pollControllers = new Map<string, Set<AbortController>>();
@@ -324,14 +484,12 @@ export class QuotaCollector {
     options: CollectorOptions
   ) {
     if ('sources' in options) {
-      this.revision = options.revision;
-      const seen = new Set<string>();
-      this.collectionSources = options.sources.map((source) => {
-        if (!source.instanceId || seen.has(source.instanceId))
-          throw new Error('Duplicate quota source');
-        seen.add(source.instanceId);
-        return Object.freeze({ ...source, providers: QUOTA_PROVIDERS });
-      });
+      if (
+        options.sources.some((source) => !source.instanceId) ||
+        new Set(options.sources.map((source) => source.instanceId)).size !== options.sources.length
+      )
+        throw new Error('Duplicate quota source');
+      this.applySources(options.sources, options.revision);
     } else {
       if (!options.fetcher) throw new Error('Legacy quota injection requires a fetcher');
       const manifest = options.origins
@@ -358,6 +516,25 @@ export class QuotaCollector {
     this.nextRefresh = this.now();
   }
 
+  get revision(): string | undefined {
+    return this.appliedRevision;
+  }
+
+  /** Admit validated sources for the next read. Existing source bindings remain pinned. */
+  applySources(sources: readonly DeploymentSource[], revision: string): void {
+    const seen = new Set(this.collectionSources.map((source) => source.instanceId));
+    const additions: CollectionSource[] = [];
+    for (const source of sources) {
+      if (seen.has(source.instanceId)) continue;
+      seen.add(source.instanceId);
+      additions.push(collectionSource(source));
+    }
+    // Removals and edits wait for a restart, so a revision that adds nothing is not applied.
+    if (!additions.length) return;
+    this.collectionSources = [...this.collectionSources, ...additions];
+    this.appliedRevision = revision;
+  }
+
   get refreshing(): boolean {
     return this.inFlight !== null;
   }
@@ -377,6 +554,12 @@ export class QuotaCollector {
   get windows(): ReadonlyMap<string, readonly AccountQuotaWindow[]> {
     return this.latestWindows;
   }
+  get observedAt(): ReadonlyMap<string, number> {
+    return this.latestReadingAt;
+  }
+  get discoveredPlanLabels(): ReadonlyMap<string, string> {
+    return this.latestDiscoveredPlanLabels;
+  }
   /** In memory only: refilled by the next successful reset reading. */
   get resets(): ReadonlyMap<string, AccountResets> {
     return this.latestResets;
@@ -384,11 +567,35 @@ export class QuotaCollector {
   get billing(): ReadonlyMap<string, AccountBilling> {
     return this.latestBilling;
   }
+  /** In memory only: refilled by the next Claude reading after a restart. */
+  get balances(): ReadonlyMap<string, Pick<ClaudeUsageSnapshot, 'extraUsage' | 'dollarWindows'>> {
+    return this.latestBalances;
+  }
+  /** In memory only: refilled by the next Codex reading after a restart. */
+  get credits(): ReadonlyMap<string, { balance: string | null; unlimited: boolean }> {
+    return this.latestCredits;
+  }
+  /**
+   * When a targeted read of this account may next run, if the 20 s floor is what holds it back;
+   * null when nothing does (never read, floor passed, or not an account the collector knows).
+   */
+  accountRetryAtMs(requestedId: string): number | null {
+    const account = this.store
+      .listAccounts()
+      .find((entry) => entry.id === requestedId || entry.sourceAccountId === requestedId);
+    // A read in flight is not a floor: its caller gets that read's own result.
+    if (!account || this.accountFlights.has(account.id)) return null;
+    const last = this.accountAttempts.get(account.id);
+    return last !== undefined && last + ACCOUNT_REFRESH_FLOOR_MS > this.now()
+      ? last + ACCOUNT_REFRESH_FLOOR_MS
+      : null;
+  }
   get sources(): QuotaSourceView[] | undefined {
     if (this.revision === undefined) return undefined;
     return this.collectionSources.map((source) => ({
       instanceId: source.instanceId!,
       sourceLabel: source.label,
+      providers: source.providers,
     }));
   }
 
@@ -397,12 +604,23 @@ export class QuotaCollector {
     return this.collectionSources.flatMap((source) =>
       source.instanceId === undefined
         ? []
-        : source.providers.map((provider) => ({
+        : this.inventoryProviders(source).map((provider) => ({
             instanceId: source.instanceId!,
             provider,
             state: this.inventoryStates.get(this.stateKey(source, provider)) ?? 'unavailable',
           }))
     );
+  }
+
+  private inventoryProviders(source: CollectionSource): readonly PoolProviderId[] {
+    if (!source.instanceId) return source.providers;
+    return [
+      ...source.providers,
+      ...this.store
+        .listProviderCatalog(source.instanceId)
+        .filter((entry) => !isBuiltInPoolProvider(entry.provider))
+        .map((entry) => entry.provider),
+    ];
   }
   /** When the last inventory read finished, whether or not it succeeded. */
   get inventorySyncedAtMs(): number | null {
@@ -417,26 +635,30 @@ export class QuotaCollector {
    * `deletedNames` are credential file names the user deleted; matching accounts that the fresh
    * inventory confirms are gone are purged immediately instead of after the grace period.
    */
-  syncInventory(options: { deletedNames?: readonly string[] } = {}): Promise<InventoryChange> {
+  syncInventory(
+    options: { deletedNames?: readonly string[]; instanceId?: string } = {}
+  ): Promise<InventoryChange> {
     const names = options.deletedNames ?? [];
-    if (!this.syncRunning) return this.startSync(new Set(names));
+    if (!this.syncRunning) return this.startSync(new Map([[options.instanceId, new Set(names)]]));
     if (!this.syncQueued) {
       const queued = {
-        names: new Set<string>(),
+        scopes: new Map<string | undefined, Set<string>>(),
         promise: undefined as unknown as Promise<InventoryChange>,
       };
       queued.promise = this.syncRunning.then(() => {
         this.syncQueued = null;
-        return this.startSync(queued.names);
+        return this.startSync(queued.scopes);
       });
       this.syncQueued = queued;
     }
-    for (const name of names) this.syncQueued.names.add(name);
+    const scoped = this.syncQueued.scopes.get(options.instanceId) ?? new Set<string>();
+    for (const name of names) scoped.add(name);
+    this.syncQueued.scopes.set(options.instanceId, scoped);
     return this.syncQueued.promise;
   }
 
-  private startSync(names: ReadonlySet<string>): Promise<InventoryChange> {
-    const run = this.runSync(names);
+  private startSync(scopes: DeleteScopes): Promise<InventoryChange> {
+    const run = this.runSync(scopes);
     const settled: Promise<void> = run
       .then(
         () => undefined,
@@ -449,7 +671,7 @@ export class QuotaCollector {
     return run;
   }
 
-  private async runSync(names: ReadonlySet<string>): Promise<InventoryChange> {
+  private async runSync(scopes: DeleteScopes): Promise<InventoryChange> {
     if (this.lastSyncStartedAtMs !== null) {
       const wait = this.lastSyncStartedAtMs + SYNC_FLOOR_MS - this.now();
       if (wait > 0) await this.sleep(wait);
@@ -463,15 +685,20 @@ export class QuotaCollector {
         const seq = this.startInventoryRead(source);
         let read: Awaited<ReturnType<QuotaCollector['readInventory']>>;
         try {
-          read = await this.readInventory(source, signal);
+          read = await this.readInventory(source, signal, { seq });
         } catch {
-          if (!signal.aborted) this.markInventoryUnavailable(source);
+          if (!signal.aborted) this.markInventoryUnavailable(source, seq);
           return;
         }
         if (signal.aborted) return;
-        const applied = this.applyInventory(source, read, seq, names);
+        const applied = this.applyInventory(
+          source,
+          read,
+          seq,
+          deletionNames(scopes, source.instanceId)
+        );
         if (!applied) return;
-        fresh.add(source.instanceId ?? source.label);
+        applied.confirmed.forEach((provider) => fresh.add(this.stateKey(source, provider)));
         change.added.push(...applied.change.added);
         change.removed.push(...applied.change.removed);
         change.purged.push(...applied.change.purged);
@@ -483,8 +710,8 @@ export class QuotaCollector {
     const late = [...this.retiredNames]
       .filter(([, remembered]) => {
         return (
-          fresh.has(remembered.sourceId) &&
-          names.has(remembered.name) &&
+          fresh.has(this.stateKey(remembered.source, remembered.provider)) &&
+          deletionNames(scopes, remembered.source.instanceId)?.has(remembered.name) &&
           nowMs - remembered.atMs <= RETIRED_NAME_MEMORY_MS
         );
       })
@@ -507,6 +734,10 @@ export class QuotaCollector {
       this.billingAttempts.delete(id);
       this.latestBilling.delete(id);
       this.latestWindows.delete(id);
+      this.latestBalances.delete(id);
+      this.latestCredits.delete(id);
+      this.latestReadingAt.delete(id);
+      this.latestDiscoveredPlanLabels.delete(id);
       this.latestResets.delete(id);
       this.resetCreditAttempts.delete(id);
       this.latestResetCredits.delete(id);
@@ -536,7 +767,7 @@ export class QuotaCollector {
     this.lastAttemptAtMs = nowMs;
     this.nextRefresh = nowMs + REFRESH_INTERVAL_MS;
     this.controller = new AbortController();
-    const pendingAccounts = [...this.accountFlights.values()];
+    const pendingAccounts = [...this.accountFlights.values(), ...this.claimFlights];
     const signal = this.controller.signal;
     this.inFlight = Promise.allSettled(pendingAccounts)
       .then(() => this.collect(signal))
@@ -560,15 +791,116 @@ export class QuotaCollector {
     return this.inFlight;
   }
 
-  refreshAccount(accountId: string): Promise<boolean> {
-    const existing = this.accountFlights.get(accountId);
-    if (existing) return existing;
+  /** What is held in memory for one account: its windows and reset counts, null before a poll. */
+  reading(accountId: string): ResetReading | null {
+    const windows = this.latestWindows.get(accountId);
+    const observedAtMs = this.latestReadingAt.get(accountId);
+    if (!windows || observedAtMs === undefined) return null;
+    const resets = this.latestResets.get(accountId);
+    return {
+      observedAtMs,
+      windows: windows.map(({ id, remainingPercent, resetAtMs }) => ({
+        id,
+        remainingPercent,
+        resetAtMs,
+      })),
+      resets: resets
+        ? { available: resets.available, usable: resets.usable, blocker: resets.blocker }
+        : null,
+    };
+  }
+
+  /**
+   * Runs `use` against one live account of its validated source, serialized with collection like a
+   * targeted refresh: it starts after a full collection in flight, and a new one waits for it.
+   * Returns null when the account is not live and enabled. A failed inventory read throws.
+   */
+  async withManagedAccount<T>(
+    accountId: string,
+    use: (account: ManagedAccount) => Promise<T>
+  ): Promise<T | null> {
+    const live = this.liveAccount(accountId);
+    if (!live) return null;
+    const { stored, source } = live;
+    // Not tied to stop(): a user's claim that is already on its way is let finish.
+    const signal = new AbortController().signal;
+    const flight = (async () => {
+      await this.inFlight?.catch(() => {});
+      const found = await this.inventoryEntry(source, stored, signal);
+      if (!found) return null;
+      const { key, entry } = found;
+      const post = (path: string, body: Record<string, unknown>, timeoutMs?: number) =>
+        this.request(source, path.replace(/^\//, ''), key, signal, body, timeoutMs);
+      return use({
+        provider: stored.provider,
+        authIndex: entry.authIndex,
+        chatgptAccountId: entry.chatgptAccountId,
+        api: buildApiCallApi({
+          post: async <R>(path: string, body?: unknown, config?: { timeout?: number }) =>
+            (await post(path, body as Record<string, unknown>, config?.timeout)) as R,
+        }),
+        post: (path, body) => post(path, body),
+      });
+    })();
+    this.claimFlights.add(flight);
+    try {
+      return await flight;
+    } finally {
+      this.claimFlights.delete(flight);
+    }
+  }
+
+  /** An enabled, live account and the source it belongs to; null otherwise. */
+  private liveAccount(accountId: string) {
     const stored = this.store.listAccounts().find((account) => account.id === accountId);
-    if (!stored || stored.disabled || stored.retired) return Promise.resolve(false);
+    if (!stored || stored.disabled || stored.retired) return null;
     const source = this.collectionSources.find((entry) => entry.instanceId === stored.instanceId);
-    if (!source) return Promise.resolve(false);
+    return source ? { stored, source } : null;
+  }
+
+  /** Reads the source's credential list and finds this account's enabled entry in it. */
+  private async inventoryEntry(
+    source: CollectionSource,
+    account: StoredAccount,
+    signal: AbortSignal
+  ) {
+    const { key, groups } = await this.readInventory(source, signal, {
+      discover: !isBuiltInPoolProvider(account.provider),
+    });
+    const entry = groups
+      .filter((group) => group.poll && group.provider === account.provider)
+      .flatMap((group) => group.accounts)
+      .find(
+        ({ authIndex }) =>
+          this.store.accountIdFor(source.instanceId!, account.provider, authIndex) === account.id
+      );
+    return entry && !entry.account.disabled ? { key, entry } : null;
+  }
+
+  /**
+   * `force` skips the 20-second floor and never adopts a poll already in flight (it may have read
+   * the account before a claim was sent): it waits for that one, then reads again.
+   */
+  refreshAccount(requestedId: string, options: { force?: boolean } = {}): Promise<boolean> {
+    // The stored id or the source-qualified one (`sourceAccountId`, which a browser can build
+    // from a source and an auth index) name one account: one flight, one 20 s limit.
+    const accountId =
+      this.store
+        .listAccounts()
+        .find((account) => account.id === requestedId || account.sourceAccountId === requestedId)
+        ?.id ?? requestedId;
+    const existing = this.accountFlights.get(accountId);
+    if (existing) {
+      return options.force
+        ? existing.catch(() => false).then(() => this.refreshAccount(accountId, options))
+        : existing;
+    }
+    const live = this.liveAccount(accountId);
+    if (!live) return Promise.resolve(false);
+    const { stored, source } = live;
     const last = this.accountAttempts.get(accountId);
-    if (last !== undefined && this.now() - last < 20_000) return Promise.resolve(false);
+    if (!options.force && last !== undefined && this.now() - last < ACCOUNT_REFRESH_FLOOR_MS)
+      return Promise.resolve(false);
     const fullCollection = this.inFlight;
     const controller = new AbortController();
     const signal = controller.signal;
@@ -580,14 +912,9 @@ export class QuotaCollector {
       if (!current || current.disabled || current.retired) return false;
       this.accountAttempts.set(accountId, this.now());
       try {
-        const { key, groups } = await this.readInventory(source, signal);
-        const entry = groups
-          .flatMap((group) => group.accounts)
-          .find(
-            ({ account, authIndex }) =>
-              this.store.accountIdFor(source.instanceId!, account.provider, authIndex) === accountId
-          );
-        if (!entry || entry.account.disabled) return false;
+        const found = await this.inventoryEntry(source, current, signal);
+        if (!found) return false;
+        const { key, entry } = found;
         return await this.pollAccount(
           current,
           entry.authIndex,
@@ -595,7 +922,8 @@ export class QuotaCollector {
           key,
           signal,
           new Map([[accountId, current.planObservedAtMs ?? null]]),
-          entry.chatgptAccountId
+          entry.chatgptAccountId,
+          entry.projectId
         );
       } catch {
         if (!signal.aborted) this.addIssue(source, stored.provider, 'quota-unavailable');
@@ -642,7 +970,7 @@ export class QuotaCollector {
 
   /** Plan weight is best-effort: a failed lookup leaves the stored plan as it was. */
   private async recordPlan(
-    account: { id: string; provider: PoolProviderId },
+    account: { id: string; provider: BuiltInPoolProviderId },
     authIndex: string,
     source: CollectionSource,
     key: string,
@@ -654,25 +982,38 @@ export class QuotaCollector {
     if (account.provider === 'codex') {
       plan = planFromCodexUsage(usageBody);
     } else {
-      // Claude names the plan only in its profile; plans change rarely, so ask every few hours.
+      // Claude names the plan only in its profile and Antigravity only in loadCodeAssist; plans
+      // change rarely, so ask every few hours.
       const observedAt = storedPlans.get(account.id) ?? null;
       const attemptedAt = this.profileAttempts.get(account.id) ?? null;
       const last = Math.max(observedAt ?? -Infinity, attemptedAt ?? -Infinity);
       if (this.profileAttempts.has(account.id) && this.now() - last < PLAN_REFRESH_MS) return;
       this.profileAttempts.set(account.id, this.now());
       try {
-        const response = await this.request(source, 'requests/api-call', key, signal, {
-          authIndex,
-          method: 'GET',
-          url: CLAUDE_PROFILE_URL,
-          header: CLAUDE_REQUEST_HEADERS,
-        });
-        if (isRecord(response) && response.status_code === 200) {
-          const billing = billingFromClaudeProfile(response.body);
-          if (billing && !signal.aborted && this.store.isLive(account.id)) {
-            this.latestBilling.set(account.id, billing);
+        if (account.provider === 'antigravity') {
+          const response = await this.request(source, 'requests/api-call', key, signal, {
+            authIndex,
+            method: 'POST',
+            url: ANTIGRAVITY_CODE_ASSIST_URL,
+            header: ANTIGRAVITY_REQUEST_HEADERS,
+            data: CODE_ASSIST_REQUEST_BODY,
+          });
+          if (isRecord(response) && response.status_code === 200)
+            plan = planFromAntigravityCodeAssist(response.body);
+        } else {
+          const response = await this.request(source, 'requests/api-call', key, signal, {
+            authIndex,
+            method: 'GET',
+            url: CLAUDE_PROFILE_URL,
+            header: CLAUDE_REQUEST_HEADERS,
+          });
+          if (isRecord(response) && response.status_code === 200) {
+            const billing = billingFromClaudeProfile(response.body);
+            if (billing && !signal.aborted && this.store.isLive(account.id)) {
+              this.latestBilling.set(account.id, billing);
+            }
+            plan = planFromClaudeProfile(response.body);
           }
-          plan = planFromClaudeProfile(response.body);
         }
       } catch {
         return;
@@ -796,18 +1137,21 @@ export class QuotaCollector {
     path: string,
     key: string,
     signal: AbortSignal,
-    body?: Record<string, unknown>
+    body?: Record<string, unknown>,
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
+    allowNotFound = false
   ): Promise<unknown> {
     signal.throwIfAborted();
     const response = await this.fetcher(new URL(`/v8/management/${path}`, source.upstreamOrigin), {
       method: body ? 'POST' : 'GET',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
       redirect: 'error',
     });
     if (!response.ok || !response.body) {
       await response.body?.cancel();
+      if (allowNotFound && response.status === 404) return null;
       throw new Error('Quota request unavailable');
     }
     return readJson(response.body, MAX_RESPONSE_BYTES, 'Quota response too large');
@@ -821,7 +1165,8 @@ export class QuotaCollector {
     key: string,
     outerSignal: AbortSignal,
     storedPlans: Map<string, number | null>,
-    chatgptAccountId: string | null
+    chatgptAccountId: string | null,
+    projectId: string | null = null
   ): Promise<boolean> {
     if (!this.store.isLive(account.id)) return false;
     const own = new AbortController();
@@ -836,7 +1181,8 @@ export class QuotaCollector {
         key,
         AbortSignal.any([outerSignal, own.signal]),
         storedPlans,
-        chatgptAccountId
+        chatgptAccountId,
+        projectId
       );
     } finally {
       controllers.delete(own);
@@ -853,40 +1199,52 @@ export class QuotaCollector {
     key: string,
     signal: AbortSignal,
     storedPlans: Map<string, number | null>,
-    chatgptAccountId: string | null
+    chatgptAccountId: string | null,
+    projectId: string | null
   ): Promise<boolean> {
+    const provider = account.provider;
+    if (!isBuiltInPoolProvider(provider)) {
+      return this.pollDiscoveredAccount(account, authIndex, source, key, signal);
+    }
     let samples: QuotaSample[];
     let windows: AccountQuotaWindow[];
     let usageBody: unknown;
     let upstream: unknown;
     try {
-      const claude = account.provider === 'claude';
-      const response = await this.request(source, 'requests/api-call', key, signal, {
-        authIndex,
-        method: 'GET',
-        url: claude ? ANTHROPIC_API_ORIGIN + ANTHROPIC_RESET_GRANT_STATUS_PATH : CODEX_USAGE_URL,
-        header: claude ? CLAUDE_REQUEST_HEADERS : CODEX_REQUEST_HEADERS,
-      });
-      upstream = response;
-      if (
-        !isRecord(response) ||
-        response.status_code !== 200 ||
-        !(typeof response.body === 'string' || isRecord(response.body))
-      ) {
-        throw new Error('Quota request unavailable');
+      if (account.provider === 'antigravity') {
+        const result = await this.readAntigravityQuota(
+          account.id,
+          source,
+          key,
+          signal,
+          authIndex,
+          projectId
+        );
+        upstream = result.response;
+        if (!result.samples || !result.windows) throw new Error('Quota request unavailable');
+        ({ samples, windows } = result);
+        usageBody = isRecord(result.response) ? result.response.body : undefined;
+      } else {
+        const claude = account.provider === 'claude';
+        const response = await this.request(source, 'requests/api-call', key, signal, {
+          authIndex,
+          method: 'GET',
+          url: claude
+            ? ANTHROPIC_API_ORIGIN + ANTHROPIC_RESET_GRANT_STATUS_PATH
+            : CODEX_USAGE_URL,
+          header: claude ? CLAUDE_REQUEST_HEADERS : CODEX_REQUEST_HEADERS,
+        });
+        upstream = response;
+        const body = quotaResponseBody(response);
+        if (body === null) {
+          throw new Error('Quota request unavailable');
+        }
+        ({ samples, windows } = quotaSamples(provider, account.id, body, this.now()));
+        usageBody = body;
       }
-      ({ samples, windows } = quotaSamples(
-        account.provider,
-        account.id,
-        response.body,
-        this.now()
-      ));
-      usageBody = response.body;
     } catch {
       if (!signal.aborted && this.store.isLive(account.id)) {
-        console.error(
-          `Quota request failed: ${account.provider} ${failureDetail(account.id, upstream)}`
-        );
+        console.error(`Quota request failed: ${account.provider} ${failureDetail(upstream)}`);
         this.addIssue(source, account.provider, 'quota-unavailable');
         this.store.markAccountError(account.id, this.now());
       }
@@ -898,8 +1256,23 @@ export class QuotaCollector {
       try {
         this.store.recordSamples(samples);
         this.latestWindows.set(account.id, windows);
-        const resets = readAccountResets(account.provider, usageBody, this.now());
+        this.latestReadingAt.set(account.id, this.now());
+        const resets = readAccountResets(provider, usageBody, this.now());
         if (resets) this.latestResets.set(account.id, resets);
+        if (account.provider === 'claude') {
+          const snapshot = normalizeClaudeUsageSnapshot(parseClaudeUsagePayload(usageBody));
+          if (snapshot) {
+            this.latestBalances.set(account.id, {
+              extraUsage: snapshot.extraUsage,
+              dollarWindows: snapshot.dollarWindows,
+            });
+          }
+        } else if (account.provider === 'codex') {
+          this.latestCredits.set(
+            account.id,
+            normalizeCodexAccountCredits(parseCodexUsagePayload(usageBody)?.credits)
+          );
+        }
       } catch {
         this.addIssue(source, account.provider, 'quota-unavailable');
         throw new Error('Quota sample persistence failed');
@@ -915,17 +1288,180 @@ export class QuotaCollector {
         );
         await this.recordCodexBilling(account.id, authIndex, chatgptAccountId, source, key, signal);
       }
-      await this.recordPlan(account, authIndex, source, key, signal, usageBody, storedPlans);
+      await this.recordPlan(
+        { id: account.id, provider },
+        authIndex,
+        source,
+        key,
+        signal,
+        usageBody,
+        storedPlans
+      );
     }
     return !signal.aborted && this.store.isLive(account.id);
   }
 
-  private async readInventory(source: CollectionSource, signal: AbortSignal) {
+  private async pollDiscoveredAccount(
+    account: StoredAccount,
+    authIndex: string,
+    source: CollectionSource,
+    key: string,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    let reading: ReturnType<typeof decodeNormalizedQuota>;
+    try {
+      reading = decodeNormalizedQuota(
+        await this.request(source, 'quota/fetch', key, signal, { auth_index: authIndex })
+      );
+    } catch {
+      if (!signal.aborted && this.store.isLive(account.id)) {
+        this.addIssue(source, account.provider, 'quota-unavailable');
+        this.store.markAccountError(account.id, this.now());
+      }
+      return false;
+    }
+    if (signal.aborted || !this.store.isLive(account.id)) return false;
+    const observedAtMs = this.now();
+    const profile = this.store.getPoolProfile({
+      instanceId: source.instanceId!,
+      provider: account.provider,
+    });
+    this.store.recordDiscoveredReading(
+      account.id,
+      observedAtMs,
+      reading.plan,
+      discoveredPoolSamples(account.id, observedAtMs, reading.windows, profile)
+    );
+    this.latestWindows.set(account.id, reading.windows);
+    this.latestReadingAt.set(account.id, observedAtMs);
+    if (reading.planLabel) this.latestDiscoveredPlanLabels.set(account.id, reading.planLabel);
+    else this.latestDiscoveredPlanLabels.delete(account.id);
+    return true;
+  }
+
+  /**
+   * Antigravity's quota summary for the credential's Cloud Code project, from the same endpoints,
+   * in the same order, as the hub-direct card (`ANTIGRAVITY_QUOTA_URLS`): each endpoint is
+   * validated in turn so a transport failure or malformed 200 continues to the next while
+   * cancellation stops immediately. No project id means nothing can be read.
+   */
+  private async readAntigravityQuota(
+    accountId: string,
+    source: CollectionSource,
+    key: string,
+    signal: AbortSignal,
+    authIndex: string,
+    projectId: string | null
+  ): Promise<{
+    response: unknown;
+    samples?: QuotaSample[];
+    windows?: AccountQuotaWindow[];
+  }> {
+    if (!projectId) return { response: null };
+    let lastResponse: unknown = null;
+    for (const url of ANTIGRAVITY_QUOTA_URLS) {
+      if (signal.aborted) throw new Error('Quota request aborted');
+      let response: unknown;
+      try {
+        response = await this.request(source, 'requests/api-call', key, signal, {
+          authIndex,
+          method: 'POST',
+          url,
+          header: ANTIGRAVITY_REQUEST_HEADERS,
+          data: JSON.stringify({ project: projectId }),
+        });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        lastResponse = null;
+        continue;
+      }
+      lastResponse = response;
+      const body = quotaResponseBody(response);
+      if (body === null) continue;
+      try {
+        const parsed = quotaSamples('antigravity', accountId, body, this.now());
+        return { response, ...parsed };
+      } catch {
+        continue;
+      }
+    }
+    return { response: lastResponse };
+  }
+
+  private async readCatalog(
+    source: CollectionSource,
+    key: string,
+    signal: AbortSignal,
+    seq?: number
+  ) {
+    const instanceId = source.instanceId;
+    if (!instanceId) return null;
+    let catalog: ReturnType<typeof parseProviderCatalog>;
+    try {
+      catalog = parseProviderCatalog(
+        await this.request(source, 'providers', key, signal, undefined, CATALOG_TIMEOUT_MS, true)
+      );
+    } catch {
+      return null;
+    }
+    if (
+      signal.aborted ||
+      !catalog ||
+      (catalog.instanceId !== null && catalog.instanceId !== instanceId)
+    )
+      return null;
+    if (seq !== undefined) {
+      if (seq < (this.appliedCatalogSeq.get(instanceId) ?? 0)) return null;
+      const elsewhere = this.collectionSources.flatMap((other) =>
+        other.instanceId === instanceId ? [] : (other.declaredProviders ?? [])
+      );
+      this.store.replaceProviderCatalog(
+        instanceId,
+        sourceCatalogEntries(catalog, source.declaredProviders ?? [], elsewhere),
+        this.now()
+      );
+      this.appliedCatalogSeq.set(instanceId, seq);
+    }
+    return catalog;
+  }
+
+  private async readInventory(
+    source: CollectionSource,
+    signal: AbortSignal,
+    options: { seq?: number; discover?: boolean } = {}
+  ) {
     const key = (await readFile(source.managementKeyFile, 'utf8')).trim();
     if (!boundedString(key, 8192)) throw new Error('Invalid management key');
+    const catalog =
+      options.seq !== undefined || options.discover
+        ? await this.readCatalog(source, key, signal, options.seq)
+        : null;
+    const readers = new Map<string, boolean>(source.providers.map((provider) => [provider, true]));
+    if (catalog) {
+      // A provider omitted by a successful catalog may still have a credential to retire. Only
+      // an authoritative credential listing can do that, and the absent reader isn't polled.
+      if (options.seq !== undefined) {
+        for (const account of this.store.listAccounts()) {
+          if (
+            account.instanceId === source.instanceId &&
+            !account.retired &&
+            !isBuiltInPoolProvider(account.provider)
+          )
+            readers.set(account.provider, false);
+        }
+      }
+      for (const entry of catalog.providers) {
+        if (isBuiltInPoolProvider(entry.id)) continue;
+        // Not gated on lifecycle: a credential in quota cooldown is `needs_attention`, and its
+        // exhausted balance is exactly what to read. Disabled credentials are skipped one by one.
+        readers.set(entry.id, entry.quota.supported && entry.quota.reader !== 'none');
+      }
+    }
+    if (!readers.size) return { key, groups: [] };
     const payload = await this.request(source, 'credentials', key, signal);
-    const groups = source.providers.map((provider) => ({
+    const groups: InventoryGroup[] = [...readers].map(([provider, poll]) => ({
       provider,
+      poll,
       accounts: inventory(payload, provider, this.now()),
     }));
     return { key, groups };
@@ -947,8 +1483,11 @@ export class QuotaCollector {
     return seq;
   }
 
-  private markInventoryUnavailable(source: CollectionSource): void {
-    for (const provider of source.providers) {
+  private markInventoryUnavailable(source: CollectionSource, seq: number): void {
+    const id = source.instanceId ?? source.label;
+    if (seq < (this.appliedInventorySeq.get(id) ?? 0)) return;
+    this.appliedInventorySeq.set(id, seq);
+    for (const provider of this.inventoryProviders(source)) {
       this.inventoryStates.set(this.stateKey(source, provider), 'unavailable');
       this.addIssue(source, provider, 'inventory-unavailable');
     }
@@ -961,28 +1500,27 @@ export class QuotaCollector {
    */
   private applyInventory(
     source: CollectionSource,
-    {
-      key,
-      groups,
-    }: { key: string; groups: { provider: PoolProviderId; accounts: InventoryAccount[] }[] },
+    { key, groups }: { key: string; groups: InventoryGroup[] },
     seq: number,
     deletedNames?: ReadonlySet<string>
   ): {
     pending: (InventoryAccount & { source: CollectionSource; key: string })[];
     change: InventoryChange;
+    confirmed: PoolProviderId[];
   } | null {
     const id = source.instanceId ?? source.label;
     if (seq < (this.appliedInventorySeq.get(id) ?? 0)) return null;
     this.appliedInventorySeq.set(id, seq);
     const pending: (InventoryAccount & { source: CollectionSource; key: string })[] = [];
     const change: InventoryChange = { added: [], removed: [], purged: [] };
+    const confirmed: PoolProviderId[] = [];
     const namesBefore = new Map(
       this.store
         .listAccounts()
         .filter((stored) => !stored.retired && stored.instanceId === source.instanceId)
-        .map((stored) => [stored.id, stored.name])
+        .map((stored) => [stored.id, stored])
     );
-    for (const { provider, accounts } of groups) {
+    for (const { provider, accounts, poll } of groups) {
       try {
         for (const entry of accounts) {
           if (source.instanceId !== undefined) {
@@ -1004,6 +1542,7 @@ export class QuotaCollector {
         change.added.push(...changed.added);
         change.removed.push(...changed.removed);
         change.purged.push(...changed.purged);
+        confirmed.push(provider);
         this.inventoryStates.set(this.stateKey(source, provider), 'ok');
         this.currentIssues = this.currentIssues.filter(
           (issue) =>
@@ -1013,11 +1552,12 @@ export class QuotaCollector {
               issue.code === 'inventory-unavailable'
             )
         );
-        pending.push(
-          ...accounts
-            .filter(({ account }) => !account.disabled)
-            .map((entry) => ({ ...entry, source, key }))
-        );
+        if (poll)
+          pending.push(
+            ...accounts
+              .filter(({ account }) => !account.disabled)
+              .map((entry) => ({ ...entry, source, key }))
+          );
       } catch {
         this.inventoryStates.set(this.stateKey(source, provider), 'unavailable');
         this.addIssue(source, provider, 'inventory-unavailable');
@@ -1029,11 +1569,17 @@ export class QuotaCollector {
     }
     for (const accountId of change.added) this.retiredNames.delete(accountId);
     for (const accountId of change.removed) {
-      const name = namesBefore.get(accountId);
-      if (name !== undefined) this.retiredNames.set(accountId, { name, sourceId: id, atMs: nowMs });
+      const previous = namesBefore.get(accountId);
+      if (previous)
+        this.retiredNames.set(accountId, {
+          name: previous.name,
+          provider: previous.provider,
+          source,
+          atMs: nowMs,
+        });
     }
     this.forget([...change.removed, ...change.purged]);
-    return { pending, change };
+    return { pending, change, confirmed };
   }
 
   private async collect(signal: AbortSignal): Promise<void> {
@@ -1044,9 +1590,9 @@ export class QuotaCollector {
         const seq = this.startInventoryRead(source);
         let read: Awaited<ReturnType<QuotaCollector['readInventory']>>;
         try {
-          read = await this.readInventory(source, signal);
+          read = await this.readInventory(source, signal, { seq });
         } catch {
-          if (!signal.aborted) this.markInventoryUnavailable(source);
+          if (!signal.aborted) this.markInventoryUnavailable(source, seq);
           return [];
         } finally {
           this.syncedAtMs = this.now();
@@ -1066,7 +1612,7 @@ export class QuotaCollector {
     let cursor = 0;
     const worker = async () => {
       while (cursor < accounts.length && !signal.aborted) {
-        const { account, authIndex, chatgptAccountId, source, key } = accounts[cursor++];
+        const { account, authIndex, chatgptAccountId, projectId, source, key } = accounts[cursor++];
         await this.pollAccount(
           account,
           authIndex,
@@ -1074,7 +1620,8 @@ export class QuotaCollector {
           key,
           signal,
           storedPlans,
-          chatgptAccountId
+          chatgptAccountId,
+          projectId
         );
       }
     };

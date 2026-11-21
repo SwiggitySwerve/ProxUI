@@ -6,6 +6,7 @@
 import { useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IconRefreshCw } from '@/components/ui/icons';
+import type { AccountResets } from '@/domain/quotaPool/types';
 import type { ClaudeQuotaState, ResolvedTheme } from '@/types';
 import { resolveQuotaErrorMessage } from '@/utils/quota';
 import { getQuotaDisplayName } from '@/utils/quota/identity';
@@ -15,11 +16,13 @@ import {
   getTypeLabel,
   isThemeSurfaceIconProvider,
 } from '@/features/authFiles/constants';
+import { isCredentialDisabled } from '@/features/authFiles/credentialFacts';
 import { bindQuotaClasses } from '../types';
 import { type QuotaCardState, type QuotaAdapter } from '../providers';
 import { isQuotaRefreshDisabled, type QuotaFileEntry } from '../logic';
 import { useClaudeResetGrants } from '../providers/claude/ClaudeResetGrants';
 import { AccountDetails } from './AccountDetails';
+import { QuotaFreshness } from './QuotaFreshness';
 import { hasClaudeUsageData } from '../providers/claude/data';
 import bodyStyles from './QuotaBody.module.scss';
 import styles from './QuotaCard.module.scss';
@@ -36,8 +39,15 @@ export type QuotaCardProps = {
   resetting: boolean;
   /** Initial cascade delay; null disables entrance motion for later mounts. */
   entranceDelayMs?: number | null;
-  onRefresh: () => void;
+  /** force: after a reset claim (the claim changed the quota the card last read). */
+  onRefresh: (options?: { force?: boolean }) => void;
   onReset: () => void;
+  /** When the shown quota was read, for the "updated 25s ago" label. */
+  fetchedAt?: number;
+  /** Served by the history server: the held resets of its reading; the hub is not polled. */
+  server?: { resets: AccountResets | null };
+  /** The server's read floor skipped a Refresh: when the next read may run. */
+  nextReadAt?: number;
 };
 
 export function QuotaCard(props: QuotaCardProps) {
@@ -50,6 +60,8 @@ export function QuotaCard(props: QuotaCardProps) {
     entranceDelayMs,
     onRefresh,
     onReset,
+    fetchedAt,
+    nextReadAt,
   } = props;
   const { t } = useTranslation();
   const adapter = props.adapter;
@@ -57,6 +69,8 @@ export function QuotaCard(props: QuotaCardProps) {
   const retainedClaudeUsage =
     entry.type === 'claude' && hasClaudeUsageData(quota as ClaudeQuotaState | undefined);
   const displayName = getQuotaDisplayName(file);
+  // Switched off: its quota is still read, but it serves nothing and its resets stay unspent.
+  const accountOff = isCredentialDisabled(file);
 
   // Capture the entrance delay only at mount, without a render-time ref read.
   const [mountEntranceDelayMs] = useState<number | null>(entranceDelayMs ?? null);
@@ -73,7 +87,9 @@ export function QuotaCard(props: QuotaCardProps) {
     !canRefresh || loading || resetting,
     quota,
     onRefresh,
-    adapter.resetGrants
+    adapter.resetGrants,
+    accountOff,
+    props.server
   );
   const providerType =
     entry.type === 'plugin'
@@ -91,7 +107,13 @@ export function QuotaCard(props: QuotaCardProps) {
 
   return (
     <article
-      className={`${styles.card} ${mountEntranceDelayMs === null ? '' : styles.cardEnter}`}
+      className={[
+        styles.card,
+        mountEntranceDelayMs === null ? '' : styles.cardEnter,
+        accountOff ? styles.cardOff : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       style={entranceStyle}
     >
       <header className={styles.head}>
@@ -113,6 +135,11 @@ export function QuotaCard(props: QuotaCardProps) {
         <span className={styles.fileName} title={displayName}>
           {displayName}
         </span>
+        {accountOff && (
+          <span className={styles.offBadge} title={t('quota_management.account_off_hint')}>
+            {t('quota_management.account_off')}
+          </span>
+        )}
       </header>
 
       <div className={styles.body}>
@@ -120,7 +147,7 @@ export function QuotaCard(props: QuotaCardProps) {
           <button
             type="button"
             className={styles.idleBody}
-            onClick={onRefresh}
+            onClick={() => onRefresh()}
             disabled={!canRefresh}
           >
             <IconRefreshCw size={15} aria-hidden="true" className={styles.idleGlyph} />
@@ -162,12 +189,14 @@ export function QuotaCard(props: QuotaCardProps) {
           provider={entry.type}
           quota={status === 'success' || retainedClaudeUsage ? quota : undefined}
           name={displayName}
+          accountOff={accountOff}
           claudeReset={entry.type === 'claude' ? claudeReset : undefined}
           reset={
             entry.type === 'codex' && adapter.resetQuota
               ? {
                   disabled:
                     !canRefresh ||
+                    accountOff ||
                     loading ||
                     resetting ||
                     !quota ||
@@ -181,10 +210,17 @@ export function QuotaCard(props: QuotaCardProps) {
 
       {status !== 'idle' && (
         <footer className={styles.actionRow}>
+          {status === 'success' && (
+            <QuotaFreshness
+              fetchedAt={fetchedAt}
+              nextReadAtMs={nextReadAt}
+              className={styles.freshness}
+            />
+          )}
           <button
             type="button"
             className={styles.actionPill}
-            onClick={onRefresh}
+            onClick={() => onRefresh()}
             disabled={isQuotaRefreshDisabled(canRefresh, loading, resetting || claudeReset.busy)}
             title={t('auth_files.quota_refresh_hint')}
           >

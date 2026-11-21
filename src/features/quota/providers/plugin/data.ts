@@ -10,7 +10,7 @@ import type {
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import { buildAntigravityQuotaGroups } from '@/utils/quota';
 import type { QuotaProviderData } from '../types';
-import { isEnabledPluginQuotaFile } from '../filters';
+import { isPluginQuotaTarget } from '../filters';
 import type { QuotaDependencies } from '../dependencies';
 
 type PluginQuotaPayload = AntigravityQuotaSummaryPayload & {
@@ -59,6 +59,11 @@ const normalizeSubscription = (
     tierId: value(subscription.tierId),
   };
 };
+
+const statusOf = (error: unknown): unknown =>
+  typeof error === 'object' && error !== null && 'status' in error ? error.status : undefined;
+const apiCodeOf = (error: unknown): unknown =>
+  typeof error === 'object' && error !== null && 'apiCode' in error ? error.apiCode : undefined;
 
 const normalizeProviderId = (value: unknown) =>
   typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -114,14 +119,53 @@ export function createPluginQuotaConfig(deps: QuotaDependencies) {
     return promise;
   };
 
+  /** Connection revision whose hub has no `POST /quota/fetch` (an older ProxD). */
+  let credentialRouteMissingAt: number | null = null;
+
   const resetPluginQuotaRouteCache = () => {
     pluginListCache = null;
+    credentialRouteMissingAt = null;
+  };
+
+  const toQuotaData = (payload: PluginQuotaPayload): PluginQuotaData => ({
+    groups: buildAntigravityQuotaGroups(payload),
+    subscription: normalizeSubscription(payload.subscription),
+    summary: normalizePluginQuotaSummary(payload.summary),
+  });
+
+  /**
+   * The hub resolves the credential's quota reader itself. Resolves to null when this hub lacks
+   * the route (404) so the caller can use the per-plugin route instead. Only a bare 404 (no
+   * error body, the router's own answer) marks the route missing for this connection; a handler's
+   * 404 (e.g. the credential is gone) falls back for this read only.
+   */
+  const fetchCredentialQuota = async (
+    authIndex: string,
+    assertCurrent: () => void
+  ): Promise<PluginQuotaData | null> => {
+    const revision = deps.revision();
+    if (credentialRouteMissingAt === revision) return null;
+    try {
+      const payload = await management.post<PluginQuotaPayload>('/quota/fetch', {
+        auth_index: authIndex,
+      });
+      assertCurrent();
+      return toQuotaData(payload);
+    } catch (error: unknown) {
+      if (statusOf(error) !== 404) throw error;
+      assertCurrent();
+      if (!apiCodeOf(error)) credentialRouteMissingAt = revision;
+      return null;
+    }
   };
 
   const fetchPluginQuota = async (file: AuthFileItem, t: TFunction): Promise<PluginQuotaData> => {
     const assertCurrent = deps.guardConfigConnection();
     const authIndex = normalizeAuthIndex(file.authIndex ?? file['auth_index']);
     if (!authIndex) throw new Error(t('plugin_quota.missing_auth_index'));
+
+    const normalized = await fetchCredentialQuota(authIndex, assertCurrent);
+    if (normalized) return normalized;
 
     const provider = String(file.quotaProvider ?? file['quota_provider'] ?? '').trim();
     // New v8 credentials carry the host's authoritative selection, including multi-provider
@@ -140,17 +184,13 @@ export function createPluginQuotaConfig(deps: QuotaDependencies) {
       { auth_index: authIndex }
     );
     assertCurrent();
-    return {
-      groups: buildAntigravityQuotaGroups(payload),
-      subscription: normalizeSubscription(payload.subscription),
-      summary: normalizePluginQuotaSummary(payload.summary),
-    };
+    return toQuotaData(payload);
   };
 
   const config: QuotaProviderData<PluginQuotaState, PluginQuotaData> = {
     type: 'plugin',
     i18nPrefix: 'plugin_quota',
-    filterFn: isEnabledPluginQuotaFile,
+    filterFn: isPluginQuotaTarget,
     fetchQuota: fetchPluginQuota,
     storeSelector: (state) => state.pluginQuota,
     storeSetter: 'setPluginQuota',

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "instance_id": "gemini-primary",
+  "accepted_providers": ["antigravity", "example-plugin"],
+  "providers": [
+    {
+      "id": "antigravity",
+      "display_name": "Gemini / Antigravity",
+      "source": "builtin",
+      "plugin_id": null,
+      "logo": null,
+      "lifecycle": "active",
+      "credentials": {
+        "total": 1,
+        "active": 1,
+        "disabled": 0,
+        "problem": 0
+      },
+      "oauth": {
+        "flow": "browser",
+        "aliases": [],
+        "manual_callback": true,
+        "webui": true,
+        "domains": []
+      },
+      "quota": {
+        "supported": true,
+        "reader": "builtin",
+        "plugin_id": null,
+        "supports_reset": false
+      }
+    },
+    {
+      "id": "example-plugin",
+      "display_name": "Example Provider",
+      "source": "plugin",
+      "plugin_id": "example-provider-plugin",
+      "logo": "/v0/resource/plugins/example-provider-plugin/logo.svg",
+      "lifecycle": "awaiting_auth",
+      "credentials": {
+        "total": 0,
+        "active": 0,
+        "disabled": 0,
+        "problem": 0
+      },
+      "oauth": {
+        "flow": "device",
+        "aliases": ["example"],
+        "manual_callback": true,
+        "webui": false,
+        "domains": ["example.test"]
+      },
+      "quota": {
+        "supported": true,
+        "reader": "plugin",
+        "plugin_id": "example-provider-plugin",
+        "supports_reset": false
+      }
+    }
+  ]
+}

@@ -28,6 +28,7 @@ import {
   bucketQuery,
   nextPageQuery,
   rangeQuery,
+  shownWindow,
   withoutCursor,
 } from '../src/features/analytics/queryState';
 import { analyticsUiRequest, analyticsUiResponse } from './fixtures/analyticsUi';
@@ -132,6 +133,22 @@ describe('Analytics query and transport contracts', () => {
     expect(source).toContain('result?.session === session');
     expect(source).toContain('createPoolSessionObserver');
   });
+  test('a Refresh recomputes once, whether its load succeeds or fails', () => {
+    const source = read('src/features/analytics/useAnalytics.ts');
+    const success = source.slice(source.indexOf('.then('), source.indexOf('.catch('));
+    const failure = source.slice(source.indexOf('.catch('), source.indexOf('return () =>'));
+    // A failed Refresh left pending would bypass the warm snapshot on every later view change.
+    expect(success).toContain('appliedRefresh.current = refresh');
+    expect(failure).toContain('appliedRefresh.current = refresh');
+  });
+  test('an old snapshot is asked for once more, after the refresh behind it has had time', () => {
+    const source = read('src/features/analytics/useAnalytics.ts');
+    const success = source.slice(source.indexOf('.then('), source.indexOf('.catch('));
+    expect(success).toContain('data.generated_at_ms');
+    expect(success).toContain('recheckedFor.current = query');
+    expect(success).toContain('setTimeout(');
+    expect(source).toContain('clearTimeout(');
+  });
   test('refresh advances the selected window and clears paging while preserving filters', () => {
     const source = read('src/features/analytics/AnalyticsPage.tsx');
     const reload = source.slice(source.indexOf('const reload ='), source.indexOf('return <'));
@@ -139,6 +156,16 @@ describe('Analytics query and transport contracts', () => {
     expect(reload).toContain('withoutCursor(query)');
     expect(reload).toContain('to_ms: interval.to_ms');
     expect(reload).toContain('setPages([');
+  });
+  test('the headline shows the window the served snapshot covers, not the browser clock', () => {
+    const query = rangeQuery('24h', 10 * 86_400_000);
+    expect(shownWindow(query)).toEqual({ from_ms: query.from_ms, to_ms: query.to_ms });
+    const snapshot = { from_ms: query.from_ms - 60_000, to_ms: query.to_ms - 60_000 };
+    expect(shownWindow(query, snapshot)).toEqual(snapshot);
+    const source = read('src/features/analytics/AnalyticsPage.tsx');
+    const headline = source.slice(source.indexOf('className={styles.scope}'));
+    expect(source).toContain('shownWindow(query, data)');
+    expect(headline.slice(0, headline.indexOf('</p>'))).not.toContain('query.from_ms');
   });
   test('the top-right refresh button runs the same reload as the page button', () => {
     const source = read('src/features/analytics/AnalyticsPage.tsx');
@@ -258,6 +285,92 @@ describe('Analytics SSR presentation', () => {
       expect(markup).toContain(expected);
     expect(markup).not.toContain('SYNTHETIC_SECRET_SENTINEL');
     expect(markup).not.toContain('SYNTHETIC_PROMPT_SENTINEL');
+  });
+  describe('search-matched fields in the request detail', () => {
+    const matched = {
+      ...analyticsUiRequest,
+      failed: true,
+      fail_summary: 'upstream said: quota exhausted for synthetic account',
+      header_trace_id: 'synthetic-header-trace-7f3a',
+      auth_file_snapshot: 'synthetic-credential.json',
+    };
+    const render = (request: typeof matched | typeof analyticsUiRequest) =>
+      renderToStaticMarkup(createElement(RequestDetails, { request }));
+
+    test('shows failure text, response trace id and credential file when present', () => {
+      const markup = render(matched);
+      for (const expected of [
+        'Failure text',
+        'upstream said: quota exhausted for synthetic account',
+        'Response trace ID',
+        'synthetic-header-trace-7f3a',
+        'Credential file',
+        'synthetic-credential.json',
+      ])
+        expect(markup).toContain(expected);
+    });
+    test('omits each field, with no empty label, when it is absent or empty', () => {
+      for (const request of [
+        analyticsUiRequest,
+        { ...matched, fail_summary: undefined, header_trace_id: undefined, auth_file_snapshot: '' },
+      ]) {
+        const markup = render(request);
+        for (const label of ['Failure text', 'Response trace ID', 'Credential file'])
+          expect(markup).not.toContain(label);
+        expect(markup).not.toContain('Copy Response trace ID');
+        expect(markup).not.toContain('Copy Credential file');
+      }
+      // One field present never drags the other labels in with it.
+      const onlyTrace = render({ ...analyticsUiRequest, header_trace_id: 'only-trace' });
+      expect(onlyTrace).toContain('Response trace ID');
+      expect(onlyTrace).not.toContain('Failure text');
+      expect(onlyTrace).not.toContain('Credential file');
+    });
+    test('the trace id and the credential file have named copy buttons; the failure text does not', () => {
+      const markup = render(matched);
+      expect(markup).toContain('aria-label="Copy Response trace ID"');
+      expect(markup).toContain('aria-label="Copy Credential file"');
+      expect(markup).not.toContain('aria-label="Copy Failure text"');
+    });
+    test('keeps a very long failure text and unbroken values whole, in wrapping containers', () => {
+      const failure = `${'quota exhausted '.repeat(300)}END-OF-FAILURE`;
+      const trace = `trace-${'a'.repeat(400)}-END-OF-TRACE`;
+      const file = `${'long-credential-name_'.repeat(30)}END-OF-FILE.json`;
+      const markup = render({
+        ...matched,
+        fail_summary: failure,
+        header_trace_id: trace,
+        auth_file_snapshot: file,
+      });
+      for (const expected of ['END-OF-FAILURE', 'END-OF-TRACE', 'END-OF-FILE.json'])
+        expect(markup).toContain(expected);
+      const styles = read('src/features/analytics/AnalyticsPage.module.scss');
+      const rule = (name: string) =>
+        styles.match(new RegExp(`\\.${name}\\s*\\{[^}]*\\}`))?.[0] ?? '';
+      expect(rule('failureText')).toContain('white-space: pre-wrap');
+      expect(rule('failureText')).toContain('overflow-wrap: anywhere');
+      expect(rule('failureText')).toContain('max-height');
+      expect(rule('failureText')).toContain('overflow');
+      expect(rule('copyValue')).toContain('min-width: 0');
+      expect(rule('copyValueText')).toContain('min-width: 0');
+      expect(rule('copyValueText')).toContain('overflow-wrap: anywhere');
+    });
+    test('a11y: the long failure text is a keyboard-scrollable named region', () => {
+      const markup = render(matched);
+      expect(markup).toMatch(/<div[^>]*role="region"[^>]*aria-label="Failure text"[^>]*>/);
+      expect(markup).toMatch(/<div[^>]*role="region"[^>]*tabindex="0"[^>]*>/);
+      // The label is rendered once as a term and once as the region name, never as an empty term.
+      expect(markup).not.toMatch(/<dt>\s*<\/dt>/);
+      expect(markup).not.toMatch(/<dd>\s*<\/dd>/);
+    });
+    test('every locale carries the new labels', () => {
+      for (const locale of ['en', 'zh-CN', 'zh-TW', 'ru', 'ko', 'vi']) {
+        const analytics = JSON.parse(read(`src/i18n/locales/${locale}.json`)).analytics;
+        for (const key of ['fail_summary', 'header_trace_id', 'auth_file_snapshot'])
+          expect(analytics.fields[key]).toBeString();
+        expect(analytics.copy_field).toContain('{{field}}');
+      }
+    });
   });
   test('request token nulls and presence metadata are rendered exactly as projected by the backend', () => {
     const request = {

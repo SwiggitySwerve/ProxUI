@@ -85,6 +85,7 @@ export function harness() {
       const path = url.pathname.replace('/v8/management', '');
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
       calls.push({ instanceId, path, body });
+      if (path === '/providers') return new Response(null, { status: 404 });
       if (path === '/credentials') {
         const n = ++credentialReads[instanceId];
         // The response is fixed when the request arrives, as a real server's would be; a hook
@@ -129,7 +130,7 @@ export function harness() {
   const idOf = (digest: string, instanceId: InstanceId = 'codex-primary') =>
     store.accountIdFor(instanceId, instanceId === 'codex-primary' ? 'codex' : 'claude', digest);
   const row = (id: string) => store.listAccounts().find((account) => account.id === id);
-  const usageCalls = () => calls.filter((call) => call.path !== '/credentials');
+  const usageCalls = () => calls.filter((call) => call.path === '/requests/api-call');
   return {
     store,
     collector,

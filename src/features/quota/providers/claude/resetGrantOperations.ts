@@ -1,6 +1,6 @@
 import {
   AnthropicResetGrantError,
-  anthropicResetGrantBlocker,
+  anthropicResetGrantClaimBlocker,
   type claimClaudeResetGrant,
   type readClaudeOrganization,
   type readClaudeResetGrants,
@@ -108,20 +108,8 @@ export function createResetGrantOperations(
         if (!operation) {
           const status = await readPreflight('status', () => deps.readStatus(authIndex));
           assertSession();
-          const grant = status.grants.find((item) => item.id === grantId);
           const now = deps.now();
-          const blocker = anthropicResetGrantBlocker(status, grantId);
-          const reason =
-            blocker ??
-            (!grant
-              ? 'unknown_grant'
-              : grant.startsAt && Date.parse(grant.startsAt) > now
-                ? 'not_started'
-                : grant.endsAt && Date.parse(grant.endsAt) <= now
-                  ? 'grant_expired'
-                  : status.cooldownUntil && Date.parse(status.cooldownUntil) > now
-                    ? 'cooldown'
-                    : null);
+          const reason = anthropicResetGrantClaimBlocker(status, grantId, now);
           if (reason) throw new ResetGrantPreflightError('eligibility', `blocked_${reason}`);
           let requestId: string;
           try {
@@ -137,7 +125,15 @@ export function createResetGrantOperations(
         if (wasRetry && deps.now() - operation.createdAt >= RETRY_WINDOW_MS) {
           throw new ResetGrantPreflightError('operation', 'expired');
         }
-        const code = await deps.claim(authIndex, organization, grantId, operation.requestId);
+        let code: Awaited<ReturnType<typeof deps.claim>>;
+        try {
+          code = await deps.claim(authIndex, organization, grantId, operation.requestId);
+        } catch (error) {
+          // Refused before it was sent: a first attempt leaves nothing to retry. A retry keeps
+          // its operation, since the earlier send may still have spent.
+          if (error instanceof ResetGrantPreflightError && !wasRetry) operations.delete(key);
+          throw error;
+        }
         assertSession();
         // A refusal on a retry cannot prove that the earlier ambiguous POST did not spend.
         if (!wasRetry || code === 'reset' || code === 'already_used') operation.code = code;

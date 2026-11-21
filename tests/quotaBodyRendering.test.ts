@@ -16,6 +16,7 @@ import { ClaudeQuotaBody } from '@/features/quota/providers/claude/ClaudeQuotaBo
 import { KimiQuotaBody } from '@/features/quota/providers/kimi/KimiQuotaBody';
 import { QUOTA_CLASS_KEYS, bindQuotaClasses } from '@/features/quota/types';
 import { formatInstantShort } from '@/utils/quota';
+import { formatPoolDate } from '@/features/quotaPool/presentation';
 import { DAY_MS, HOUR_MS } from '@/utils/time/durations';
 import type { ClaudeQuotaState, CodexQuotaState, KimiQuotaState } from '@/types';
 
@@ -129,10 +130,11 @@ describe('CodexQuotaBody', () => {
     expect(markup).toMatch(/3 hours/);
   });
 
-  test('renders reset-credit expiry in local time with a countdown', () => {
+  test('renders reset-credit expiry in the pool date format with a countdown', () => {
     const markup = renderToStaticMarkup(createElement(CodexQuotaBody, { quota, classes }));
 
-    expect(markup).toContain(formatInstantShort(now + 11 * DAY_MS));
+    // Every manual reset expiry reads in one format: the pool's, with its time zone.
+    expect(markup).toContain(formatPoolDate(now + 11 * DAY_MS, 'en'));
     expect(markup).toMatch(/11 days/);
   });
 
@@ -256,5 +258,77 @@ describe('ClaudeQuotaBody', () => {
     expect(markup).toContain('08-06 04:00');
     expect(markup).toMatch(/2 hours/);
     expect(markup).toMatch(/4 days/);
+  });
+});
+
+describe('a served card for an account with no 5-hour limit', () => {
+  const weekly = {
+    id: 'weekly',
+    label: 'Weekly limit',
+    labelKey: 'codex_quota.secondary_window',
+    usedPercent: 83,
+    resetLabel: '08-06 04:00',
+    resetAtMs: now + 4 * DAY_MS,
+    periodHours: 168,
+  };
+
+  test('Codex says "No 5-hour limit" in the 5-hour row, once, beside the weekly row', () => {
+    const quota: CodexQuotaState = {
+      status: 'success',
+      planType: 'pro',
+      windows: [weekly],
+      noFiveHourLimit: true,
+    };
+    const markup = renderToStaticMarkup(createElement(CodexQuotaBody, { quota, classes }));
+    expect(markup.match(/No 5-hour limit/g)).toHaveLength(1);
+    expect(markup).toContain('17%');
+    // Without the flag, a weekly-only card shows no 5-hour row at all.
+    const plain = renderToStaticMarkup(
+      createElement(CodexQuotaBody, { quota: { ...quota, noFiveHourLimit: false }, classes })
+    );
+    expect(plain).not.toContain('No 5-hour limit');
+  });
+
+  test('Codex replaces a null 5-hour window instead of showing "5-hour limit --"', () => {
+    const quota: CodexQuotaState = {
+      status: 'success',
+      windows: [
+        {
+          id: 'five-hour',
+          label: '5-hour limit',
+          labelKey: 'codex_quota.primary_window',
+          usedPercent: null,
+          resetLabel: '-',
+        },
+        weekly,
+      ],
+      noFiveHourLimit: true,
+    };
+    const markup = renderToStaticMarkup(createElement(CodexQuotaBody, { quota, classes }));
+    expect(markup.match(/No 5-hour limit/g)).toHaveLength(1);
+    expect(markup).not.toContain('quotaPercent">--<');
+  });
+
+  test.each([true, false])('Claude says it in the 5-hour slot (fixed slots: %p)', (fixedSlots) => {
+    const quota: ClaudeQuotaState = {
+      status: 'success',
+      planType: 'plan_max20',
+      windows: [
+        {
+          id: 'seven-day',
+          label: '7-day limit',
+          labelKey: 'claude_quota.seven_day',
+          usedPercent: 40,
+          resetLabel: '',
+        },
+      ],
+      noFiveHourLimit: true,
+    };
+    const markup = renderToStaticMarkup(
+      createElement(ClaudeQuotaBody, { quota, classes, factsInPanel: true, fixedSlots })
+    );
+    expect(markup.match(/No 5-hour limit/g)).toHaveLength(1);
+    // The optional slots (Opus, Sonnet…) keep their own placeholders; the 5-hour one is not one.
+    expect(markup).not.toMatch(/5-hour limit<\/span><div class="quotaMeta"><span class="quotaPercent">–</);
   });
 });

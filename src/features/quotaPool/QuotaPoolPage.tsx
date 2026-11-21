@@ -12,25 +12,37 @@ import {
   IconFilterAll,
 } from '@/components/ui/icons';
 import type { PoolQuery } from '@/services/api/quotaPool';
+import { poolProviderViewId } from '@/domain/quotaPool/providers';
+import type { PoolProfileUpdate } from '@/domain/quotaPool/types';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useHeaderRefresh, useReportHeaderRefreshBusy } from '@/hooks/useHeaderRefresh';
 import { usePoolDashboard } from './usePoolDashboard';
+import { useServerAccountsPoller } from './useServerQuota';
 import { usePhoneChipLine } from './usePhoneChipLine';
 import { PoolCard } from './PoolCard';
 import { CombinedPoolCard } from './CombinedPoolCard';
 import { movePool, orderPools, poolKey, usePoolOrder } from './poolOrder';
 import { PoolProviderMark } from './PoolProviderMark';
+import { poolProviderLabel, poolProviderStyle } from './providerPresentation';
+import { DiscoveredQuota } from './DiscoveredQuota';
 import { viewRange } from './chartGeometry';
-import { readViewState, sameView, writeViewState, type QuotaViewState } from './model/viewState';
-import { formatPoolDate, formatPoolNumber } from './presentation';
+import {
+  readViewState,
+  resolveViewProvider,
+  sameView,
+  visibleProviders,
+  writeViewState,
+  type QuotaViewState,
+} from './model/viewState';
+import { formatPoolDate, formatPoolNumber, providerAccountCount } from './presentation';
 import styles from './QuotaPoolPage.module.scss';
 
 /** Points per plan (server/quota/plans.ts), listed in About so each weight reads on its own line. */
 const PLAN_WEIGHTS = [
   ['Claude Pro · ChatGPT Plus', 100],
-  ['Claude Max', 500],
+  ['Claude Max · Google AI Ultra Lite', 500],
   ['ChatGPT Pro', 1000],
-  ['Claude Ultra', 2000],
+  ['Claude Ultra · Google AI Ultra', 2000],
   ['ChatGPT Pro 500', 2500],
 ] as const;
 
@@ -39,6 +51,7 @@ export function QuotaPoolPage() {
   const optionsToggleRef = useRef<HTMLButtonElement>(null);
   const optionsRef = useRef<HTMLDivElement>(null);
   const todayPressedRef = useRef(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const poolsRef = useRef<HTMLDivElement>(null);
   const chipLine = usePhoneChipLine(poolsRef);
   const { t, i18n } = useTranslation();
@@ -73,7 +86,15 @@ export function QuotaPoolPage() {
     ...local,
   };
   const state = usePoolDashboard(query);
-  const { data, refresh } = state;
+  // Whether a Claude account is served from the history server (its resets row then does not poll
+  // the hub) is known once the accounts poller has asked: hold it while this page is open.
+  useServerAccountsPoller();
+  const { data, refresh, saveProfile } = state;
+  const saveDiscoveredProfile = async (profile: PoolProfileUpdate) => {
+    const saved = await saveProfile(profile);
+    if (saved) headingRef.current?.focus({ preventScroll: true });
+    return saved;
+  };
   const refreshPool = useCallback((accountId?: string) => void refresh(accountId), [refresh]);
   const refreshStatus = state.refreshStatus ?? data;
   const refreshing = state.refreshing || refreshStatus?.refreshing;
@@ -81,9 +102,25 @@ export function QuotaPoolPage() {
   const showSkeleton = !data && state.loading && state.connected;
   const { order, setOrder } = usePoolOrder();
   const orderedPools = data ? orderPools(data.pools, order) : [];
+  const providerChoices = visibleProviders(data?.pools);
+  const activeProvider = data ? resolveViewProvider(provider, providerChoices) : provider;
+  useEffect(() => {
+    if (data && activeProvider !== provider) {
+      setViewState((current) =>
+        current.provider === provider ? { ...current, provider: activeProvider } : current
+      );
+    }
+  }, [data, activeProvider, provider]);
   const shownPools = orderedPools.filter(
-    (pool) => provider === 'all' || provider === pool.provider
+    (pool) => activeProvider === 'all' || activeProvider === poolProviderViewId(pool.provider)
   );
+  const providerName = (id: string) =>
+    poolProviderLabel(
+      t,
+      id,
+      data?.pools.find((pool) => pool.provider === id)?.displayName ??
+        data?.unpooled?.find((entry) => entry.provider === id)?.displayName
+    );
   const refreshFromHeader = useCallback(async () => {
     if (!(await refresh())) throw new Error(t('quota_pool.refresh_error'));
   }, [refresh, t]);
@@ -153,7 +190,9 @@ export function QuotaPoolPage() {
     <div className={styles.page}>
       <header className={styles.pageHeader}>
         <div className={styles.titleRow}>
-          <h1>{t('quota_pool.title')}</h1>
+          <h1 ref={headingRef} tabIndex={-1}>
+            {t('quota_pool.title')}
+          </h1>
           {/* Only once accounts exist: an empty or failed page has one action, in its card. */}
           {data && data.pools.length > 0 && (
             <Link to="/quota/accounts" className={styles.accountLink}>
@@ -203,24 +242,31 @@ export function QuotaPoolPage() {
       {!chartUnavailable && (
         <div className={styles.controls}>
           <div className={styles.providerBar} role="group" aria-label={t('quota_pool.providers')}>
-            {(['all', 'claude', 'codex'] as const).map((item) => (
-              <button
-                type="button"
-                key={item}
-                aria-pressed={provider === item}
-                onClick={() => setView({ provider: item })}
-                className={item === 'all' ? undefined : styles[item]}
-              >
-                {item !== 'all' && <PoolProviderMark provider={item} />}
-                {item === 'all' && <IconFilterAll size={18} aria-hidden="true" />}
-                {t(`quota_pool.${item}`)}
-                {item !== 'all' && data && (
-                  <span className={styles.count}>
-                    {data.pools.find((pool) => pool.provider === item)?.accountCount ?? 0}
-                  </span>
-                )}
-              </button>
-            ))}
+            {providerChoices.map((item) => {
+              const pool =
+                item === 'all'
+                  ? undefined
+                  : data?.pools.find((entry) => poolProviderViewId(entry.provider) === item);
+              const providerId = pool?.provider ?? item;
+              return (
+                <button
+                  type="button"
+                  key={item}
+                  aria-pressed={activeProvider === item}
+                  onClick={() => setView({ provider: item })}
+                  {...(item === 'all' ? {} : poolProviderStyle(providerId))}
+                >
+                  {item !== 'all' && <PoolProviderMark provider={providerId} />}
+                  {item === 'all' && <IconFilterAll size={18} aria-hidden="true" />}
+                  {poolProviderLabel(t, providerId, pool?.displayName)}
+                  {item !== 'all' && data && (
+                    <span className={styles.count}>
+                      {providerAccountCount(data.pools, providerId)}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
           <div className={styles.dateNavigation}>
             <span>{range ? `${date(range.fromMs, true)} – ${date(range.toMs, true)}` : null}</span>
@@ -433,13 +479,13 @@ export function QuotaPoolPage() {
           key={`${issue.instanceId ?? 'legacy'}-${issue.provider}-${issue.code}`}
         >
           {issue.sourceLabel && `${issue.sourceLabel} · `}
-          {t(`quota_pool.${issue.provider}`)}: {t(`quota_pool.issue.${issue.code}`)}
+          {providerName(issue.provider)}: {t(`quota_pool.issue.${issue.code}`)}
         </div>
       ))}
       {data?.combinations?.map((combination) => (
         <p className={styles.notice} role="status" key={combination.provider}>
           {t('provider_sources.separate_pools', {
-            provider: t(`quota_pool.${combination.provider}`),
+            provider: providerName(combination.provider),
           })}
         </p>
       ))}
@@ -550,7 +596,7 @@ export function QuotaPoolPage() {
         <CombinedPoolCard
           pools={shownPools}
           dashboard={data}
-          provider={provider}
+          provider={activeProvider}
           mode={mode}
           savedData={state.error || state.refreshError}
           onRefresh={() => void refresh()}
@@ -573,7 +619,7 @@ export function QuotaPoolPage() {
               reveal={query.reveal}
               savedData={state.error || state.refreshError}
               move={
-                provider === 'all' && shown.length > 1
+                activeProvider === 'all' && shown.length > 1
                   ? {
                       up:
                         index > 0 ? () => setOrder(movePool(shown, poolKey(pool), -1)) : undefined,
@@ -586,16 +632,20 @@ export function QuotaPoolPage() {
               }
             />
           ))}
-        {data && data.pools.length === 0 && (
-          <div className={`${styles.notice} ${styles.emptyNotice}`}>
-            <h2>{t('quota_pool.no_accounts_title')}</h2>
-            <p>{t('quota_pool.no_accounts_help')}</p>
-            <Link to="/oauth" className={styles.accountLink}>
-              {t('quota_pool.add_credentials')} <span aria-hidden="true">→</span>
-            </Link>
-          </div>
-        )}
+        {data &&
+          data.pools.length === 0 &&
+          !data.awaitingAuth?.length &&
+          !data.unpooled?.length && (
+            <div className={`${styles.notice} ${styles.emptyNotice}`}>
+              <h2>{t('quota_pool.no_accounts_title')}</h2>
+              <p>{t('quota_pool.no_accounts_help')}</p>
+              <Link to="/oauth" className={styles.accountLink}>
+                {t('quota_pool.add_credentials')} <span aria-hidden="true">→</span>
+              </Link>
+            </div>
+          )}
       </div>
+      {data && <DiscoveredQuota dashboard={data} saveProfile={saveDiscoveredProfile} />}
       <footer className={styles.footer}>
         {data && data.pools.length > 0 && (
           <>

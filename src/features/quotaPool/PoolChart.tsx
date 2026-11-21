@@ -16,12 +16,14 @@ import {
   type ChartMode,
 } from './chartGeometry';
 import { formatPoolDate, formatPoolNumber, formatPoolTick } from './presentation';
+import { poolProviderLabel, poolProviderStyle } from './providerPresentation';
 import styles from './QuotaPoolPage.module.scss';
 
 type ChartPool = PoolTrace & {
   provider: PoolProviderId | 'total';
   sourceLabel?: string;
   instanceId?: string;
+  displayName?: string;
 };
 
 interface ChartProps {
@@ -131,7 +133,7 @@ function PoolChartView({
   const sharesProvider = (pool: ChartPool) =>
     pools.filter((other) => other.provider === pool.provider).length > 1;
   const poolLabel = (pool: ChartPool) =>
-    `${t(`quota_pool.${pool.provider}`)}${(pool.sourceLabel || pool.instanceId) && sharesProvider(pool) ? ` · ${pool.sourceLabel ?? pool.instanceId}` : ''}`;
+    `${poolProviderLabel(t, pool.provider, pool.displayName)}${(pool.sourceLabel || pool.instanceId) && sharesProvider(pool) ? ` · ${pool.sourceLabel ?? pool.instanceId}` : ''}`;
   const geometry = chartGeometry(
     stacked
       ? stacked.flatMap((layer) =>
@@ -275,7 +277,7 @@ function PoolChartView({
           {t('quota_pool.chart_title', {
             provider: comparison
               ? t('quota_pool.combined_usage')
-              : t(`quota_pool.${pools[0].provider}`),
+              : poolProviderLabel(t, pools[0].provider, pools[0].displayName),
             mode: t(`quota_pool.${mode}`),
           })}
         </title>
@@ -344,7 +346,7 @@ function PoolChartView({
             ) => (
               <g
                 key={seriesIndex}
-                className={styles[pool.provider]}
+                {...poolProviderStyle(pool.provider)}
                 data-series={pool.instanceId ?? pool.provider}
               >
                 {band &&
@@ -412,7 +414,7 @@ function PoolChartView({
             />
           )}
           {sample && sample.position !== null && (
-            <g className={styles[sample.pool.provider]}>
+            <g {...poolProviderStyle(sample.pool.provider)}>
               <line
                 x1={x(sample.point.atMs)}
                 x2={x(sample.point.atMs)}
@@ -428,7 +430,7 @@ function PoolChartView({
                   other.position !== null && (
                     <circle
                       key={index}
-                      className={styles[other.pool.provider]}
+                      {...poolProviderStyle(other.pool.provider)}
                       cx={x(other.point.atMs)}
                       cy={y(other.position)}
                       r="5"
@@ -447,7 +449,7 @@ function PoolChartView({
                 visible(pool.poolEmptyAtMs) && (
                   <circle
                     key={index}
-                    className={styles[pool.provider]}
+                    {...poolProviderStyle(pool.provider)}
                     cx={x(pool.poolEmptyAtMs)}
                     cy={y(0)}
                     r="5"
@@ -526,7 +528,7 @@ function PoolChartView({
         <div className={styles.legend}>
           {comparison &&
             pools.map((pool, index) => (
-              <span key={index} className={styles[pool.provider]}>
+              <span key={index} {...poolProviderStyle(pool.provider)}>
                 <i />
                 {poolLabel(pool)}
                 {pool.forecastState !== 'ready' &&

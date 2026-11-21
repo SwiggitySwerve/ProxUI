@@ -1,5 +1,6 @@
-import type { PoolDashboard } from '@/domain/quotaPool/types';
+import type { PoolDashboard, PoolProfileUpdate } from '@/domain/quotaPool/types';
 import type { createQuotaPoolApi, PoolQuery, PoolRefresh } from '@/services/api/quotaPool';
+import { onPoolAccountRefreshed } from './accountSync';
 
 interface PoolSnapshot {
   data: PoolDashboard | null;
@@ -55,6 +56,7 @@ export function createPoolResource(
   let adoptedRevision = -1;
   let detachInventory: (() => void) | undefined;
   let unsubscribeCommits: (() => void) | undefined;
+  let stopListeningForAccounts: (() => void) | undefined;
   let snapshot = EMPTY;
   let active = false;
   let generation = 0;
@@ -63,7 +65,7 @@ export function createPoolResource(
   let timer: ReturnType<typeof setInterval> | undefined;
   let collector: ReturnType<typeof setInterval> | undefined;
   let completionPoll: ReturnType<typeof setTimeout> | undefined;
-  const targeted = new Set<AbortController>();
+  const scopedMutations = new Set<AbortController>();
   const listeners = new Set<() => void>();
   const publish = (patch: Partial<PoolSnapshot>) => {
     snapshot = { ...snapshot, ...patch };
@@ -115,14 +117,14 @@ export function createPoolResource(
     if (accountId) {
       if (!active || !isCurrent()) return false;
       const controller = new AbortController();
-      targeted.add(controller);
+      scopedMutations.add(controller);
       try {
         const result = await api.refreshAccount(accountId, controller.signal).catch(() => null);
         if (!result?.refreshed && active && isCurrent() && !controller.signal.aborted) {
           await api.refresh(controller.signal).catch(() => {});
         }
       } finally {
-        targeted.delete(controller);
+        scopedMutations.delete(controller);
       }
       await reload();
       return !snapshot.error;
@@ -148,11 +150,27 @@ export function createPoolResource(
       if (active && isCurrent() && !controller.signal.aborted) publish({ refreshing: false });
     }
   };
+  const saveProfile = async (profile: PoolProfileUpdate) => {
+    if (!active || !isCurrent()) return false;
+    const controller = new AbortController();
+    scopedMutations.add(controller);
+    try {
+      await api.saveProfile(profile, controller.signal);
+      if (!active || !isCurrent() || controller.signal.aborted) return false;
+      await reload();
+      return !snapshot.error;
+    } catch {
+      return false;
+    } finally {
+      scopedMutations.delete(controller);
+    }
+  };
   return {
     getSnapshot: () => snapshot,
     getServerSnapshot: () => EMPTY,
     reload,
     refresh,
+    saveProfile,
     subscribe(listener: () => void) {
       listeners.add(listener);
       if (!active) {
@@ -161,6 +179,8 @@ export function createPoolResource(
           detachInventory = inventory.attach(key, (signal) => api.get(query, signal));
           unsubscribeCommits = inventory.subscribe(adopt);
         }
+        // A reset made on any page re-reads its account on the server; show that reading here.
+        stopListeningForAccounts = onPoolAccountRefreshed(() => void reload());
         void reload();
         timer = setInterval(() => {
           // A slow backend must get a chance to finish before the next poll.
@@ -172,7 +192,9 @@ export function createPoolResource(
         collector = setInterval(() => {
           publish({ nextCollectAtMs: Date.now() + 60_000 });
           const visible = typeof document === 'undefined' || document.visibilityState !== 'hidden';
-          if (visible && snapshot.data?.pools.length) void refresh();
+          if (visible && (snapshot.data?.pools.length || snapshot.data?.unpooled?.length)) {
+            void refresh();
+          }
         }, 60_000);
       }
       return () => {
@@ -182,13 +204,15 @@ export function createPoolResource(
         generation += 1;
         detachInventory?.();
         unsubscribeCommits?.();
+        stopListeningForAccounts?.();
         detachInventory = undefined;
         unsubscribeCommits = undefined;
+        stopListeningForAccounts = undefined;
         adoptedRevision = -1;
         read?.abort();
         mutation?.abort();
-        targeted.forEach((controller) => controller.abort());
-        targeted.clear();
+        scopedMutations.forEach((controller) => controller.abort());
+        scopedMutations.clear();
         mutation = undefined;
         clearInterval(timer);
         clearInterval(collector);

@@ -1,19 +1,21 @@
 import { Fact, FactSection } from '@/components/ui/FactPanel';
 import { IconAlertTriangle } from '@/components/ui/icons';
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { PoolAccount, PoolProviderId } from '@/domain/quotaPool/types';
+import type { PoolAccount, ResetProviderId } from '@/domain/quotaPool/types';
 import type { AuthFileItem } from '@/types';
 import { sourceOwnerKey, type SourceSession } from '@/services/api/sourceSession';
 import { useProviderSources } from '@/stores/useProviderSources';
 import { useCredentialInventoryStore, useSourceFiles } from '@/stores/useCredentialInventoryStore';
-import { createQuotaStore } from '@/stores/useQuotaStore';
+import { sourceQuotaStore } from '@/stores/sourceQuotaStores';
 import { useSourceLease } from '@/hooks/useSourceLease';
+import { useServedByServer } from './useServerQuota';
 import { useQuotaActions } from '@/features/quota/hooks/useQuotaActions';
 import { createQuotaAdapters } from '@/features/quota/providers';
 import { useClaudeResetGrants } from '@/features/quota/providers/claude/ClaudeResetGrants';
 import { createSourceResetGrants } from '@/features/quota/providers/claude/resetGrantScope';
 import { useNow } from '@/hooks/useNow';
+import { resetAccountName } from '@/features/quota/logic';
 import { formatRelativeInstant } from '@/utils/quota';
 import type { AccountResets } from '@/domain/quotaPool/types';
 import {
@@ -28,13 +30,14 @@ import {
   type ResetKindCount,
 } from './resetAccounts';
 import { formatPoolDate } from './presentation';
+import { useLastResetEvent } from './resetEvents';
 import styles from './QuotaPoolPage.module.scss';
 
 type Props = {
   account: PoolAccount;
   name: string;
   instanceId?: string;
-  provider: PoolProviderId;
+  provider: ResetProviderId;
   onRefresh: (accountId?: string) => void;
 };
 
@@ -45,7 +48,7 @@ type FactProps = Props & {
   live?: boolean;
   disabled?: boolean;
   onClick?: () => void;
-  /** The action's label when it isn't "Use reset", e.g. Claude's "Choose reset…". */
+  /** The action's label when it isn't "Use reset", e.g. Claude's "Use reset…" for a choice. */
   actionLabel?: string;
 };
 
@@ -173,7 +176,43 @@ function ResetFact({
       />
       {/* Its own fact, so the dates read as values instead of wrapping inside the status. */}
       {!spent && resets.available > 0 && <ResetExpiries resets={resets} />}
+      <LastResetUsed provider={provider} accountId={account.id} />
     </FactSection>
+  );
+}
+
+const APPLIED = new Set(['reset', 'already_used', 'already_redeemed']);
+/** Possibly sent and not settled: it may have spent a reset, so never say it did not apply. */
+const UNSETTLED = new Set(['unknown', 'pending']);
+
+/** The newest reset recorded for this account by the server, from any page, with its result. */
+function LastResetUsed({
+  provider,
+  accountId,
+}: {
+  provider: Props['provider'];
+  accountId: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const event = useLastResetEvent(provider, accountId);
+  if (!event) return null;
+  const kind = ['session', 'weekly', 'fable', 'full'].includes(event.kind)
+    ? t(`claude_reset.kind_${event.kind}`)
+    : t('quota_pool.reset_last_used_generic');
+  return (
+    <Fact
+      label={t('quota_pool.reset_last_used_label')}
+      state="known"
+      value={
+        <span data-reset-outcome={event.outcome}>
+          {kind} · {formatPoolDate(event.requestedAtMs, i18n.language)}
+          {UNSETTLED.has(event.outcome)
+            ? ` · ${t('quota_pool.reset_last_unknown')}`
+            : !APPLIED.has(event.outcome) &&
+              ` · ${t('quota_pool.reset_last_not_applied', { outcome: event.outcome })}`}
+        </span>
+      }
+    />
   );
 }
 
@@ -251,7 +290,13 @@ function SourceResetAction({
       />
     );
   return provider === 'claude' ? (
-    <ClaudeResetAction {...fact} file={file} session={session} accountId={account.id} />
+    <ClaudeResetAction
+      {...fact}
+      file={file}
+      session={session}
+      source={owner}
+      accountId={account.id}
+    />
   ) : (
     <CodexResetAction
       {...fact}
@@ -271,7 +316,14 @@ type ActionProps = Props & {
   /** A spend from this tab is newer than the server's reading. */
   spent: boolean;
 };
-function ClaudeResetAction({ file, session, onRefresh, accountId, spent, ...fact }: ActionProps) {
+function ClaudeResetAction({
+  file,
+  session,
+  source,
+  accountId,
+  spent,
+  ...fact
+}: ActionProps & { source: SourceSession }) {
   const { t } = useTranslation();
   const scope = useMemo(() => {
     const shared = createSourceResetGrants(session);
@@ -288,14 +340,35 @@ function ClaudeResetAction({ file, session, onRefresh, accountId, spent, ...fact
       },
     };
   }, [session, accountId]);
-  // The hook refreshes once when a claim finishes; bind that to this account so a confirm
-  // re-reads only it, never the whole fleet as well.
-  const refreshAccount = useCallback(() => onRefresh(accountId), [onRefresh, accountId]);
-  const reset = useClaudeResetGrants(file, true, false, null, refreshAccount, scope);
+  // The hook re-reads once when a claim finishes. That read goes into the source's shared quota
+  // store, so Auth Files and the Quota page show the claim too; the claim itself already had the
+  // history server re-read this one account (accountSync.ts), never the whole fleet. The read is
+  // bound to the source session, not this panel's lease: the refreshed pool can drop the panel
+  // (no resets left) while the read is still running, and the other pages still need its result.
+  const store = sourceQuotaStore(source.owner);
+  const adapters = useMemo(() => createQuotaAdapters(source, store), [source, store]);
+  const { refreshQuota } = useQuotaActions(false, store, source);
+  const readQuota = useCallback(
+    (options?: { force?: boolean }) => void refreshQuota(file, adapters.claude, options),
+    [refreshQuota, file, adapters]
+  );
+  // The pool row is already the history server's reading of this account: when the server serves
+  // it, its held resets are shown from that and the hub is read for grants only when the claim
+  // dialog opens (src/features/quota/RULES.md).
+  const served = useServedByServer(source.owner.instanceId, 'claude');
+  const reset = useClaudeResetGrants(
+    file,
+    true,
+    false,
+    null,
+    readQuota,
+    scope,
+    false,
+    served ? { resets: fact.account.resets } : undefined
+  );
   return (
     <ResetFact
       {...fact}
-      onRefresh={onRefresh}
       spent={spent}
       disabled={reset.blocked || spent}
       onClick={reset.confirm}
@@ -327,7 +400,6 @@ function ClaudeResetAction({ file, session, onRefresh, accountId, spent, ...fact
 function CodexResetAction({
   file,
   session,
-  onRefresh,
   accountId,
   spent,
   early,
@@ -335,7 +407,7 @@ function CodexResetAction({
   ...fact
 }: ActionProps & { early: boolean }) {
   const { t, i18n } = useTranslation();
-  const [store] = useState(createQuotaStore);
+  const store = sourceQuotaStore(session.owner);
   const adapter = useMemo(() => {
     const codex = createQuotaAdapters(session, store).codex;
     const reset = codex.resetQuota!;
@@ -346,13 +418,13 @@ function CodexResetAction({
           return await reset(...args);
         } finally {
           // A confirmed attempt may have consumed the credit even if its cooldown clear or
-          // follow-up read failed, so the row waits for the next reading either way.
+          // follow-up read failed, so the row waits for the next reading either way. The adapter
+          // already had the history server re-read this account.
           markSpent(accountId);
-          if (!session.signal.aborted) onRefresh(accountId);
         }
       },
     };
-  }, [session, store, onRefresh, accountId]);
+  }, [session, store, accountId]);
   const actions = useQuotaActions(false, store, session);
   // Both confirmations name the soonest expiry the account holds when the dialog opens.
   const soonestFact = () => {
@@ -373,20 +445,20 @@ function CodexResetAction({
     <ResetFact
       {...fact}
       name={name}
-      onRefresh={onRefresh}
       spent={spent}
       disabled={actions.resettingQuotaName !== null || spent}
       onClick={() => {
         const soonest = soonestFact();
+        // The dialog names the masked account even while the pool shows full addresses.
+        const account = resetAccountName(file);
         actions.resetQuota(file, adapter, {
-          name,
           title: t(early ? 'quota_pool.reset_early_title' : 'quota_pool.reset_confirm_title'),
           confirmText: t('quota_pool.use_reset'),
           variant: early ? 'danger' : 'primary',
           pill: true,
           message: early ? (
             <div className={styles.resetDialog}>
-              <p>{t('quota_pool.reset_early_intro', { name })}</p>
+              <p>{t('quota_pool.reset_early_intro', { name: account })}</p>
               {soonest && <dl className={styles.resetFacts}>{soonest}</dl>}
               <section>
                 <h4>{t('quota_pool.reset_usage_left')}</h4>
@@ -409,7 +481,7 @@ function CodexResetAction({
           ) : (
             <div>
               <dl className={styles.resetFacts}>
-                <Fact label={t('codex_quota.reset_dialog_account')} state="known" value={name} />
+                <Fact label={t('codex_quota.reset_dialog_account')} state="known" value={account} />
                 <Fact
                   label={t('codex_quota.reset_dialog_used')}
                   state="known"

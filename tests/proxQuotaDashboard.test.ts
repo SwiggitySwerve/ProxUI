@@ -1009,7 +1009,9 @@ describe('pool presentation', () => {
     );
     // The visible word is the accessible text: no second, hidden "Low" beside it.
     expect(markup.match(/>Low</g)).toHaveLength(1);
-    expect(markup).toMatch(/<li data-limit-id="seven-day-opus" data-low="false"[^>]*><span>[^<]*Opus[^<]*<\/span>[\s\S]*?64.0%/);
+    expect(markup).toMatch(
+      /<li data-limit-id="seven-day-opus" data-low="false"[^>]*><span>[^<]*Opus[^<]*<\/span>[\s\S]*?64.0%/
+    );
     // Accounts start collapsed (numbers only); one control expands the whole section.
     expect(markup).toMatch(
       /<button type="button"[^>]*aria-expanded="false"[^>]*>Expand all<\/button>/
@@ -1140,6 +1142,41 @@ describe('pool presentation', () => {
     expect(markup).toMatch(/>With a 5-hour limit<\/span> <b[^>]*>1 of 2<\/b>/);
     expect(markup).not.toContain('loaded ·');
   });
+  test('a pool with no 5-hour limit at all says so, without a points scale or an empty chart', async () => {
+    await i18n.changeLanguage('en');
+    for (const mode of ['remaining', 'burn', 'drain'] as const) {
+      const weeklyOnly = {
+        ...pool.accounts[0],
+        status: 'no-limit' as const,
+        noFiveHourLimit: true,
+        remainingPercent: null,
+      };
+      const markup = renderToStaticMarkup(
+        createElement(PoolCard, {
+          pool: {
+            ...pool,
+            accounts: [weeklyOnly],
+            accountCount: 1,
+            eligibleCount: 0,
+            loadedCount: 0,
+            capacityPoints: 0,
+            remainingPoints: 0,
+            forecastState: 'no-limit',
+            recorded: [],
+            projected: [],
+          },
+          dashboard: { ...dashboard, window: 'five-hour' },
+          mode,
+          reveal: false,
+        })
+      );
+      expect(markup).toContain('No 5-hour limit');
+      expect(markup).not.toContain('of 0 points');
+      expect(markup).not.toContain('No observations in this range');
+      // No chart, so no control for one.
+      expect(markup).not.toContain('Minimize graph');
+    }
+  });
   test('a partial pool counts the accounts missing data and offers to show them; the combined card offers one refresh', async () => {
     await i18n.changeLanguage('en');
     const missing = {
@@ -1190,6 +1227,40 @@ describe('pool presentation', () => {
     );
     expect(combined).toContain(
       'No current quota data from 1 of 2 accounts, so the total is withheld.'
+    );
+    expect(combined.match(/Refresh now/g)).toHaveLength(1);
+  });
+  test('an estimated combined total still says it uses last readings, with Refresh now', async () => {
+    await i18n.changeLanguage('en');
+    const stale = { ...pool.accounts[0], id: 'opaque-9', status: 'stale' as const };
+    const estimated: QuotaPool = {
+      ...pool,
+      forecastState: 'stale',
+      remainingPoints: 150,
+      estimatedCount: 1,
+      accounts: [stale, ...pool.accounts.slice(1)],
+    };
+    const combined = renderToStaticMarkup(
+      createElement(CombinedPoolCard, {
+        pools: [estimated],
+        dashboard: {
+          ...dashboard,
+          combined: {
+            all: {
+              series: estimated,
+              layers: [{ ...estimated, provider: 'claude' }],
+              unavailableReason: null,
+            },
+          },
+        },
+        provider: 'all',
+        mode: 'remaining',
+        savedData: false,
+        onRefresh: () => {},
+      })
+    );
+    expect(combined).toContain(
+      'No recent reading from 1 of 1 accounts, so the total uses their last readings.'
     );
     expect(combined.match(/Refresh now/g)).toHaveLength(1);
   });

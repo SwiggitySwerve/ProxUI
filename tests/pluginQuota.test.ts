@@ -59,6 +59,18 @@ const classes = bindQuotaClasses(
 const renderQuota = (quota: PluginQuotaState) =>
   renderToStaticMarkup(createElement(PluginQuotaBody, { quota, classes }));
 
+/** The router's own 404: no JSON error body, so no apiCode. */
+const routeMissing = () => Object.assign(new Error('404 page not found'), { status: 404 });
+/** An older ProxD without `POST /quota/fetch`: only the per-plugin route answers. */
+const olderHubPost = () =>
+  spyOn(apiClient, 'post').mockImplementation(((url: string) =>
+    url === '/quota/fetch'
+      ? Promise.reject(routeMissing())
+      : Promise.resolve({})) as typeof apiClient.post);
+/** Calls to the per-plugin quota route, without the probe of `/quota/fetch`. */
+const pluginCalls = (post: { mock: { calls: unknown[][] } }) =>
+  post.mock.calls.filter((call) => call[0] !== '/quota/fetch');
+
 describe('generic plugin quota', () => {
   let list: Mock<typeof pluginsApi.list>;
   beforeEach(() => {
@@ -103,7 +115,7 @@ describe('generic plugin quota', () => {
   });
 
   test('routes advertised quotas for providers without a built-in card', async () => {
-    const post = spyOn(apiClient, 'post').mockResolvedValue({});
+    const post = olderHubPost();
     try {
       for (const capability of [
         { quota_probe: { url: 'https://quota.example.test/usage' } },
@@ -125,17 +137,19 @@ describe('generic plugin quota', () => {
           expect(resolveAuthFileQuotaType(candidate, 'plugin')).toBe('plugin');
           expect(resolveAuthFileQuotaType(candidate, 'unrelated')).toBeNull();
           expect(resolveAuthFileQuotaType(candidate, null)).toBeNull();
-          expect(classifyQuotaFiles([{ ...candidate, disabled: true }])).toEqual([]);
+          expect(
+            classifyQuotaFiles([{ ...candidate, disabled: true }]).map((entry) => entry.type)
+          ).toEqual(['plugin']);
         }
         const [entry] = classifyQuotaFiles([file]);
         expect(entry.type).toBe('plugin');
         const fetched = pluginConfig.fetchQuota(file, i18n.t);
         if (capability.quota_provider) {
           await fetched;
-          expect(post.mock.calls).toEqual([['/plugins/kiro-quota/quota', { auth_index: '7' }]]);
+          expect(pluginCalls(post)).toEqual([['/plugins/kiro-quota/quota', { auth_index: '7' }]]);
         } else {
           await expect(fetched).rejects.toThrow(i18n.t('plugin_quota.probe_unsupported'));
-          expect(post).not.toHaveBeenCalled();
+          expect(pluginCalls(post)).toEqual([]);
         }
       }
       for (const supportsQuota of [undefined, false]) {
@@ -168,7 +182,7 @@ describe('generic plugin quota', () => {
   });
 
   test('uses the host-selected plugin without discovery or a provider match', async () => {
-    const post = spyOn(apiClient, 'post').mockResolvedValue({});
+    const post = olderHubPost();
     list.mockRejectedValue(new Error('plugin discovery unavailable'));
     try {
       for (const quotaProvider of ['kiro', 'multi-provider-alias', undefined]) {
@@ -188,7 +202,7 @@ describe('generic plugin quota', () => {
         await fetchPluginQuota(file, i18n.t);
       }
       expect(list).not.toHaveBeenCalled();
-      expect(post.mock.calls).toEqual(
+      expect(pluginCalls(post)).toEqual(
         Array(3).fill(['/plugins/Healthy%2FQuota/quota', { auth_index: '7' }])
       );
     } finally {
@@ -361,12 +375,12 @@ describe('generic plugin quota', () => {
   });
 
   test('reports probe-only quotas as unsupported without calling removed v0 routes', async () => {
-    const post = spyOn(apiClient, 'post').mockResolvedValue({});
+    const post = olderHubPost();
     try {
       await expect(
         fetchPluginQuota({ name: 'kiro-a.json', supportsQuota: true, authIndex: '7' }, i18n.t)
       ).rejects.toThrow(i18n.t('plugin_quota.probe_unsupported'));
-      expect(post).not.toHaveBeenCalled();
+      expect(pluginCalls(post)).toEqual([]);
       expect(list).not.toHaveBeenCalled();
     } finally {
       post.mockRestore();
@@ -392,7 +406,7 @@ describe('generic plugin quota', () => {
   });
 
   test('shares the plugin list across credentials and reports a missing plugin', async () => {
-    const post = spyOn(apiClient, 'post').mockResolvedValue({});
+    const post = olderHubPost();
     try {
       await Promise.all(
         ['1', '2', '3'].map((authIndex) =>
@@ -403,7 +417,7 @@ describe('generic plugin quota', () => {
         )
       );
       expect(list).toHaveBeenCalledTimes(1);
-      expect(post.mock.calls.map((call) => call[0])).toEqual(
+      expect(pluginCalls(post).map((call) => call[0])).toEqual(
         Array(3).fill('/plugins/kiro-quota/quota')
       );
 
@@ -415,7 +429,7 @@ describe('generic plugin quota', () => {
       await expect(
         fetchPluginQuota({ name: 'z.json', authIndex: '9', quotaProvider: 'zed' }, i18n.t)
       ).rejects.toThrow(i18n.t('plugin_quota.plugin_not_found', { provider: 'zed' }));
-      expect(post).not.toHaveBeenCalled();
+      expect(pluginCalls(post)).toEqual([]);
     } finally {
       post.mockRestore();
     }
@@ -443,14 +457,14 @@ describe('generic plugin quota', () => {
   });
 
   test('drops a failed plugin list so the next refresh retries', async () => {
-    const post = spyOn(apiClient, 'post').mockResolvedValue({});
+    const post = olderHubPost();
     try {
       list.mockRejectedValueOnce(new Error('offline'));
       const file = { name: 'kiro.json', authIndex: '7', quotaProvider: 'kiro' };
       await expect(fetchPluginQuota(file, i18n.t)).rejects.toThrow('offline');
       await fetchPluginQuota(file, i18n.t);
       expect(list).toHaveBeenCalledTimes(2);
-      expect(post).toHaveBeenCalledTimes(1);
+      expect(pluginCalls(post)).toHaveLength(1);
     } finally {
       post.mockRestore();
     }

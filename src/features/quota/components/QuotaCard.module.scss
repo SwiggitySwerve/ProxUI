@@ -85,6 +85,29 @@
   @include text-ellipsis;
 }
 
+/* A switched-off account: quota stays readable but muted, so it does not read as serving. */
+.cardOff {
+  background: color-mix(in srgb, var(--bg-primary) 55%, var(--bg-tertiary));
+}
+
+.cardOff > :not(.head) {
+  opacity: 0.68;
+}
+
+.offBadge {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 1px 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
+
 /* ---------- body 容器 ---------- */
 
 .body {
@@ -231,8 +254,17 @@
 .actionRow {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+/* "updated 25s ago", left of the refresh pill */
+.freshness {
+  margin-right: auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 /* 安静描边药丸（与凭证卡图标动作同族：hover 才显色块） */

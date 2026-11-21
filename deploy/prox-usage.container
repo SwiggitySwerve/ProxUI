@@ -1,0 +1,30 @@
+[Unit]
+Description=Prox usage collection
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=localhost/prox-history:dev
+ContainerName=prox-usage
+Exec=bun /app/usage/main.js
+Network=host
+Volume=%h/.local/share/prox-usage:/data:rw
+Volume=%h/.config/proxd/management-key:/run/secrets/proxy-management-key:ro
+# CPA-Manager-Plus was retired on 15 Nov 2026 after an exact final reconcile; prox-usage is the only
+# usage store. Retired mode refuses CPAMP import/reconcile/verify, reports cpamp_retired on
+# /v1/status and /v1/exporter, and the nightly chain skips the CPAMP guard, reconcile and parity.
+Environment=PROX_USAGE_CPAMP_RETIRED=1
+# backup.json configures the paced nightly backup (usage/daily, usage/weekly).
+Volume=%h/.config/prox-usage:/config:ro
+Environment=PROX_USAGE_BACKUP_CONFIG=/config/backup.json
+Environment=PROX_USAGE_CLIENT_ALIASES_PATH=/config/client-aliases.json
+# The backup snapshot is written to tmpfs and needs the database size plus 10% free.
+ShmSize=2g
+
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target

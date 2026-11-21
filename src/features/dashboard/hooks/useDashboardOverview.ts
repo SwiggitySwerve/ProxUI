@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { HeaderRefreshRound } from '@/hooks/useHeaderRefresh';
 import { createAnalyticsApi } from '@/services/api/analytics';
 import { apiClient } from '@/services/api/client';
 import {
@@ -247,21 +248,28 @@ export function useDashboardOverview() {
   // freeze until a manual refresh, because the provider set rarely changes.
   useInterval(
     () => {
+      // A hidden tab would keep the server's analytics warmer on its busy cadence all day.
+      if (document.visibilityState === 'hidden') return;
       void loadAnalytics();
     },
     connected && analyticsKey ? PROVIDER_RECENT_REQUESTS_STALE_TIME_MS : null
   );
 
-  const refresh = useCallback(async () => {
-    if (!connected) return;
-    await Promise.allSettled([
-      fetchConfig(true),
-      loadAuthFiles(),
-      loadModels(),
-      refreshRecentRequests(),
-      loadAnalytics(),
-    ]);
-  }, [connected, fetchConfig, loadAuthFiles, loadModels, refreshRecentRequests, loadAnalytics]);
+  // From the header: its round already reads every hub's credential list once. Config stays
+  // per source: this source's config store is not the shell's.
+  const refresh = useCallback(
+    async (round?: HeaderRefreshRound) => {
+      if (!connected) return;
+      await Promise.allSettled([
+        fetchConfig(true),
+        round ? round.inventory : loadAuthFiles(),
+        loadModels(),
+        refreshRecentRequests(),
+        loadAnalytics(),
+      ]);
+    },
+    [connected, fetchConfig, loadAuthFiles, loadModels, refreshRecentRequests, loadAnalytics]
+  );
 
   const providerKeyCounts = useMemo(() => (config ? getProviderKeyCounts(config) : null), [config]);
 
@@ -342,7 +350,7 @@ export function useDashboardOverview() {
   const fromAnalytics = useMemo(
     () =>
       analytics?.key === analyticsKey &&
-      analyticsUsable(analyticsKey.split(','), analytics.responses)
+      analyticsUsable(analyticsKey.split(','), analytics.responses, analytics.window)
         ? trafficFromAnalytics(analytics.window, analytics.responses)
         : null,
     [analytics, analyticsKey]

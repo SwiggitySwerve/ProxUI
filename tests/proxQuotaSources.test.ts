@@ -14,6 +14,7 @@ import {
   MANUAL_REFRESH_INTERVAL_MS,
   type StoredAccount,
 } from '../server/quota/types';
+import { until } from './helpers/inventoryHarness';
 import { validateSourceManifest } from '../src/domain/providerSources/manifest';
 import type { PoolDashboard, PoolProviderId } from '../src/domain/quotaPool/types';
 import {
@@ -302,16 +303,22 @@ describe('enumerated quota sources', () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    f.delay(async () => {
+    let targetedSettled = false;
+    const early: string[] = [];
+    f.delay(async (call) => {
+      // Only the full refresh reads the other sources; it must not start before the targeted read ends.
+      if (!targetedSettled && call.instanceId !== account.instanceId) early.push(call.instanceId);
       await gate;
     });
-    const targeted = f.collector.refreshAccount(account.id);
+    const targeted = f.collector.refreshAccount(account.id).finally(() => {
+      targetedSettled = true;
+    });
     const full = f.collector.refresh();
-    await Bun.sleep(5);
-    expect(f.calls).toHaveLength(1);
+    await until(() => f.calls.length > 0); // The targeted read is parked at the gate.
     release();
     expect(await targeted).toBe(true);
     await full;
+    expect(early).toEqual([]);
     f.advance();
     f.calls.length = 0;
     const before = f.store.listAccounts();
@@ -336,8 +343,9 @@ describe('enumerated quota sources', () => {
     f.delay(async () => {
       await gate;
     });
+    const started = f.calls.length;
     const targeted = f.collector.refreshAccount(account.id);
-    await Bun.sleep(5);
+    await until(() => f.calls.length > started); // The read is in flight, parked at the gate.
     f.collector.stop();
     release();
     expect(await targeted).toBe(false);
@@ -349,7 +357,13 @@ describe('enumerated quota sources', () => {
     await f.collector.refresh();
     expect(
       f.calls
-        .filter((call) => !call.body)
+        .filter((call) => call.url.pathname.endsWith('/credentials'))
+        .map((call) => call.instanceId)
+        .sort()
+    ).toEqual(['source-a', 'source-b', 'source-c']);
+    expect(
+      f.calls
+        .filter((call) => call.url.pathname.endsWith('/providers'))
         .map((call) => call.instanceId)
         .sort()
     ).toEqual(['source-a', 'source-b', 'source-c']);
@@ -372,7 +386,10 @@ describe('enumerated quota sources', () => {
         ]).toContain(call.body.url);
         expect(call.body.authIndex).toBe('same-index');
         expect(Object.keys(call.body).sort()).toEqual(['authIndex', 'header', 'method', 'url']);
-      } else expect(call.url.pathname).toBe('/v8/management/credentials');
+      } else
+        expect(['/v8/management/credentials', '/v8/management/providers']).toContain(
+          call.url.pathname
+        );
     }
     expect(f.calls.filter((call) => call.body)).toHaveLength(7);
     expect(
@@ -523,9 +540,10 @@ describe('enumerated quota sources', () => {
     logged.mockRestore();
     expect(lines).toContainEqual(
       expect.stringMatching(
-        /^Quota request failed: claude 429 account=\S{8} retry-after=30 headers=retry-after,set-cookie$/
+        /^Quota request failed: claude 429 retry-after=30 headers=retry-after,set-cookie$/
       )
     );
+    expect(lines.join('\n')).not.toContain('account=');
     expect(lines.join('\n')).not.toContain(SENTINEL);
   });
 
@@ -629,6 +647,76 @@ describe('enumerated quota sources', () => {
     await pending;
     expect(f.store.listAccounts()).toEqual(before);
     expect(f.store.listSamples(0, NOW + MANUAL_REFRESH_INTERVAL_MS)).toHaveLength(8);
+  });
+
+  test('a non-pool source without a catalog is only probed; an Antigravity source keeps its pool', async () => {
+    const f = fixture();
+    const extra = (instanceId: string, providers: string[]) => {
+      const managementKeyFile = join(temporary(), `${instanceId}.key`);
+      writeFileSync(managementKeyFile, `synthetic-key-${instanceId}`);
+      // A Claude credential on each: neither source may pool it.
+      f.inventories.set(instanceId, { files: [credential('claude')] });
+      return {
+        instanceId,
+        label: instanceId,
+        publicBasePath: `/${instanceId}`,
+        aliases: [],
+        authScope: instanceId,
+        providers,
+        upstreamOrigin: `http://${instanceId}.invalid`,
+        managementKeyFile,
+      };
+    };
+    const manifest = validateSourceManifest({
+      ...f.manifest,
+      sources: [
+        ...f.manifest.sources,
+        extra('xai-only', ['xai']),
+        extra('antigravity-only', ['antigravity']),
+      ],
+    });
+    const collector = new QuotaCollector(f.store, {
+      sources: manifest.sources,
+      revision: 'synthetic-revision',
+      fetcher: f.fetcher,
+      now: () => NOW,
+    });
+    cleanups.push(() => collector.stop());
+    await collector.refresh();
+    expect(
+      f.calls.filter((call) => call.instanceId === 'xai-only').map((call) => call.url.pathname)
+    ).toEqual(['/v8/management/providers']);
+    // Inventoried, but it lists no Antigravity credential, so no usage API is called there.
+    expect(f.calls.filter((call) => call.instanceId === 'antigravity-only' && call.body)).toEqual(
+      []
+    );
+    expect(collector.sources?.map((source) => source.instanceId)).toEqual([
+      'source-a',
+      'source-b',
+      'source-c',
+      'xai-only',
+      'antigravity-only',
+    ]);
+    expect(
+      collector.inventorySources
+        .filter((s) => s.instanceId === 'antigravity-only' || s.instanceId === 'xai-only')
+        .map((s) => [s.instanceId, s.provider])
+    ).toEqual([['antigravity-only', 'antigravity']]);
+    expect(collector.issues).toEqual([]);
+    const dashboard = buildDashboard(
+      f.store.listAccounts(),
+      f.store.listSamples(0, NOW),
+      { ...options, nowMs: NOW },
+      { ...state, issues: collector.issues, sources: collector.sources }
+    );
+    expect(
+      dashboard.pools
+        .filter((pool) => pool.instanceId === 'antigravity-only' || pool.instanceId === 'xai-only')
+        .map((pool) => [pool.instanceId, pool.provider, pool.accountCount])
+    ).toEqual([['antigravity-only', 'antigravity', 0]]);
+    expect(dashboard.combinations?.map((c) => [c.provider, c.occurrenceCount])).toEqual([
+      ['claude', 3],
+    ]);
   });
 });
 
@@ -843,6 +931,58 @@ describe('additive legacy quota attribution', () => {
       store.listAccounts().find((account) => account.instanceId === 'other-claude')?.retired
     ).toBe(false);
     expect(store.listSamples(0, NOW + MANUAL_REFRESH_INTERVAL_MS)).toHaveLength(sampleCount);
+  });
+
+  test('a targeted refresh accepts the source-qualified id of a legacy-attributed account', async () => {
+    // The browser names an account by source and auth index only; it cannot know that the
+    // server stores a migrated account under its pre-attribution id.
+    const path = join(temporary(), 'quota.sqlite');
+    legacyDatabase(path);
+    const store = open(path);
+    const f = fixture(['claude-primary', 'other-claude']);
+    store.migrateLegacySources(
+      [{ provider: 'claude', instanceId: 'claude-primary' }],
+      f.sources.map((source) => source.instanceId)
+    );
+    const legacy = store.listAccounts().find((account) => account.provider === 'claude')!;
+    let clock = NOW;
+    const collector = new QuotaCollector(store, {
+      sources: f.manifest.sources,
+      revision: 'fixture',
+      fetcher: f.fetcher,
+      now: () => clock,
+    });
+    cleanups.push(() => collector.stop());
+    await collector.refresh();
+    clock += MANUAL_REFRESH_INTERVAL_MS;
+    const qualified = `claude-primary:${legacy.id}`;
+    expect(store.listAccounts().find((account) => account.id === legacy.id)?.sourceAccountId).toBe(
+      qualified
+    );
+    const first = collector.refreshAccount(qualified);
+    // Both spellings are one account, so they share its single flight and its 20 s limit.
+    expect(collector.refreshAccount(legacy.id)).toBe(first);
+    expect(await first).toBe(true);
+    expect(await collector.refreshAccount(qualified)).toBe(false);
+    expect(await collector.refreshAccount(`other-source:${legacy.id}`)).toBe(false);
+    clock += 20_000;
+    expect(await collector.refreshAccount(qualified)).toBe(true);
+    // POST /v1/refresh carries the same id from the browser.
+    clock += 20_000;
+    const handler = createHandler({
+      store,
+      collector,
+      keyFile: f.sources[0].managementKeyFile,
+      now: () => clock,
+    });
+    const response = await handler(
+      new Request('http://localhost/v1/refresh', {
+        method: 'POST',
+        headers: { Authorization: `Bearer synthetic-key-${f.sources[0].instanceId}` },
+        body: JSON.stringify({ accountId: qualified }),
+      })
+    );
+    expect(await response.json()).toEqual({ refreshed: true, retryAtMs: null });
   });
 
   test('a source-qualified alias collision aborts mapping rather than merging two histories', () => {

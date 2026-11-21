@@ -1,4 +1,5 @@
-import type { PoolProviderId, PoolWindow } from '../../src/domain/quotaPool/types';
+import type { ProviderLifecycleState } from '../../src/domain/providerCatalog';
+import type { PoolProviderId, PoolWindow, ResetProviderId } from '../../src/domain/quotaPool/types';
 
 export interface StoredAccount {
   id: string;
@@ -21,7 +22,17 @@ export interface StoredAccount {
   firstSampleAtMs?: number | null;
 }
 
-export const QUOTA_PROVIDERS: readonly PoolProviderId[] = Object.freeze(['claude', 'codex']);
+export { BUILT_IN_POOL_PROVIDERS as QUOTA_PROVIDERS } from '../../src/domain/quotaPool/providers';
+
+export interface StoredCatalogProvider {
+  instanceId: string;
+  provider: PoolProviderId;
+  displayName: string;
+  lifecycle: ProviderLifecycleState;
+  quotaSupported: boolean;
+  firstSeenAtMs: number;
+  lastSeenAtMs: number;
+}
 
 /** Stored in place of a retired account's file name; its email is cleared. */
 export const RETIRED_ACCOUNT_NAME = 'retired';
@@ -38,6 +49,8 @@ export interface InventoryChange {
 export interface QuotaSourceView {
   instanceId: string;
   sourceLabel: string;
+  /** The pool providers collected from this source; absent when not known. */
+  providers?: readonly PoolProviderId[];
 }
 
 export interface QuotaSample {
@@ -47,6 +60,33 @@ export interface QuotaSample {
   remainingPercent: number | null;
   resetAtMs: number | null;
   periodHours: number | null;
+  /** Generic pool samples are tied to the bucket that produced them. */
+  bucketId?: string;
+}
+
+/** What the collector held for one account at a moment: every usage window plus reset counts. */
+export interface ResetReading {
+  observedAtMs: number;
+  windows: { id: string; remainingPercent: number | null; resetAtMs: number | null }[];
+  resets: { available: number; usable: number; blocker: string | null } | null;
+}
+
+/** `pending` is a claim being sent; `unknown` one that may have been sent and never got an answer. */
+export interface ResetEvent {
+  id: number;
+  accountId: string;
+  provider: ResetProviderId;
+  /** Claude: session, weekly, fable or full. Codex: its credit kind, `codex_rate_limits`. */
+  kind: string;
+  grantId: string | null;
+  clientRequestId: string;
+  outcome: string;
+  requestedAtMs: number;
+  settledAtMs: number | null;
+  /** Whether the hub's routing cooldown was cleared after a spent reset; null when not tried. */
+  cooldownCleared: boolean | null;
+  before: ResetReading | null;
+  after: ResetReading | null;
 }
 
 export { HOUR_MS, DAY_MS } from '../../src/utils/time/durations';

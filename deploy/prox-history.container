@@ -8,8 +8,9 @@ Image=localhost/prox-history:dev
 ContainerName=prox-history
 Network=host
 Volume=%h/.local/share/prox-history:/data:rw
-Volume=%h/.config/cli-proxy-rerank/management-key:/run/secrets/proxy-management-key:ro
-Volume=%h/.config/prox/cpa-admin-key:/run/secrets/cpa-admin-key:ro
+Volume=%h/.config/proxd/management-key:/run/secrets/proxy-management-key:ro
+# The baked source manifest is the default. Runtime hub discovery replaces it from a drop-in the
+# operator adds (docs/PROX-SETUP.md, "Runtime hub discovery"); nothing more is mounted here.
 
 [Service]
 Restart=always

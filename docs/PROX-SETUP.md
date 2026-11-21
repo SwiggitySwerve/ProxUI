@@ -1,17 +1,17 @@
-# Prox iteration workspace
+# ProxUI iteration workspace
 
 This is a fork of [CLI Proxy API Management Center](https://github.com/router-for-me/Cli-Proxy-API-Management-Center),
 independent of CPA-Manager-Plus at `usage.swervelab.xyz`. Upstream is MIT licensed;
 keep its license and attribution. Base commit: `64b4f5aed19b8f791eb21eb9e785ea379ea05b44`.
 
-The upstream navigation matches the supplied Prox screenshot, including Quota
+The upstream navigation matches the supplied ProxUI screenshot, including Quota
 Management, Quick Start, Auth Files, Plugin Store, and Management Center Info.
 Theo's exact private changes have not been obtained. The screenshot is a design
 reference, not proof that upstream supplies pooled forecasts.
 
 ## Run and deploy
 
-- Fork: `https://github.com/SwiggitySwerve/prox`
+- Fork: `https://github.com/SwiggitySwerve/ProxUI`
 - Checkout on homelab: `/home/swerve/src/prox`
 - Setup merged in PR #1; pooled dashboard branch: `feat/pooled-quota-dashboard`.
 - Public UI: `https://prox.swervelab.xyz`
@@ -31,15 +31,16 @@ bash scripts/deploy-homelab.sh
 ```
 
 This verifies and builds the single-file UI and quota-history server, checks
-Nginx configuration, installs their user services, and restarts only Prox and
-Prox history. The script uses the pinned Bun via npm
+Nginx configuration, installs their user services, and restarts only ProxUI and
+ProxUI history. The script uses the pinned Bun via npm
 exec, so it does not replace a machine's global Bun. Commit first when the image
 revision must identify an exact source tree.
 
-The script also installs and enables the lock janitor: `prox-auth-janitor.path`
-and `.timer` (user units in `~/.config/systemd/user/`) run
-`~/.local/share/prox/prox-auth-janitor.sh` whenever either CLI-Proxy auth
-directory changes, and every 15 minutes. CLI-Proxy deletes a credential's
+The script also installs and enables the lock janitor: `prox-auth-janitor.timer`
+(a user unit in `~/.config/systemd/user/`) runs
+`~/.local/share/prox/prox-auth-janitor.sh` every 10 minutes. (An earlier
+`prox-auth-janitor.path` watcher fired on nearly every proxy request, because
+the proxy rewrites its cooldown-state files there; the deploy removes it.) ProxD deletes a credential's
 `.json` but never its `.json.lock`; the janitor removes only `*.json.lock` files
 that have no `.json` and are over 10 minutes old (a fresh one can belong to a
 write in progress), and never touches a `.json`.
@@ -48,7 +49,7 @@ Initial routing setup (operator access on homelab):
 
 ```sh
 kubectl apply -f deploy/kubernetes.yaml
-bash ~/swervebox/scripts/authentik-proxy-app.sh prox.swervelab.xyz 'Prox' prox
+bash ~/swervebox/scripts/authentik-proxy-app.sh prox.swervelab.xyz 'ProxUI' prox
 ```
 
 The new namespace, service, EndpointSlice, and ingress are managed by this fork's
@@ -65,13 +66,19 @@ After Authentik sign-in, use the existing proxy management key at the UI's login
 | --- | --- |
 | `https://prox.swervelab.xyz` or `https://prox.swervelab.xyz/codex` | GPT/Codex, port 8317 |
 | `https://prox.swervelab.xyz/claude` | Claude, port 8319 |
+| `https://prox.swervelab.xyz/gemini` | Gemini / Antigravity, port 8321 |
+
+The Gemini / Antigravity source declares only `antigravity`, so prox-history reads
+it for Antigravity alone: its credentials form the Gemini pool on Quota Management,
+and it never gets Claude or Codex cards.
 
 The checked-in source manifest, `deploy/provider-sources.json`, owns instance
 membership, ports, paths, aliases, and explicit authentication-sharing scopes.
 Run `bun run sources:generate` after editing it. `bun run sources:check` and the
 build reject stale generated Nginx routes or public discovery. The browser reads
 the sanitized `/prox/sources.json`; upstream origins and key-file references are
-excluded. History collection reads the same manifest once at process start.
+excluded. History collection reads the same manifest once at process start. Hubs
+can also be added without rebuilding the images; see "Runtime hub discovery" below.
 
 Each source's `providers` list says which instance takes new credentials of that
 type. Every proxy accepts every provider, so OAuth logins go to the declared owner
@@ -116,7 +123,7 @@ it through these entry points:
 - `src/styles/themes.scss`: shared visual tokens.
 - `src/services/api/`: v8 API boundary and provider requests.
 
-Target: the supplied dark Prox layout, provider tabs, separate Claude/Codex pool
+Target: the supplied dark ProxUI layout, provider tabs, separate Claude/Codex pool
 cards, recorded versus projected lines, burn/drain intervals, account reset
 markers, and pool/first-account depletion estimates. Show stale/missing data
 explicitly; projections must remain distinguishable from observations.
@@ -139,7 +146,7 @@ its recent burn rate (or the selected multiplier) and resets on its reported
 cycle. Missing/stale/error balances remain unknown, and history gaps break the
 recorded line. No historical samples or plan multipliers are fabricated.
 
-For each subsequent UI change: run `bun run verify`, deploy Prox only, and inspect
+For each subsequent UI change: run `bun run verify`, deploy ProxUI only, and inspect
 the affected route at desktop and mobile widths against the screenshot. Keep
 browser screenshots free of credentials and account identities.
 
@@ -164,8 +171,8 @@ they do not certify the production database or replace its backup.
 Stop the new UI and collector with `systemctl --user stop prox prox-history`.
 Keep the data directory for later recovery. To remove its cluster
 routes, run `kubectl delete -f deploy/kubernetes.yaml`. This manifest contains only
-the new Prox namespace/resources. Existing proxy and usage services are untouched.
-Remove the Prox Authentik application/provider separately if retiring the service.
+the new ProxUI namespace/resources. Existing proxy and usage services are untouched.
+Remove the ProxUI Authentik application/provider separately if retiring the service.
 
 ## Setup verification (2026-10-27)
 
@@ -212,27 +219,40 @@ reviewer's original reproducer now returns HTTP 200.
 
 Remote CI was unavailable for the setup merge; these verification results are
 local checks. Inference and CPA-Manager-Plus container start timestamps remain
-unchanged from before the Prox work.
+unchanged from before the ProxUI work.
 # Analytics
 
-The Observe sidebar's **Analytics** page reads retained request events from CPA
-Manager. It includes Overview, Tokens & Cache, Cost, Performance, Requests and
+The Observe sidebar's **Analytics** page reads retained request events from
+prox-usage. It includes Overview, Tokens & Cache, Cost, Performance, Requests and
 Model Rates. Filters and chart drilldowns share the same server-side query; request
 pages use stable timestamp/ID cursors. The request inspector shows an allowlisted
 projection, never raw request bodies, headers or credential files.
 
 `deploy/provider-sources.json` explicitly grants the history management key access
-to the complete `homelab` CPA dataset. The `analytics` entry fixes the CPA origin
-and references `/run/secrets/cpa-admin-key`. Install the existing CPA admin key
-privately at `~/.config/prox/cpa-admin-key` with mode 0600; the history container
-mounts it read-only. This credential is separate from proxy management and client
-inference keys and is never sent to the browser. This grant is for the trusted
-homelab administrator, not for tenants with different data permissions.
+to the complete `homelab` usage dataset. The `analytics` entry fixes the prox-usage
+origin (`http://127.0.0.1:18320`, loopback only; `prox-history` reaches it over
+`Network=host`, as it reached CPA-Manager-Plus on 18317) and references
+`/run/secrets/proxy-management-key`, the management key the container already
+mounts for `history`. prox-usage checks the same key, so no second secret is
+mounted and nothing new is exposed. The key is never sent to the browser. This grant
+is for the trusted homelab administrator, not for tenants with different data
+permissions.
 
-The existing `/v8/management/prox/analytics` route reaches the authenticated Prox
-server, which calls CPA's dedicated `/v0/management/monitoring/prox-analytics`
-endpoint. This is the CPA server's contract, not a fallback to an older proxy API.
-The inference instances remain on v8. CPA remains the sole usage queue consumer.
+The existing `/v8/management/prox/analytics` route reaches the authenticated ProxUI
+server, which calls prox-usage's `/v0/management/monitoring/prox-analytics`, an
+alias of its `/v1/analytics` kept for this switch and removed in plan P10. The
+response contract is unchanged. The inference instances remain on v8. prox-usage
+and CPA-Manager-Plus both consumed the usage queue until CPA-Manager-Plus was stopped
+(15 Nov 2026, 21:41 UTC, after an exact final reconcile of 868,254 events).
+
+**Rollback (historical; CPA-Manager-Plus is retired, so this no longer applies):** `git revert` the P7 merge and run `scripts/deploy-homelab.sh`. That
+restores the old `analytics` values (`"upstreamOrigin": "http://127.0.0.1:18317"`,
+`"adminKeyFile": "/run/secrets/cpa-admin-key"`) and the key mount line
+`Volume=%h/.config/prox/cpa-admin-key:/run/secrets/cpa-admin-key:ro` in
+`deploy/prox-history.container`. `~/.config/prox/cpa-admin-key` stays on the host:
+the nightly and parity jobs read it for the CPAMP guard and comparison until
+CPA-Manager-Plus is retired, so rollback needs no new secret.
+
 Registered model lists are read independently from every configured source using
 that source's client key. Source failures remain visible in the rate table.
 
@@ -242,3 +262,245 @@ measurements remain explicitly unavailable. Retained events do not establish
 coverage of every inbound request: old missing-usage records, pre-admission failures
 and queue/process losses cannot be reconstructed. Timing methods are displayed;
 full-duration output rate must not be presented as pure generation speed.
+
+
+## Name an API key for usage metrics
+
+Client names now belong to prox-usage's private local file; CPAMP's UI is not
+needed. Edit `~/.config/prox-usage/client-aliases.json` with mode `0600`:
+
+```json
+{"client_alias":[{"api_key_hash":"<64 lowercase SHA-256 hex characters>","alias":"Work laptop"}]}
+```
+
+The P4 export produces this format as `<book.json>.client-aliases.json`; copy it
+to that private path once. Preserve existing rows when adding a key. Hash the
+exact API key bytes with SHA-256 (without a trailing newline), using a local tool
+that reads secret input from stdin; never put the key in a shell command or git.
+Save the updated file with `0600` permissions. The existing read-only `/config`
+mount exposes it to prox-usage, which reloads it on its next exporter read. No
+restart is needed. An unknown key appears as `key <first 8 hash characters>`;
+traffic without a key is `unknown`. Invalid edits retain the last good labels and
+set `client_alias_error` in the authenticated `/v1/exporter` response.
+
+The monitoring rollout first adds ProxUI source-health gauges beside the unchanged
+CPAMP counters. At cutover Step E, require Step B's full history import to finish,
+then require `/v1/exporter` to report `rate_book_loaded: true` and
+`client_aliases_loaded: true`. A last-good reload error may retain valid values;
+first-load failure must suppress the shim's usage counters. Use an explicit empty
+`client_alias` array if no friendly names are wanted.
+
+The cutover adds `source="prox-usage"` to usage counters and gauges. Their values
+become the canonical tokens and current-rate costs shown in ProxUI analytics, with
+requested-model/account/provider/client label values preserved. New series' first
+samples are not counted by Prometheus rate/increase; lifetime-total dashboards
+jump once. Fable/Terra pricing and removal of the old generic-cache, `-fast` and
+billing-only policies affect costs. Apply the Sonnet 5.5 cache-read correction at
+this identity change; any later price decrease needs a new source identity.
+Importing history after the swap would appear as a huge increase. Rolling back
+resumes old counters and can double-count traffic already counted by the new ones.
+
+
+## Nightly usage maintenance (operator enablement only)
+
+The shipped `prox-usage-nightly.timer` is disabled by default and starts one
+oneshot chain at **04:20 UTC**, without catch-up. The units run self-contained
+bundles, not a checkout: `scripts/deploy-homelab.sh` builds `dist/usage-jobs/usage-nightly.js`
+and `usage-parity.js` (`bun run build:usage-jobs`, part of `bun run verify`) from the commit it
+deploys, installs both by temp-file-and-rename into `~/.local/share/prox/usage-jobs/`, and
+runs `usage-nightly.js --check-install` (starts the sibling parity bundle with `--help`; no
+network or keys) before reloading systemd. The nightly bundle spawns `usage-parity.js` from
+its own directory. Both units use that directory as `WorkingDirectory` and write parity evidence
+to `~/.local/share/prox/usage-evidence/` (`PROX_USAGE_EVIDENCE_DIR`); a manual repo run keeps
+the `docs/evidence/prox-usage-parity/` default. `scripts/usage-nightly.ts` waits for **prune → reconcile →
+backup → quick/event parity**, observing each job's terminal success
+and completed cleanup before starting the next. It reads the management bearer
+inside the process, polls `/v1/jobs` every ten seconds through the shared PSI gate,
+and stops on job/API/parity failure. It enforces today's absolute **12:00 UTC**
+cutoff and the 01:00–04:00 / 12:20–12:50 forbidden windows on every admission and
+wait; at cutoff/interruption it requests active-job cancellation. A submit POST has its own 15-second timeout so a cutoff
+cannot discard its accepted job ID. On an ambiguous response failure, a bounded
+status read recovers only a running job echoing the exact unique `clientToken`
+sent before that submission. Cancellation carries that token and the server
+refuses mismatches. A newer same-kind operator job is never sufficient proof;
+no match stops the chain with `recovery=no-owned-job`. HTTP rejections, including
+409, grant no ownership. While a rollup backfill holds bulk admission, the submit
+answers 409 `Rollup backfill in progress`; the chain retries only that refusal
+every 30 s for up to 15 minutes (new token each attempt, still inside the noon
+cutoff) and reports the `attempts` count. Any other 409, such as an active bulk
+job, is not retried, and giving up keeps `refused: {kind, status}`.
+Unless prox-usage reports `cpamp_retired: true` on `GET /v1/status` (see "Retiring
+CPA-Manager-Plus" below), before any job the chain reads CPAMP's `/status` (port 18317)
+with the key in `~/.config/prox/cpa-admin-key` and fails the night, starting nothing, with
+`cpamp: {ok: false, collectors}` unless every collector (at least two) reports
+transport `subscribe` and state `running`, or if CPAMP is unreachable. A polling
+CPAMP would otherwise lose history silently. The nightly runs as the same user,
+so the key needs no extra mount. Restart CPAMP after its proxies are up; a failed
+guard night does not count toward the two-clean-nights gate. Manual job commands may omit the optional token;
+provided tokens must contain 1–64 ASCII letters/digits/underscore/hyphen.
+Incomplete
+parity exits 2 and cannot pass the chain. Parity has a 5h30min runtime cap; the
+whole oneshot has a 7h40min start timeout as a backstop.
+
+The backup step runs by default (paced snapshot, then upload). Set
+`PROX_USAGE_ENABLE_PACED_BACKUP=0` in a nightly-service override to skip it for a
+night; it needs a working `~/.config/prox-usage/backup.json`. The restore check is a
+separate manual command, `bun ~/.local/share/prox/usage-jobs/usage-restore-check.js`
+(see server/usage/RULES.md, Restore check). The old independent prune/reconcile/backup/parity timers are no longer
+shipped. On upgrades, deployment disables/stops each retired timer, removes its
+unit and enable link, then reloads systemd; missing timers are tolerated, manager
+failures stop deployment. The sole nightly timer remains disabled. `prox-usage-job@.service` and `prox-usage-parity.service` remain for
+manual use. The deployment script copies templates without enabling them; this
+change installs, enables and runs no live maintenance unit.
+
+## Runtime hub discovery (operator enablement only)
+
+Nothing in this section is active after a deploy. The images keep serving the baked
+`deploy/provider-sources.json`, its routes and its discovery until an operator installs
+the oneshot, runs it once and adds the two drop-ins below.
+
+`prox-sources-apply` is a host oneshot. It reads the baked manifest and ProxD's
+operator-owned `~/.config/cli-proxy/instances.json` (`{"instances": [{id, provider,
+base_url, management_path?, label?, auth_scope?}]}`; a bare array
+is accepted too) and writes three files into `~/.local/share/prox/sources/`:
+
+| File | Mode | Read by |
+| --- | --- | --- |
+| `effective-manifest.json` | 0600 | prox-history (`PROX_SOURCE_MANIFEST`) |
+| `provider-routes.conf` | 0644 | Nginx in the prox container |
+| `sources.json` | 0644 | the browser, as `/prox/sources.json` |
+
+Admission rules:
+
+- A baked source always wins. An entry that reuses a baked instance ID, public path or
+  claimed provider is rejected, never merged.
+- An entry is published at `/<id>-<digest>`, where the digest is the first 8 hex digits of
+  the SHA-256 of its `base_url`, and labelled with its `label`, or its ID. A hub re-added
+  at another address therefore gets a new route, and a browser session opened on the old
+  route can never reach the new upstream.
+- Only loopback hubs (`127.0.0.1`, `localhost`, `[::1]`) that accept the shared key are
+  admitted at run time. Each is probed with `~/.config/proxd/management-key` and joins the
+  scope of the baked sources that use that key. An entry with `management_key_file`, or a
+  remote `base_url`, is rejected: such a hub needs its own transport and origin decisions,
+  so add it to `deploy/provider-sources.json` instead.
+- Before admission the hub must answer `GET /v8/management/providers` with status 200 and
+  an `instance_id` equal to the entry's `id`. Redirects are refused; the request has a
+  5-second timeout and a 1 MiB body limit. A hub without the provider catalog (older than
+  ProxD's provider discovery) is not admitted.
+- A hub that reports `accepted_providers` owns exactly those providers; otherwise it owns
+  the entry's `provider`. If another source already owns one of them, the hub is rejected.
+- A hub that was admitted before stays when its probe fails or its entry becomes
+  unreadable. Every admitted hub keeps the providers it held ahead of any other hub, so a
+  hub that changes its claims cannot take another's. It leaves only when its entry is
+  removed, or when a different instance answers at its address.
+
+The files are staged in `.staging/`, checked with `nginx -t` in a throwaway container of
+`localhost/prox:dev`, and then renamed into place: routes first, then `nginx -t` and
+`nginx -s reload` in the running `prox` container. The run then waits (15 s at most) until
+the live Nginx on `127.0.0.1:18318` serves the new revision at `/prox/routes-revision`, and
+until each hub new in this run answers its own `instance_id` through its route; hubs kept
+from before are not asked, so one that is offline holds nothing back. Only then are the
+manifest and `sources.json` published, in that order. If any step fails the previous routes and manifest are put
+back and Nginx is reloaded again. An `instances.json` that is not valid JSON or not a list fails the
+run before anything is written.
+
+Install (not done by `scripts/deploy-homelab.sh`):
+
+```sh
+bun run build:sources-apply
+install -D -m 644 dist/sources-apply/prox-sources-apply.js ~/.local/share/prox/sources-apply/prox-sources-apply.js
+install -m 644 deploy/provider-sources.json ~/.local/share/prox/sources-apply/provider-sources.json
+install -D -m 644 deploy/prox-sources-apply.service ~/.config/systemd/user/prox-sources-apply.service
+install -D -m 644 deploy/prox-sources.path ~/.config/systemd/user/prox-sources.path
+systemctl --user daemon-reload
+# First run: publish the baked sources only. Nothing serves the directory yet, so this run
+# neither reloads Nginx nor admits a hub; it is refused once a manifest exists.
+# The same umask as the unit, so Nginx's worker can read the directory.
+(umask 022; bun ~/.local/share/prox/sources-apply/prox-sources-apply.js --seed \
+  --base ~/.local/share/prox/sources-apply/provider-sources.json)
+```
+
+Reinstall the bundle and `provider-sources.json` whenever the images are rebuilt, and run
+the service again, so the effective manifest follows the new baked one.
+
+Only after the seed run has succeeded, overlay the baked seed. All lines below are needed
+together: the generated routes repeat the baked ones, so Nginx refuses to start if the
+directory is mounted without masking the baked file. The directory is mounted as a directory
+because a single-file mount would keep the old file after a rename.
+
+```ini
+# prox.container, [Container] section
+Volume=/dev/null:/etc/nginx/provider-routes.conf:ro
+Volume=%h/.local/share/prox/sources:/etc/nginx/runtime:ro
+```
+
+```ini
+# prox-history.container, [Container] section
+Volume=%h/.local/share/prox/sources:/run/prox-sources:ro
+Environment=PROX_SOURCE_MANIFEST=/run/prox-sources/effective-manifest.json
+```
+
+Where these go depends on the Podman version. Podman 5 reads Quadlet drop-ins, so put each
+block in `~/.config/containers/systemd/<name>.container.d/runtime-sources.conf` under a
+`[Container]` header. Podman 4.9 (this homelab's version) ignores `.container.d`, so add the
+lines to the installed `~/.config/containers/systemd/prox.container` and
+`prox-history.container` themselves; `scripts/deploy-homelab.sh` reinstalls both files from
+`deploy/` on every deploy, so add them again after each deploy until the script carries them.
+
+Then run `systemctl --user daemon-reload` and restart `prox` and `prox-history` once to pick
+up the mounts. Then `systemctl --user start prox-sources-apply.service` admits the hubs
+`instances.json` lists (read its journal), and `systemctl --user enable --now
+prox-sources.path` applies every later change to
+`instances.json`. The path unit fires only on a change to that file: after a hub outage,
+start `prox-sources-apply.service` by hand to retry its admission.
+
+While running, prox-history checks the manifest's modification time every 30 seconds and
+hands a revision with new sources to the quota collector's `applySources`, which starts
+collecting the new hubs from the next read without disturbing existing ones. The watcher never
+removes or changes a source, and a manifest that fails validation is logged and ignored;
+removals and edits take a restart. prox-usage reads the manifest at start only. A signed-in browser
+re-reads `/prox/sources.json` every 60 seconds and adds or removes hubs when the revision
+changes, keeping the sessions of hubs whose route and scope did not change.
+
+To go back to the baked seed, disable `prox-sources.path`, remove the lines above (the
+drop-ins, or the lines added to the installed Quadlets), run `systemctl --user daemon-reload`
+and restart the two containers.
+
+## Retiring CPA-Manager-Plus (Step G runbook)
+
+`PROX_USAGE_CPAMP_RETIRED` in `deploy/prox-usage.container` is the single switch. While it is
+`0`, nothing changes. At `1`, prox-usage refuses `import`, `reconcile` and `verify` (409 `CPAMP
+retired`) and reports `cpamp_retired: true` on `/v1/status` and `/v1/exporter`; the nightly chain
+reads that field, skips the CPAMP guard, reconcile and parity, never reads
+`~/.config/prox/cpa-admin-key` or contacts port 18317, and prints
+`"cpamp":{"retired":true,"skipped":["guard","reconcile","parity"]}` with status `succeeded`.
+A retired night is healthy; a failed one still has `"status":"failed"`.
+
+The final reconcile must happen before the switch, because retired mode refuses it. The `:ro`
+mount cannot create the `-shm` a read-only open of CPAMP's WAL database needs, so the final
+reconcile opens the stopped file with SQLite's `immutable=1` (`PROX_USAGE_CPAMP_IMMUTABLE=1`).
+immutable=1 ignores the `-wal`, so the open refuses a non-empty `-wal`, any `-shm` and any `-journal`.
+
+1. `systemctl --user stop cpa-manager-plus`, then mask the unit.
+2. Confirm nothing holds the file: `fuser ~/.local/share/cpa-manager-plus/usage.sqlite*` and
+   `lsof ~/.local/share/cpa-manager-plus/usage.sqlite*` print nothing.
+3. Confirm `ls -l ~/.local/share/cpa-manager-plus/usage.sqlite*` shows no `-shm` and no `-journal`
+   and no `-wal`, or an empty `-wal`. If either remains, with nothing holding the file run
+   `sqlite3 ~/.local/share/cpa-manager-plus/usage.sqlite 'PRAGMA wal_checkpoint(TRUNCATE)'` on
+   the host (this rewrites the file, so take its cold copy first) and check again.
+4. Set `PROX_USAGE_CPAMP_IMMUTABLE=1` in `deploy/prox-usage.container`, deploy, then run
+   `systemctl --user restart prox-usage.service`. The deploy script restarts it only when its
+   JavaScript bundle changed, so a quadlet-only change needs this explicit restart.
+5. Start `systemctl --user start prox-usage-job@reconcile.service`, then read the result with
+   `printf 'Authorization: Bearer %s\n' "$(cat ~/.config/proxd/management-key)" | curl -sS --header @- http://127.0.0.1:18320/v1/jobs`.
+6. Accept only `state: "succeeded"` with `result.report.verification.exact: true` and
+   `result.report.conflicts: 0`. An error `CPAMP source is not quiet: -wal, -shm or -journal present`
+   means go back to step 3. Anything else stops the retirement; CPAMP can be unmasked and started.
+7. Set `PROX_USAGE_CPAMP_RETIRED=1` and `PROX_USAGE_CPAMP_IMMUTABLE=0` in the quadlet, deploy, run
+   `systemctl --user restart prox-usage.service` (same reason as step 4), and check `/v1/status`
+   shows `cpamp_retired: true`. Until it does, the nightly still runs the CPAMP guard.
+8. The next night's journal JSON carries the `retired` skip record and `status: succeeded`.
+
+Step H (separate change) removes the `/cpamp` mount and `PROX_USAGE_CPAMP_DB_PATH` from the
+quadlet and the CPAMP-only scripts. The mount stays until then because the final reconcile above
+needs it. Alert rules must stop requiring `reconcile` outcomes once `cpamp_retired` is true.

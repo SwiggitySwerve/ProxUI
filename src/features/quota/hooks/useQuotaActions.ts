@@ -12,12 +12,23 @@ import {
   useNotificationStore,
 } from '@/stores';
 import type { AuthFileItem } from '@/types';
+import { isCredentialDisabled } from '@/features/authFiles/credentialFacts';
 import { useQuotaStore, type QuotaStore } from '@/stores/useQuotaStore';
 import type { SourceSession } from '@/services/api/sourceSession';
 import { isQuotaSourceCurrent } from '../sourceCurrent';
+import { resetAccountName } from '../logic';
 import { getStatusFromError } from '@/utils/quota';
 import { getQuotaCacheKey } from '@/utils/quota/identity';
 import { enrichQuotaInBackground } from '../quotaEnrichment';
+import { beginLoading } from '../quotaLoading';
+import { isQuotaFresh } from '../quotaFreshness';
+import { providerSources } from '@/stores/useProviderSources';
+import { useServerAccountsStore } from '@/stores/useServerAccountsStore';
+import {
+  isServedFile,
+  refreshServedFile,
+  serverReadNotice,
+} from '@/features/quotaPool/serverQuota';
 import { getQuotaMap, getQuotaSetter, type QuotaAdapter, type QuotaCardState } from '../providers';
 
 const getQuotaState = (
@@ -31,28 +42,55 @@ export function useQuotaActions(
   store: QuotaStore = useQuotaStore,
   session?: SourceSession
 ) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
   const [resettingQuotaName, setResettingQuotaName] = useState<string | null>(null);
 
   const refreshQuota = useCallback(
-    async (file: AuthFileItem, adapter: QuotaAdapter) => {
-      if (disableControls || file.disabled || !isQuotaSourceCurrent(session)) return;
+    /** force: after a reset claim, whose result the last reading cannot show. */
+    async (file: AuthFileItem, adapter: QuotaAdapter, options?: { force?: boolean }) => {
+      // A disabled credential is read like any other: reading quota is not using the account.
+      if (disableControls || !isQuotaSourceCurrent(session)) return;
       const cacheKey = getQuotaCacheKey(file);
       if (resettingQuotaName === cacheKey) return;
       if (getQuotaState(adapter, file, store)?.status === 'loading') return;
+      // A credential the history server serves is read there, not on the hub. A disabled one is
+      // the named exception: its explicit Refresh is the live hub read (PR #57).
+      if (
+        session &&
+        !isCredentialDisabled(file) &&
+        isServedFile(useServerAccountsStore.getState().routing, session.owner.instanceId, file)
+      ) {
+        const servers = useServerAccountsStore.getState();
+        // After a claim the server has already been asked (accountSync.ts): just read its numbers.
+        if (options?.force) return void servers.pollFresh();
+        const owner = session.owner;
+        const outcome = await refreshServedFile({ owner, file, store });
+        if (!isQuotaSourceCurrent(session)) return;
+        const notice = serverReadNotice(outcome, {
+          name: file.name,
+          t,
+          language: i18n.language,
+          readAtMs: store.getState().fetchedAt[cacheKey],
+          nowMs: Date.now(),
+        });
+        showNotification(notice.text, notice.type);
+        return;
+      }
+      if (!options?.force && isQuotaFresh(store.getState().fetchedAt[cacheKey], Date.now())) {
+        showNotification(t('auth_files.quota_reused', { name: file.name }), 'info');
+        return;
+      }
+      // Several requests per card (Claude: usage and profile): the hub proves the key first.
+      providerSources.armAuthProbes();
       const cacheGeneration = captureQuotaCacheGeneration(file.name, store);
       const setQuota = getQuotaSetter(adapter, store);
-
-      setQuota((prev) => ({
-        ...prev,
-        [cacheKey]: adapter.buildLoadingState(),
-      }));
+      const release = beginLoading(adapter, store, [cacheKey]);
 
       try {
         const data = await adapter.fetchQuota(file, t);
-        if (!isQuotaSourceCurrent(session)) return;
+        if (!isQuotaSourceCurrent(session)) return release();
         commitIfQuotaCacheCurrent(cacheGeneration, () => {
           const successState = adapter.buildSuccessState(data);
           setQuota((prev) => ({
@@ -63,7 +101,7 @@ export function useQuotaActions(
           showNotification(t('auth_files.quota_refresh_success', { name: file.name }), 'success');
         });
       } catch (err: unknown) {
-        if (!isQuotaSourceCurrent(session)) return;
+        if (!isQuotaSourceCurrent(session)) return release();
         const message = err instanceof Error ? err.message : t('common.unknown_error');
         const status = getStatusFromError(err);
         commitIfQuotaCacheCurrent(cacheGeneration, () => {
@@ -78,7 +116,7 @@ export function useQuotaActions(
         });
       }
     },
-    [disableControls, resettingQuotaName, showNotification, t, store, session]
+    [disableControls, resettingQuotaName, showNotification, t, i18n.language, store, session]
   );
 
   const resetQuota = useCallback(
@@ -91,22 +129,23 @@ export function useQuotaActions(
         confirmText: string;
         variant: 'danger' | 'primary';
         title?: string;
-        name?: string;
         pill?: boolean;
       }
     ) => {
       const resetQuotaFn = adapter.resetQuota;
       if (!resetQuotaFn) return;
-      if (disableControls || file.disabled || !isQuotaSourceCurrent(session)) return;
+      // Spending a reset is using the account, so a disabled one keeps it.
+      if (disableControls || isCredentialDisabled(file) || !isQuotaSourceCurrent(session)) return;
       const cacheKey = getQuotaCacheKey(file);
       if (getQuotaState(adapter, file, store)?.status === 'loading') return;
       if (resettingQuotaName === cacheKey) return;
 
       const cacheGeneration = captureQuotaCacheGeneration(file.name, store);
+      const name = resetAccountName(file);
       showConfirmation({
-        title: prompt?.title ?? t('codex_quota.reset_confirm_title'),
-        message: prompt?.message ?? t('codex_quota.reset_confirm_message', { name: file.name }),
-        confirmText: prompt?.confirmText ?? t('codex_quota.reset_confirm_button'),
+        title: prompt?.title ?? t('quota_pool.reset_confirm_title'),
+        message: prompt?.message ?? t('codex_quota.reset_confirm_message', { name }),
+        confirmText: prompt?.confirmText ?? t('quota_pool.use_reset'),
         variant: prompt?.variant ?? 'primary',
         pill: prompt?.pill,
         onConfirm: async () => {
@@ -125,19 +164,13 @@ export function useQuotaActions(
                 ...prev,
                 [cacheKey]: adapter.buildSuccessState(data),
               }));
-              showNotification(
-                t('codex_quota.reset_success', { name: prompt?.name ?? file.name }),
-                'success'
-              );
+              showNotification(t('codex_quota.reset_success', { name }), 'success');
             });
           } catch (err: unknown) {
             if (!isQuotaSourceCurrent(session)) return;
             const message = err instanceof Error ? err.message : t('common.unknown_error');
             commitIfQuotaCacheCurrent(cacheGeneration, () => {
-              showNotification(
-                t('codex_quota.reset_failed', { name: prompt?.name ?? file.name, message }),
-                'error'
-              );
+              showNotification(t('codex_quota.reset_failed', { name, message }), 'error');
             });
           } finally {
             setResettingQuotaName((current) => (current === cacheKey ? null : current));

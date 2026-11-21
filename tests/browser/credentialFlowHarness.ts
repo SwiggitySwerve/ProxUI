@@ -33,6 +33,8 @@ export interface BackendState {
   samples: number;
   reads: { codex: number; claude: number };
   usageCalls: number;
+  /** Auth indexes whose fake reset grant was claimed, in order. */
+  claims: string[];
   cli: { codex: string[]; claude: string[] };
 }
 
@@ -48,6 +50,10 @@ export class CredentialFlow {
   /** Every request to prox-history, so tests can see what the screens asked for. */
   readonly proxRequests: string[] = [];
   analytics: AnalyticsQuery[] = [];
+  /** When set, every hub says it supports plugins and answers `/plugins` with an empty list. */
+  pluginSupport = false;
+  /** Every `/plugins` list request, by path, so tests can count the reads per hub. */
+  readonly pluginRequests: string[] = [];
   private child!: ChildProcess;
   private ports!: Ports;
 
@@ -93,6 +99,9 @@ export class CredentialFlow {
     this.control(`/cli/${instance}/add`, { name, email });
   removeOutside = (instance: 'codex' | 'claude', name: string) =>
     this.control(`/cli/${instance}/remove`, { name });
+  /** Gives a fake Claude account that many reset grants (its usage then lists them). */
+  grantClaudeResets = (authIndex: string, left: number) =>
+    this.control('/cli/claude/grant', { authIndex, left });
   failCredentials = (instance: 'codex' | 'claude', status: number | null) =>
     this.control(`/cli/${instance}/fail`, { status });
   advanceServerClock = (ms: number) => this.control('/advance', { ms });
@@ -117,7 +126,14 @@ export class CredentialFlow {
       const request = route.request();
       const url = new URL(request.url());
       const reply = (json: unknown, status = 200) =>
-        route.fulfill({ status, json, headers: { 'X-CPA-Version': 'v8.0.44' } });
+        route.fulfill({
+          status,
+          json,
+          headers: {
+            'X-CPA-Version': 'v8.0.44',
+            ...(this.pluginSupport ? { 'X-CPA-Support-Plugin': 'true' } : {}),
+          },
+        });
       if (url.origin !== origin) {
         this.unexpected.push(`${request.method()} ${url.origin}${url.pathname}`);
         return route.abort();
@@ -142,6 +158,10 @@ export class CredentialFlow {
         if (path === '/credentials') {
           return this.forward(route, this.ports[instance], `/v8/management${path}`);
         }
+        // Quota reads and reset claims go to the loopback fake CLI-Proxy and nowhere else.
+        if (path === '/requests/api-call' && request.method() === 'POST') {
+          return this.forward(route, this.ports[instance], `/v8/management${path}`);
+        }
         if (request.method() === 'GET') {
           if (path === '/config') return reply(config);
           if (path === '/auth-files') return reply({ files: [] });
@@ -151,6 +171,16 @@ export class CredentialFlow {
           if (path === '/observability/usage/api-keys') return reply({});
           if (path === '/config/oauth/excluded-models') return reply({});
           if (path === '/config/oauth/model-alias') return reply({});
+          // The shared model-access store reads these for the accounts it lists (the Models
+          // screen and the OAuth pages): each hub's catalog, each credential's own file (for its
+          // own exclusion list) and the models the hub registered for it. Nothing is excluded.
+          if (path.startsWith('/routing/model-definitions/')) return reply({ models: [] });
+          if (path === '/credentials/download') return reply({});
+          if (path === '/credentials/models') return reply({ models: [] });
+          if (path === '/plugins' && this.pluginSupport) {
+            this.pluginRequests.push(url.pathname);
+            return reply({ plugins_enabled: true, plugins_dir: 'plugins', plugins: [] });
+          }
         }
       }
       if (

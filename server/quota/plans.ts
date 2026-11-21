@@ -1,15 +1,24 @@
-import type { PoolProviderId } from '../../src/domain/quotaPool/types';
+import type { PoolProfile } from '../../src/domain/providerCatalog';
+import { isBuiltInPoolProvider } from '../../src/domain/quotaPool/providers';
+import type { BuiltInPoolProviderId, PoolProviderId } from '../../src/domain/quotaPool/types';
 import { isRecord } from '../../src/utils/helpers';
 import { normalizePlanType, parseCodexUsagePayload } from '../../src/utils/quota/parsers';
+import { parseAntigravitySubscriptionSummary } from '../../src/services/api/antigravitySubscription';
 
 /**
  * Subscription weight in base-plan units: one unit is the provider's $20 plan (Claude Pro,
  * ChatGPT Plus), and 100 quota points equal one unit. Multipliers are the providers' published
  * "N times Pro/Plus" allowances (Oct 2026): Claude Max 5x/20x; ChatGPT Pro 200 is 10x Plus and
  * Pro 500 ("promax") 25x. ChatGPT reports both Pro 100 and Pro 200 as "pro"; it is counted as
- * the $200 plan. Unknown plans count as one unit and are marked unknown.
+ * the $200 plan. Google AI Ultra (`g1-ultra-tier`) counts 20 units, like Claude Ultra; Google AI
+ * Ultra Lite (`g1-ultra-lite-tier`), the lower tier, counts 5, like Claude Max (user direction,
+ * 21 Nov 2026). Antigravity names both "Google AI Ultra", so only the tier id tells them apart.
+ * Unknown plans count as one unit and are marked unknown.
  */
-const PLANS: Record<PoolProviderId, Record<string, { multiplier: number; label: string }>> = {
+const PLANS: Record<
+  BuiltInPoolProviderId,
+  Record<string, { multiplier: number; label: string }>
+> = {
   claude: {
     claude_pro: { multiplier: 1, label: 'Pro' },
     default_claude_pro: { multiplier: 1, label: 'Pro' },
@@ -25,16 +34,28 @@ const PLANS: Record<PoolProviderId, Record<string, { multiplier: number; label: 
     pro: { multiplier: 10, label: 'Pro' },
     promax: { multiplier: 25, label: 'Pro 500' },
   },
+  antigravity: {
+    'g1-ultra-tier': { multiplier: 20, label: 'Ultra' },
+    'g1-ultra-lite-tier': { multiplier: 5, label: 'Ultra Lite' },
+  },
 };
 
 export const POINTS_PER_UNIT = 100;
+const owns = (record: object, key: string) => Object.prototype.hasOwnProperty.call(record, key);
 
 export function planWeight(
   provider: PoolProviderId,
-  plan: string | null | undefined
+  plan: string | null | undefined,
+  overrides?: PoolProfile['planUnits'],
+  displayName?: string
 ): { multiplier: number; label: string | null; known: boolean } {
-  const entry = plan ? PLANS[provider][plan] : undefined;
-  return entry ? { ...entry, known: true } : { multiplier: 1, label: plan || null, known: false };
+  if (isBuiltInPoolProvider(provider)) {
+    const entry = plan && owns(PLANS[provider], plan) ? PLANS[provider][plan] : undefined;
+    return entry ? { ...entry, known: true } : { multiplier: 1, label: plan || null, known: false };
+  }
+  // Only an identified plan can be weighted; an account that names none stays one unknown unit.
+  const units = plan && overrides && owns(overrides, plan) ? overrides[plan] : undefined;
+  return { multiplier: units ?? 1, label: displayName ?? plan ?? null, known: units !== undefined };
 }
 
 /** ChatGPT's usage response names the plan, e.g. "pro" or "promax". */
@@ -59,4 +80,9 @@ export function planFromClaudeProfile(body: unknown): string | null {
     .map(normalizePlanType)
     .filter((plan): plan is string => plan !== null);
   return candidates.find((plan) => planWeight('claude', plan).known) ?? candidates[0] ?? null;
+}
+
+/** Antigravity's `loadCodeAssist` names the plan as a tier id, the paid tier first. */
+export function planFromAntigravityCodeAssist(body: unknown): string | null {
+  return parseAntigravitySubscriptionSummary(body)?.tierId ?? null;
 }
