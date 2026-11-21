@@ -106,7 +106,9 @@ export class SourceRegistry {
   /**
    * Re-reads public discovery. A new revision adds and removes hubs; a hub whose route and scope
    * are unchanged keeps its session, so work in flight on it is not interrupted. A failed read, or
-   * a discovery that no longer lists the hub this connection signed in to, changes nothing.
+   * a discovery that no longer lists the hub this connection signed in to on the same route and
+   * scope, changes nothing: the key was given for that binding, so a moved binding waits for the
+   * next sign-in rather than having sessions created for it with this key.
    */
   refreshDiscovery(): Promise<boolean> {
     this.refreshing ??= this.readDiscovery().finally(() => {
@@ -123,6 +125,13 @@ export class SourceRegistry {
       if (!discovery || discovery.revision === this.snapshot.resolution?.revision) return false;
       const resolution = resolveConnectionSources(deployment.base, deployment.appOrigin, discovery);
       if (resolution.mode !== 'deployment') return false;
+      const binding = (resolved: SourceResolution | null) => {
+        const source = resolved?.sources.find(
+          (entry) => entry.instanceId === resolved.selectedInstanceId
+        );
+        return source && [source.instanceId, source.apiBase, source.authScope].join('\0');
+      };
+      if (binding(resolution) !== binding(this.snapshot.resolution)) return false;
       this.adopt(resolution, deployment.managementKey);
       return true;
     } catch {

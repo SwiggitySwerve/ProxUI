@@ -423,29 +423,34 @@ systemctl --user daemon-reload
 Reinstall the bundle and `provider-sources.json` whenever the images are rebuilt, and run
 the service again, so the effective manifest follows the new baked one.
 
-Only after the seed run has succeeded, overlay the baked seed. Both lines of the first drop-in
-are required together: the generated routes repeat the baked ones, so Nginx refuses to
-start if the directory is mounted without masking the baked file. The directory is
-mounted as a directory because a single-file mount would keep the old file after a rename.
+Only after the seed run has succeeded, overlay the baked seed. All lines below are needed
+together: the generated routes repeat the baked ones, so Nginx refuses to start if the
+directory is mounted without masking the baked file. The directory is mounted as a directory
+because a single-file mount would keep the old file after a rename.
 
 ```ini
-# ~/.config/containers/systemd/prox.container.d/runtime-sources.conf
-[Container]
+# prox.container, [Container] section
 Volume=/dev/null:/etc/nginx/provider-routes.conf:ro
 Volume=%h/.local/share/prox/sources:/etc/nginx/runtime:ro
 ```
 
 ```ini
-# ~/.config/containers/systemd/prox-history.container.d/runtime-sources.conf
-[Container]
+# prox-history.container, [Container] section
 Volume=%h/.local/share/prox/sources:/run/prox-sources:ro
 Environment=PROX_SOURCE_MANIFEST=/run/prox-sources/effective-manifest.json
 ```
 
-Restart `prox` and `prox-history` once to pick up the mounts. Then
-`systemctl --user start prox-sources-apply.service` admits the hubs `instances.json`
-lists (read its journal), and `systemctl --user enable --now prox-sources.path` applies
-every later change to
+Where these go depends on the Podman version. Podman 5 reads Quadlet drop-ins, so put each
+block in `~/.config/containers/systemd/<name>.container.d/runtime-sources.conf` under a
+`[Container]` header. Podman 4.9 (this homelab's version) ignores `.container.d`, so add the
+lines to the installed `~/.config/containers/systemd/prox.container` and
+`prox-history.container` themselves; `scripts/deploy-homelab.sh` reinstalls both files from
+`deploy/` on every deploy, so add them again after each deploy until the script carries them.
+
+Then run `systemctl --user daemon-reload` and restart `prox` and `prox-history` once to pick
+up the mounts. Then `systemctl --user start prox-sources-apply.service` admits the hubs
+`instances.json` lists (read its journal), and `systemctl --user enable --now
+prox-sources.path` applies every later change to
 `instances.json`. The path unit fires only on a change to that file: after a hub outage,
 start `prox-sources-apply.service` by hand to retry its admission.
 
@@ -457,8 +462,9 @@ removals and edits take a restart. prox-usage reads the manifest at start only. 
 re-reads `/prox/sources.json` every 60 seconds and adds or removes hubs when the revision
 changes, keeping the sessions of hubs whose route and scope did not change.
 
-To go back to the baked seed, disable `prox-sources.path`, delete both drop-ins and
-restart the two containers.
+To go back to the baked seed, disable `prox-sources.path`, remove the lines above (the
+drop-ins, or the lines added to the installed Quadlets), run `systemctl --user daemon-reload`
+and restart the two containers.
 
 ## Retiring CPA-Manager-Plus (Step G runbook)
 

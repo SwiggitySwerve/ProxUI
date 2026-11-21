@@ -1,4 +1,8 @@
-import type { ProviderCatalog, ProviderCatalogEntry } from '@/domain/providerCatalog';
+import {
+  ownsWaitingProvider,
+  type ProviderCatalog,
+  type ProviderCatalogEntry,
+} from '@/domain/providerCatalog';
 import type { AuthFileItem } from '@/types';
 import { normalizeOAuthProviderKey } from '@/utils/providerKeys';
 import { providerGroupOf, type AuthFilesFilters } from './unifiedList';
@@ -9,12 +13,10 @@ export const catalogProviderKey = (entry: ProviderCatalogEntry): string =>
 
 /**
  * Providers a hub's catalog lists as waiting for their first credential, which this source shows
- * as placeholder cards. A hub that declares `accepted_providers` gets exactly those. An open hub
- * (one that accepts everything) gets the providers the deployment declares for this source, plus
- * any provider its plugins add that no other source declares: a newly installed plugin shows up
- * on the hub that has it, while every built-in does not appear on every hub. A provider with any
- * credential file here is never a placeholder, so an added credential replaces it at once, before
- * the catalog is re-read. Nothing is shown until the files are known.
+ * as placeholder cards: the entries this source owns (`ownsWaitingProvider`, the rule Quota
+ * Management uses too). A provider with any credential file here is never a placeholder, so an
+ * added credential replaces it at once, before the catalog is re-read. Nothing is shown until the
+ * files are known.
  */
 export function awaitingAuthProviders(
   catalog: ProviderCatalog | null,
@@ -24,18 +26,13 @@ export function awaitingAuthProviders(
   claimedElsewhere: readonly string[] = []
 ): ProviderCatalogEntry[] {
   if (!catalog || !files) return [];
-  const keys = (list: readonly string[]) => new Set(list.map(normalizeOAuthProviderKey));
-  const accepted = catalog.acceptedProviders ? keys(catalog.acceptedProviders) : null;
-  const owned = keys(ownedProviders ?? []);
-  const elsewhere = keys(claimedElsewhere);
   const present = new Set(files.map(providerGroupOf));
-  return catalog.providers.filter((entry) => {
-    const key = catalogProviderKey(entry);
-    const ours = accepted
-      ? accepted.has(key)
-      : owned.has(key) || (entry.source === 'plugin' && !elsewhere.has(key));
-    return entry.lifecycle === 'awaiting_auth' && ours && !present.has(key);
-  });
+  return catalog.providers.filter(
+    (entry) =>
+      entry.lifecycle === 'awaiting_auth' &&
+      ownsWaitingProvider(catalog, entry, ownedProviders ?? [], claimedElsewhere) &&
+      !present.has(catalogProviderKey(entry))
+  );
 }
 
 /** A placeholder has no credential state, so only the provider tab and the search narrow it. */

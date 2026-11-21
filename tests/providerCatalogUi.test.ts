@@ -282,6 +282,17 @@ describe('catalog-driven OAuth tiles', () => {
     expect(discovered.kind === 'plugin' && discovered.icon).toBe('');
   });
 
+  test('a plugin whose id folds onto a built-in keeps its own tile and id', () => {
+    const plugin = golden().providers[1];
+    const catalog: ProviderCatalog = {
+      ...golden(),
+      providers: [{ ...plugin, id: 'grok', displayName: 'Grok plugin' }],
+    };
+    expect(
+      buildCatalogOAuthProviderCards(catalog, API_BASE).map((card) => [card.kind, card.id])
+    ).toEqual([['plugin', 'grok']]);
+  });
+
   test('maps credential ids to built-in tiles and skips providers without an OAuth flow', () => {
     const base = golden().providers[0];
     const catalog: ProviderCatalog = {
@@ -489,6 +500,18 @@ describe('Auth Files: providers waiting for auth', () => {
         []
       ).map((entry) => entry.id)
     ).toEqual(['example-plugin', 'codex']);
+  });
+
+  test('ownership uses exact ids: a grok plugin is not the xAI provider another hub owns', () => {
+    const grok = {
+      ...catalog.providers[1],
+      id: 'grok',
+      source: 'plugin' as const,
+      lifecycle: 'awaiting_auth' as const,
+    };
+    const open: ProviderCatalog = { ...catalog, acceptedProviders: null, providers: [grok] };
+    expect(awaitingAuthProviders(open, [], [], ['xai']).map((entry) => entry.id)).toEqual(['grok']);
+    expect(awaitingAuthProviders(open, [], [], ['grok'])).toEqual([]);
   });
 
   test('placeholders follow the provider tab and search, never a credential-state chip', () => {

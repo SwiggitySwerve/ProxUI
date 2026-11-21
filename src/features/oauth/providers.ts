@@ -192,8 +192,13 @@ export const buildPluginOAuthProviderCards = (
   });
 };
 
-/** Whether a catalog entry describes this built-in tile (catalog ids are credential types). */
+/**
+ * Whether a catalog entry describes this built-in tile (catalog ids are credential types). Only
+ * built-in entries do: a plugin keeps its own id even when a display alias folds it onto a
+ * built-in's (a `grok` plugin is not the xAI tile).
+ */
 const matchesBuiltIn = (card: BuiltInOAuthProviderCard, entry: ProviderCatalogEntry): boolean => {
+  if (entry.source !== 'builtin') return false;
   const entryKey = normalizeOAuthProviderKey(entry.id);
   return (
     card.id === entryKey ||
@@ -228,7 +233,8 @@ export const buildCatalogOAuthProviderCards = (
     if (
       claimed.has(entry) ||
       !isManagementOAuthProviderKey(id) ||
-      BUILTIN_PROVIDER_IDS.has(normalizeOAuthProviderKey(id))
+      (entry.source === 'builtin' && BUILTIN_PROVIDER_IDS.has(normalizeOAuthProviderKey(id))) ||
+      BUILTIN_PROVIDER_IDS.has(id)
     ) {
       return [];
     }

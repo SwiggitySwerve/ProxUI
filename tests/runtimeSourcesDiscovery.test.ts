@@ -498,6 +498,29 @@ describe('last-known-good membership', () => {
     expect(providers('lima')).toEqual(['lima']);
   });
 
+  test('a hub dropped from the baked manifest is not kept through instances.json', async () => {
+    // The previous effective manifest had a remote, own-key hub that was baked then.
+    const input = baseInput();
+    input.sources.push({
+      ...input.sources[0],
+      instanceId: 'far',
+      label: 'far',
+      publicBasePath: '/far',
+      authScope: 'far-scope',
+      providers: ['far'],
+      upstreamOrigin: 'https://hub.example.test',
+      managementKeyFile: '/run/secrets/far-key',
+    });
+    const previous = validateSourceManifest(input);
+    const result = await resolveEffectiveManifest(
+      base(),
+      instances({ id: 'far', provider: 'far', base_url: 'https://hub.example.test' }),
+      options(network({}).fetcher, { previous })
+    );
+    expect(outcome(result, 'far')?.state).toBe('rejected');
+    expect(ids(result.manifest)).toEqual(['codex-primary', 'claude-primary']);
+  });
+
   test('a retained hub still yields to a baked source that now claims its provider', async () => {
     const previous = await admitted();
     const input = baseInput();
@@ -987,6 +1010,18 @@ describe('browser discovery revision refresh', () => {
     expect(view.status).toBe('authentication-required');
     expect(view.session).toBeNull();
     expect(second.signal.aborted).toBe(true);
+  });
+
+  test('a refresh that moves the signed-in hub to another scope is not adopted', async () => {
+    const { registry, state } = await connected(discovery('a', 'first', 'second'));
+    const before = registry.getSnapshot();
+    // "second" was isolated in its own scope; "first", signed in with this key, moves there.
+    state.next = {
+      ...discovery('b', 'first', 'second'),
+      sources: [source('first', 'separate'), source('second', 'separate')],
+    };
+    expect(await registry.refreshDiscovery()).toBe(false);
+    expect(registry.getSnapshot()).toBe(before);
   });
 
   test('does nothing when disconnected, external, or after logout', async () => {

@@ -363,14 +363,14 @@ describe('discovery and additive collection', () => {
       ],
     };
     const ids = (entries: readonly ProviderCatalogEntry[]) => entries.map(({ id }) => id);
-    expect(ids(sourceCatalogEntries(catalog, ['codex'], new Set([OTHER_PROVIDER])))).toEqual([
+    expect(ids(sourceCatalogEntries(catalog, ['codex'], [OTHER_PROVIDER]))).toEqual([
       PROVIDER,
       'codex',
       'with-credential',
     ]);
     // A hub that declares its providers gets exactly those.
     expect(
-      ids(sourceCatalogEntries({ ...catalog, acceptedProviders: ['kimi'] }, ['codex'], new Set()))
+      ids(sourceCatalogEntries({ ...catalog, acceptedProviders: ['kimi'] }, ['codex'], []))
     ).toEqual(['kimi', 'with-credential']);
   });
 
@@ -393,25 +393,34 @@ describe('discovery and additive collection', () => {
     }
   });
 
-  test('a plugin credential is collected under its login entry, even while it needs attention', async () => {
+  test('a plugin credential stays one account under its runtime provider, even needing attention', async () => {
     const f = fixture();
     try {
-      // ProxD lists the credential under its runtime provider and names the catalog entry it
-      // signed in through; a quota cooldown makes the provider `needs_attention`.
-      f.catalog('hub-a', entry(PROVIDER, 'needs_attention'));
+      // ProxD lists both the sign-in entry and the runtime provider; a quota cooldown makes the
+      // runtime provider `needs_attention`, and its reading is still wanted.
+      f.catalog(
+        'hub-a',
+        entry(PROVIDER, 'active', false),
+        entry('orbit-runtime', 'needs_attention')
+      );
       f.credentials.set('hub-a', [
         { ...credential('orbit-runtime'), oauth_provider: PROVIDER } as ReturnType<
           typeof credential
         >,
       ]);
       await f.collector.refresh();
-      const accounts = f.store.listAccounts().filter((account) => !account.retired);
-      expect(accounts.map(({ provider, instanceId }) => [provider, instanceId])).toEqual([
-        [PROVIDER, 'hub-a'],
-      ]);
+      const live = () => f.store.listAccounts().filter((account) => !account.retired);
+      expect(live().map(({ provider }) => provider)).toEqual(['orbit-runtime']);
+      const [account] = live();
       expect(f.calls.filter(({ path }) => path.endsWith('/quota/fetch'))).toHaveLength(1);
-      const dashboard = await f.dashboard();
-      expect(dashboard.unpooled?.[0].accounts[0]).toMatchObject({ status: 'ok' });
+
+      // The hub stops advertising the runtime reader: the credential is still the same account.
+      f.catalog('hub-a', entry(PROVIDER, 'active', false));
+      f.later();
+      await f.collector.syncInventory();
+      f.later();
+      await f.collector.syncInventory();
+      expect(live().map(({ id }) => id)).toEqual([account.id]);
     } finally {
       f.close();
     }

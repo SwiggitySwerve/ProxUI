@@ -170,6 +170,31 @@ async function probeHub(
 type Planned = Omit<DeploymentSource, 'providers'>;
 
 /**
+ * A run-time hub's public route. It names the binding, not just the hub: a hub re-added at another
+ * address gets a new route, so a browser session opened on the old one can never reach the new
+ * upstream.
+ */
+function runtimeRoute(id: string, upstreamOrigin: string): string {
+  return `/${id}-${createHash('sha256').update(upstreamOrigin).digest('hex').slice(0, 8)}`;
+}
+
+/** Whether a published source is one run-time admission could have made (and so may keep). */
+function isRuntimeBinding(base: SourceManifest, source: DeploymentSource): boolean {
+  let host: string;
+  try {
+    host = new URL(source.upstreamOrigin).hostname;
+  } catch {
+    return false;
+  }
+  return (
+    LOOPBACK_HOSTS.has(host) &&
+    source.managementKeyFile === base.history.managementKeyFile &&
+    source.aliases.length === 0 &&
+    source.publicBasePath === runtimeRoute(source.instanceId, source.upstreamOrigin)
+  );
+}
+
+/**
  * Decides the scope a candidate would use, before anything is sent to it. Run-time admission takes
  * only loopback hubs that accept the shared management key: a remote hub, or one with its own key,
  * needs transport and origin isolation decided by an operator, so it goes in the baked manifest.
@@ -185,9 +210,7 @@ function planCandidate(base: SourceManifest, candidate: HubCandidate): Planned |
   const source = {
     instanceId: candidate.id,
     label: candidate.label ?? candidate.id,
-    // The route names the binding, not just the hub: a hub re-added at another address gets a
-    // new route, so a browser session opened on the old one can never reach the new upstream.
-    publicBasePath: `/${candidate.id}-${createHash('sha256').update(candidate.upstreamOrigin).digest('hex').slice(0, 8)}`,
+    publicBasePath: runtimeRoute(candidate.id, candidate.upstreamOrigin),
     aliases: [],
     upstreamOrigin: candidate.upstreamOrigin,
   };
@@ -238,9 +261,11 @@ export async function resolveEffectiveManifest(
   const fetcher = options.fetcher ?? fetch;
   const readKey = options.readKey ?? ((path: string) => readFile(path, 'utf8'));
   const baseIds = new Set(base.sources.map((source) => source.instanceId));
+  // Last-known-good covers only bindings run-time admission made. A hub dropped from the baked
+  // manifest (a remote or own-key one, say) is not kept just because instances.json still lists it.
   const prior = new Map(
     (options.previous?.sources ?? [])
-      .filter((source) => !baseIds.has(source.instanceId))
+      .filter((source) => !baseIds.has(source.instanceId) && isRuntimeBinding(base, source))
       .map((source) => [source.instanceId, source] as const)
   );
   const sources: DeploymentSource[] = [...base.sources];
