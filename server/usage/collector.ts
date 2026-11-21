@@ -339,7 +339,7 @@ export class UsageCollector {
           if (error instanceof UsageAuthError) this.authRetryAt = this.clock.now() + 60_000;
         } finally {
           // The session is over: stop reporting it as subscribed before the cleanup awaits.
-          this.status.state = 'backoff';
+          if (this.status.state === 'subscribed') this.status.state = 'backoff';
           this.status.subscribedAtMs = null;
           this.session.abort();
           this.connection?.close();

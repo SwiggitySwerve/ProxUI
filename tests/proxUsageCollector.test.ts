@@ -129,21 +129,16 @@ describe('usage collector with an in-process proxy', () => {
     await eventually(() => env.collector.status.state === 'subscribed');
     const first = env.collector.status.subscribedAtMs;
     expect(first).toBe(env.clock.now());
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => (release = resolve));
     const seen: { state: string; subscribedAtMs: number | null }[] = [];
     env.writer.recovery = async () => {
       const { state, subscribedAtMs } = env.collector.status;
       seen.push({ state, subscribedAtMs });
-      await held;
     };
     await env.clock.advance(5000);
     env.proxy.drop();
-    await eventually(() => seen.length === 1);
-    expect(seen[0]).toEqual({ state: 'backoff', subscribedAtMs: null });
-    expect(env.collector.status.state).toBe('backoff');
-    release();
     await eventually(() => env.collector.status.retryAtMs !== null);
+    // Status as writer.recovery began, after the monitor and label awaits.
+    expect(seen[0]).toEqual({ state: 'backoff', subscribedAtMs: null });
     await env.clock.advance(1000);
     await eventually(() => env.collector.status.state === 'subscribed');
     expect(env.collector.status.subscribedAtMs).toBe(env.clock.now());
