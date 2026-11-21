@@ -1,0 +1,10 @@
+# Template only: not enabled by deployment. The operator enables it (docs/PROX-SETUP.md).
+[Unit]
+Description=Apply ProxD hub membership when instances.json changes
+
+[Path]
+PathChanged=%h/.config/cli-proxy/instances.json
+Unit=prox-sources-apply.service
+
+[Install]
+WantedBy=default.target

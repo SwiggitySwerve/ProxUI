@@ -32,6 +32,8 @@ const disconnected: SourceRegistrySnapshot = Object.freeze({
   sources: [],
 });
 type Discover = (origin: string, signal: AbortSignal) => Promise<SourceDiscovery | null>;
+/** How often a connected deployment re-reads `/prox/sources.json` for hubs added at run time. */
+const DISCOVERY_POLL_MS = 60_000;
 
 /** Owns authenticated source inventory; selection does not change source identity. */
 export class SourceRegistry {
@@ -40,6 +42,10 @@ export class SourceRegistry {
   private controller: AbortController | null = null;
   private readonly sessions = new SourceSessions((event) => this.receive(event));
   private connections: SourceConnection[] = [];
+  /** Set while connected through deployment discovery; what a later discovery is resolved with. */
+  private deployment: { base: string; managementKey: string; appOrigin: string } | null = null;
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private refreshing: Promise<boolean> | null = null;
 
   constructor(private readonly discover: Discover = fetchSourceDiscovery) {}
   getSnapshot = (): SourceRegistrySnapshot => this.snapshot;
@@ -56,6 +62,9 @@ export class SourceRegistry {
   reset(): void {
     this.controller?.abort();
     this.controller = null;
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = null;
+    this.deployment = null;
     this.sessions.reset();
     this.connections = [];
     this.publish(disconnected);
@@ -81,32 +90,11 @@ export class SourceRegistry {
           : null;
       if (controller.signal.aborted) return;
       const resolution = resolveConnectionSources(base, appOrigin, discovery);
-      const selected = resolution.sources.find(
-        (source) => source.instanceId === resolution.selectedInstanceId
-      )!;
-      this.connections = resolution.sources
-        .filter((source) => source.authScope === selected.authScope)
-        .map((source) => ({
-          instanceId: source.instanceId,
-          apiBase: source.apiBase,
-          managementKey,
-          configurationRevision: `${resolution.revision}:${source.authScope}`,
-        }));
-      this.sessions.configure(this.connections);
-      this.publish({
-        status: 'ready',
-        resolution,
-        sources: resolution.sources.map((source) => ({
-          source,
-          session:
-            source.authScope === selected.authScope
-              ? this.sessions.captureSource(source.instanceId)
-              : null,
-          status: source.authScope === selected.authScope ? 'ready' : 'authentication-required',
-          version: null,
-          supportsPlugin: false,
-        })),
-      });
+      this.adopt(resolution, managementKey);
+      if (resolution.mode === 'deployment') {
+        this.deployment = { base, managementKey, appOrigin };
+        this.pollTimer = setInterval(() => void this.refreshDiscovery(), DISCOVERY_POLL_MS);
+      }
     } catch {
       if (!controller.signal.aborted) {
         this.sessions.reset();
@@ -114,6 +102,78 @@ export class SourceRegistry {
         this.publish({ status: 'error', resolution: null, sources: [] });
       }
     }
+  }
+  /**
+   * Re-reads public discovery. A new revision adds and removes hubs; a hub whose route and scope
+   * are unchanged keeps its session, so work in flight on it is not interrupted. A failed read, or
+   * a discovery that no longer lists the hub this connection signed in to, changes nothing.
+   */
+  refreshDiscovery(): Promise<boolean> {
+    this.refreshing ??= this.readDiscovery().finally(() => {
+      this.refreshing = null;
+    });
+    return this.refreshing;
+  }
+  private async readDiscovery(): Promise<boolean> {
+    const { controller, deployment } = this;
+    if (!controller || !deployment) return false;
+    try {
+      const discovery = await this.discover(deployment.appOrigin, controller.signal);
+      if (this.controller !== controller || controller.signal.aborted) return false;
+      if (!discovery || discovery.revision === this.snapshot.resolution?.revision) return false;
+      const resolution = resolveConnectionSources(deployment.base, deployment.appOrigin, discovery);
+      if (resolution.mode !== 'deployment') return false;
+      this.adopt(resolution, deployment.managementKey);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  /** Sessions are configured before anything is published; a rejected list changes nothing. */
+  private adopt(resolution: SourceResolution, managementKey: string): void {
+    const selected = resolution.sources.find(
+      (source) => source.instanceId === resolution.selectedInstanceId
+    )!;
+    const before = new Map(this.snapshot.sources.map((view) => [view.source.instanceId, view]));
+    const live = new Map(this.connections.map((entry) => [entry.instanceId, entry]));
+    const connections = resolution.sources
+      .filter((source) => source.authScope === selected.authScope)
+      .map((source): SourceConnection => {
+        const old = before.get(source.instanceId)?.source;
+        const kept = live.get(source.instanceId);
+        // The stored revision is what keeps this hub's session; a discovery revision alone,
+        // which changes whenever any hub is added, must not restart it.
+        return kept && old?.apiBase === source.apiBase && old.authScope === source.authScope
+          ? kept
+          : {
+              instanceId: source.instanceId,
+              apiBase: source.apiBase,
+              managementKey,
+              configurationRevision: `${resolution.revision}:${source.authScope}`,
+            };
+      });
+    this.sessions.configure(connections);
+    this.connections = connections;
+    this.publish({
+      status: 'ready',
+      resolution,
+      sources: resolution.sources.map((source): SourceView => {
+        const session =
+          source.authScope === selected.authScope
+            ? this.sessions.captureSource(source.instanceId)
+            : null;
+        const old = before.get(source.instanceId);
+        return old && old.session === session
+          ? { ...old, source }
+          : {
+              source,
+              session,
+              status: session ? 'ready' : 'authentication-required',
+              version: null,
+              supportsPlugin: false,
+            };
+      }),
+    });
   }
   private receive(event: SourceTransportEvent): void {
     const sources = this.snapshot.sources.map((view): SourceView => {

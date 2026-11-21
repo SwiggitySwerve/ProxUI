@@ -2,9 +2,18 @@ import { MANAGEMENT_API_PREFIX } from '../../src/utils/constants';
 import type { SourceManifest } from '../../src/domain/providerSources/types';
 
 /** Fixed routing only: no browser-controlled upstream or credential injection. */
-export function generateSourceRoutes(manifest: SourceManifest, revision: string): string {
+export function generateSourceRoutes(
+  manifest: SourceManifest,
+  revision: string,
+  /** Runtime routes serve the discovery published beside them, not the one baked into the image. */
+  discoveryFile?: string
+): string {
   const routes = [`# Generated from provider-sources.json; revision ${revision}. Do not edit.\n`];
-  routes.push('location = /prox/sources.json { try_files /prox/sources.json =404; }\n');
+  routes.push(
+    discoveryFile
+      ? `location = /prox/sources.json { alias ${discoveryFile}; }\n`
+      : 'location = /prox/sources.json { try_files /prox/sources.json =404; }\n'
+  );
   for (const source of manifest.sources) {
     for (const base of [source.publicBasePath, ...source.aliases]) {
       routes.push(

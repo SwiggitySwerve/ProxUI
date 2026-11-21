@@ -77,7 +77,8 @@ membership, ports, paths, aliases, and explicit authentication-sharing scopes.
 Run `bun run sources:generate` after editing it. `bun run sources:check` and the
 build reject stale generated Nginx routes or public discovery. The browser reads
 the sanitized `/prox/sources.json`; upstream origins and key-file references are
-excluded. History collection reads the same manifest once at process start.
+excluded. History collection reads the same manifest once at process start. Hubs
+can also be added without rebuilding the images; see "Runtime hub discovery" below.
 
 Each source's `providers` list says which instance takes new credentials of that
 type. Every proxy accepts every provider, so OAuth logins go to the declared owner
@@ -351,6 +352,106 @@ unit and enable link, then reloads systemd; missing timers are tolerated, manage
 failures stop deployment. The sole nightly timer remains disabled. `prox-usage-job@.service` and `prox-usage-parity.service` remain for
 manual use. The deployment script copies templates without enabling them; this
 change installs, enables and runs no live maintenance unit.
+
+## Runtime hub discovery (operator enablement only)
+
+Nothing in this section is active after a deploy. The images keep serving the baked
+`deploy/provider-sources.json`, its routes and its discovery until an operator installs
+the oneshot, runs it once and adds the two drop-ins below.
+
+`prox-sources-apply` is a host oneshot. It reads the baked manifest and ProxD's
+operator-owned `~/.config/cli-proxy/instances.json` (`{"instances": [{id, provider,
+base_url, management_path?, label?, auth_scope?, management_key_file?}]}`; a bare array
+is accepted too) and writes three files into `~/.local/share/prox/sources/`:
+
+| File | Mode | Read by |
+| --- | --- | --- |
+| `effective-manifest.json` | 0600 | prox-history (`PROX_SOURCE_MANIFEST`) |
+| `provider-routes.conf` | 0644 | Nginx in the prox container |
+| `sources.json` | 0644 | the browser, as `/prox/sources.json` |
+
+Admission rules:
+
+- A baked source always wins. An entry that reuses a baked instance ID, public path or
+  claimed provider is rejected, never merged.
+- An entry is published at `/<id>` and labelled with its `label`, or its ID.
+- A loopback hub (`127.0.0.1`, `localhost`, `[::1]`) may omit the key and scope. It is
+  probed with `~/.config/proxd/management-key` and joins the scope of the baked sources
+  that use that key.
+- Any other hub must declare `management_key_file` and `auth_scope`. The key file must be
+  inside `~/.config/proxd/hub-keys/`; the manifest records it under `/run/secrets/hub-keys/`,
+  where the prox-history drop-in mounts that directory. A scope is never shared between
+  two different key files, so a remote hub cannot join `homelab-management`.
+- Before admission the hub must answer `GET /v8/management/providers` with status 200 and
+  an `instance_id` equal to the entry's `id`. Redirects are refused; the request has a
+  5-second timeout and a 1 MiB body limit. A hub that answers 404 there (older than the
+  provider catalog) is checked through `GET /v8/management/credentials` instead, which
+  needs `CLIPROXY_INSTANCE_ID` set on the hub and at least one credential.
+- A hub that reports `accepted_providers` owns exactly those providers; otherwise it owns
+  the entry's `provider`. If another source already owns one of them, the hub is rejected.
+- A hub that was admitted before stays when its probe fails or its entry becomes
+  unreadable. It leaves only when its entry is removed, or when a different instance
+  answers at its address.
+
+The files are staged in `.staging/`, checked with `nginx -t` in a throwaway container of
+`localhost/prox:dev`, and then renamed into place: routes first, then `nginx -t` and
+`nginx -s reload` in the running `prox` container, then the manifest, and `sources.json`
+last. If any step fails the directory is left as it was, and a failed reload puts the
+previous routes back. An `instances.json` that is not valid JSON or not a list fails the
+run before anything is written.
+
+Install (not done by `scripts/deploy-homelab.sh`):
+
+```sh
+bun run build:sources-apply
+install -D -m 644 dist/sources-apply/prox-sources-apply.js ~/.local/share/prox/sources-apply/prox-sources-apply.js
+install -m 644 deploy/provider-sources.json ~/.local/share/prox/sources-apply/provider-sources.json
+install -D -m 644 deploy/prox-sources-apply.service ~/.config/systemd/user/prox-sources-apply.service
+install -D -m 644 deploy/prox-sources.path ~/.config/systemd/user/prox-sources.path
+install -d -m 700 ~/.config/proxd/hub-keys   # mounted by the prox-history drop-in below
+systemctl --user daemon-reload
+systemctl --user start prox-sources-apply.service   # first run; read its journal
+```
+
+Reinstall the bundle and `provider-sources.json` whenever the images are rebuilt, and run
+the service again, so the effective manifest follows the new baked one.
+
+Only after a run has succeeded, overlay the baked seed. Both lines of the first drop-in
+are required together: the generated routes repeat the baked ones, so Nginx refuses to
+start if the directory is mounted without masking the baked file. The directory is
+mounted as a directory because a single-file mount would keep the old file after a rename.
+
+```ini
+# ~/.config/containers/systemd/prox.container.d/runtime-sources.conf
+[Container]
+Volume=/dev/null:/etc/nginx/provider-routes.conf:ro
+Volume=%h/.local/share/prox/sources:/etc/nginx/runtime:ro
+```
+
+```ini
+# ~/.config/containers/systemd/prox-history.container.d/runtime-sources.conf
+[Container]
+Volume=%h/.local/share/prox/sources:/run/prox-sources:ro
+Volume=%h/.config/proxd/hub-keys:/run/secrets/hub-keys:ro
+Environment=PROX_SOURCE_MANIFEST=/run/prox-sources/effective-manifest.json
+```
+
+Restart `prox` and `prox-history` once to pick up the mounts. Then
+`systemctl --user enable --now prox-sources.path` applies every later change to
+`instances.json`. The path unit fires only on a change to that file: after a hub outage,
+start `prox-sources-apply.service` by hand to retry its admission.
+
+While running, prox-history checks the manifest's modification time every 30 seconds and
+hands a revision with new sources to the quota collector's `applySources`. That method
+ships with the open-provider quota work; until it is merged the call does nothing and a
+new hub's quota collection starts at the next prox-history restart. The watcher never
+removes or changes a source, and a manifest that fails validation is logged and ignored;
+removals and edits take a restart. prox-usage reads the manifest at start only. A signed-in browser
+re-reads `/prox/sources.json` every 60 seconds and adds or removes hubs when the revision
+changes, keeping the sessions of hubs whose route and scope did not change.
+
+To go back to the baked seed, disable `prox-sources.path`, delete both drop-ins and
+restart the two containers.
 
 ## Retiring CPA-Manager-Plus (Step G runbook)
 
