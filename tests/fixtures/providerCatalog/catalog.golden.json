@@ -5,7 +5,7 @@
   "providers": [
     {
       "id": "antigravity",
-      "display_name": "Gemini / Antigravity",
+      "display_name": "Antigravity",
       "source": "builtin",
       "plugin_id": null,
       "logo": null,
