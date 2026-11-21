@@ -5,6 +5,7 @@ import { createElement as h } from 'react';
 import { renderToStaticMarkup as render } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '@/i18n';
+import { pendingAccessChanges } from '../src/features/authFiles/modelAccess/accessDraft';
 import { buildMatrix } from '../src/features/authFiles/modelAccess/resolve';
 import { inventory } from './fixtures/modelAccess';
 
@@ -41,6 +42,7 @@ function grid(hidden: string[], extra: Record<string, unknown> = {}) {
         hiddenOpen: false,
         onHiddenOpenChange: () => {},
         searching: false,
+        staged: new Set(),
         onHide: () => {},
         note: null,
         ...extra,
@@ -91,11 +93,14 @@ describe('hiding a model changes no count', () => {
 describe('a hidden model with a pending change stays in its band', () => {
   const overrides = { 'team-a.json': { [HIDDEN]: false } };
   const collapsed = (html: string) => !html.includes(`data-model="${HIDDEN}"`);
+  // As ModelsHubSection passes it: the models in the draft's change list (useAccessDraft).
+  const staged = (inv: typeof hub) =>
+    new Set(pendingAccessChanges(inv, overrides).map((change) => change.model));
 
   test('while its account is filtered out of the grid', () => {
     const accounts = hub.accounts.filter((account) => account.name !== 'team-a.json');
     expect(collapsed(grid([HIDDEN], { accounts }))).toBe(true);
-    expect(collapsed(grid([HIDDEN], { accounts, overrides }))).toBe(false);
+    expect(collapsed(grid([HIDDEN], { accounts, overrides, staged: staged(hub) }))).toBe(false);
   });
 
   test('while its account’s list has become unreadable', () => {
@@ -107,6 +112,8 @@ describe('a hidden model with a pending change stays in its band', () => {
           : account
       ),
     };
-    expect(collapsed(grid([HIDDEN], { inventory: unreadable, overrides }))).toBe(false);
+    expect(
+      collapsed(grid([HIDDEN], { inventory: unreadable, overrides, staged: staged(unreadable) }))
+    ).toBe(false);
   });
 });

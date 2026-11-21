@@ -12,7 +12,6 @@ import { Select } from '@/components/ui/Select';
 import { IconCheck, IconChevronDown, IconEye, IconEyeOff } from '@/components/ui/icons';
 import {
   accessCell,
-  pendingAccessChanges,
   type AccessCell,
   type AccessChange,
   type AccessOverrides,
@@ -49,6 +48,8 @@ type Props = {
   onHiddenOpenChange: (open: boolean) => void;
   /** A model search is active: hidden models it finds stay in their band, marked. */
   searching: boolean;
+  /** Models the draft has a change for, on any account: hidden ones stay in their band. */
+  staged: ReadonlySet<string>;
   onHide: (models: string[], hide: boolean) => void;
   /** What the grid leaves out, shown as its last row. */
   note: ReactNode;
@@ -165,11 +166,10 @@ export function ModelAccessMatrix(props: Props) {
 
   // A hidden row stays in its band while the draft has a change for it (on any account, shown,
   // filtered out or unreadable) or a search finds it.
-  const staged = new Set(pendingAccessChanges(inventory, overrides).map((change) => change.model));
   const { shown, collapsed } = arrangeRows(
     rows,
     props.hidden,
-    (row) => props.searching || staged.has(row.model)
+    (row) => props.searching || props.staged.has(row.model)
   );
   // Collapsed rows have nothing staged: "still on" is what the hub serves, as the bands are split.
   const hiddenGroup = { rows: collapsed, ...hiddenSummary(collapsed, isServed) };

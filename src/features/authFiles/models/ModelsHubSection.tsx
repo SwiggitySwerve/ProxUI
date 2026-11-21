@@ -185,6 +185,10 @@ export function ModelsHubSection({
   const hiddenShown = modelQuery.trim()
     ? 0
     : visibleRows.filter((row) => hidden.has(row.model)).length;
+  const staged = useMemo(
+    () => new Set(draft.changes.map((change) => change.model)),
+    [draft.changes]
+  );
   const showsTable = tab === 'access' && inventory !== null && inventory.accounts.length > 0;
   const models = showsTable ? visibleRows.length : 0;
   const served = showsTable ? counts.served : 0;
@@ -333,6 +337,7 @@ export function ModelsHubSection({
             hiddenOpen={hiddenOpen}
             onHiddenOpenChange={setHiddenOpen}
             searching={modelQuery.trim() !== ''}
+            staged={staged}
             onHide={setModelsHidden}
             note={apiKeysNote}
           />
