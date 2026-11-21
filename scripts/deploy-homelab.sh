@@ -47,6 +47,27 @@ for bundle in usage-parity.js usage-restore-check.js usage-nightly.js; do
 done
 # Fail the deploy now, not at 04:20, if the installed nightly cannot start its sibling parity.
 bun "$usage_jobs_dir/usage-nightly.js" --check-install
+# Runtime hub discovery: the apply bundle and the baked manifest these images were built from,
+# renamed into place like the usage bundles because prox-sources.path may start a run at any time.
+sources_apply_dir="$HOME/.local/share/prox/sources-apply"
+install -d -m 755 "$sources_apply_dir"
+for artefact in dist/sources-apply/prox-sources-apply.js deploy/provider-sources.json; do
+  artefact_tmp=$(mktemp "$sources_apply_dir/.${artefact##*/}.XXXXXX")
+  trap 'rm -f -- "$artefact_tmp"' EXIT
+  install -m 644 "$artefact" "$artefact_tmp"
+  mv -f -- "$artefact_tmp" "$sources_apply_dir/${artefact##*/}"
+  trap - EXIT
+done
+install -D -m 644 deploy/prox-sources-apply.service "$HOME/.config/systemd/user/prox-sources-apply.service"
+install -D -m 644 deploy/prox-sources.path "$HOME/.config/systemd/user/prox-sources.path"
+# The prox quadlet masks the baked routes and mounts this directory, so it must hold a published
+# set before prox restarts, or Nginx would start with no hub routes. The first deploy publishes
+# the baked sources alone (no hub probed, Nginx untouched); later ones keep the last set until
+# the apply below. The umask matches the service: Nginx's worker reads the directory.
+if [[ ! -e "$HOME/.local/share/prox/sources/effective-manifest.json" ]]; then
+  (umask 022 && bun "$sources_apply_dir/prox-sources-apply.js" --seed \
+    --base "$sources_apply_dir/provider-sources.json")
+fi
 # Ship job schedules disabled. The operator enables them after the migration gates.
 install -D -m 755 deploy/prox-usage-job.sh "$HOME/.local/share/prox/prox-usage-job.sh"
 install -D -m 644 deploy/prox-usage-job@.service "$HOME/.config/systemd/user/prox-usage-job@.service"
@@ -76,10 +97,23 @@ if [[ "$usage_hash" != "$previous_usage_hash" ]]; then
     --max-time 5 http://127.0.0.1:18320/healthz
   printf '%s\n' "$usage_hash" > "$usage_hash_file"
 fi
-systemctl --user restart prox-history.service
-curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 \
-  --max-time 5 http://127.0.0.1:18319/healthz
 systemctl --user restart prox.service
 curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 \
   --max-time 5 http://127.0.0.1:18318/healthz
+# Until this run, the restarted Nginx serves the set published before the deploy. It applies this
+# deploy's baked manifest and instances.json to the live Nginx. A failure leaves that previous set
+# live, so the deploy still finishes and reports the failure at the end.
+sources_failed=0
+systemctl --user start prox-sources-apply.service || sources_failed=1
+# prox-history restarts after the apply: its watcher only adds sources, so a baked source this
+# deploy changed or removed reaches it only through a start that reads the new manifest.
+systemctl --user restart prox-history.service
+curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 \
+  --max-time 5 http://127.0.0.1:18319/healthz
+systemctl --user enable --now prox-sources.path
+if ((sources_failed)); then
+  echo 'Prox UI deployed, but prox-sources-apply failed; the previous source routes stay live.' \
+    'See journalctl --user -u prox-sources-apply.service.' >&2
+  exit 1
+fi
 echo 'Prox UI deployed. Cluster routing and Authentik registration are separate; see docs/PROX-SETUP.md.'

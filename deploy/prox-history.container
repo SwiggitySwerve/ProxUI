@@ -9,8 +9,10 @@ ContainerName=prox-history
 Network=host
 Volume=%h/.local/share/prox-history:/data:rw
 Volume=%h/.config/proxd/management-key:/run/secrets/proxy-management-key:ro
-# The baked source manifest is the default. Runtime hub discovery replaces it from a drop-in the
-# operator adds (docs/PROX-SETUP.md, "Runtime hub discovery"); nothing more is mounted here.
+# Runtime hub discovery (docs/PROX-SETUP.md): the effective manifest prox-sources-apply publishes
+# replaces the baked one; new hubs in it are collected without a restart.
+Volume=%h/.local/share/prox/sources:/run/prox-sources:ro
+Environment=PROX_SOURCE_MANIFEST=/run/prox-sources/effective-manifest.json
 
 [Service]
 Restart=always

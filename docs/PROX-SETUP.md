@@ -33,7 +33,8 @@ bash scripts/deploy-homelab.sh
 
 This verifies and builds the single-file UI and quota-history server, checks
 Nginx configuration, installs their user services, and restarts only ProxUI and
-ProxUI history. The script uses the pinned Bun via npm
+ProxUI history. It also sets up runtime hub discovery and applies `instances.json`
+(see "Runtime hub discovery"). The script uses the pinned Bun via npm
 exec, so it does not replace a machine's global Bun. Commit first when the image
 revision must identify an exact source tree.
 
@@ -354,16 +355,18 @@ failures stop deployment. The sole nightly timer remains disabled. `prox-usage-j
 manual use. The deployment script copies templates without enabling them; this
 change installs, enables and runs no live maintenance unit.
 
-## Runtime hub discovery (operator enablement only)
+## Runtime hub discovery
 
-Nothing in this section is active after a deploy. The images keep serving the baked
-`deploy/provider-sources.json`, its routes and its discovery until an operator installs
-the oneshot, runs it once and adds the two drop-ins below.
+Every deploy sets this up; nothing is done by hand. Prox serves its source routes and
+`/prox/sources.json` from `~/.local/share/prox/sources/`, and prox-history reads its
+manifest from there. A hub that ProxD lists in `~/.config/proxd/instances.json` joins
+without an image rebuild. (`~/.config/cli-proxy` is only a legacy symlink to
+`~/.config/proxd`.)
 
-`prox-sources-apply` is a host oneshot. It reads the baked manifest and ProxD's
-operator-owned `~/.config/cli-proxy/instances.json` (`{"instances": [{id, provider,
-base_url, management_path?, label?, auth_scope?}]}`; a bare array
-is accepted too) and writes three files into `~/.local/share/prox/sources/`:
+`prox-sources-apply` is a host oneshot. It reads the baked manifest the images were built
+from and `instances.json` (`{"instances": [{id, provider, base_url, management_path?,
+label?, auth_scope?}]}`; a bare array is accepted too), and writes three files into
+`~/.local/share/prox/sources/`:
 
 | File | Mode | Read by |
 | --- | --- | --- |
@@ -401,71 +404,71 @@ The files are staged in `.staging/`, checked with `nginx -t` in a throwaway cont
 the live Nginx on `127.0.0.1:18318` serves the new revision at `/prox/routes-revision`, and
 until each hub new in this run answers its own `instance_id` through its route; hubs kept
 from before are not asked, so one that is offline holds nothing back. Only then are the
-manifest and `sources.json` published, in that order. If any step fails the previous routes and manifest are put
-back and Nginx is reloaded again. An `instances.json` that is not valid JSON or not a list fails the
-run before anything is written.
+manifest and `sources.json` published, in that order. If any step fails the previous routes
+and manifest are put back and Nginx is reloaded again. An `instances.json` that is missing,
+not valid JSON or not a list fails the run before anything is written. A run whose result
+matches the published files changes nothing and does not touch Nginx.
 
-Install (not done by `scripts/deploy-homelab.sh`):
+### What the deploy does
 
-```sh
-bun run build:sources-apply
-install -D -m 644 dist/sources-apply/prox-sources-apply.js ~/.local/share/prox/sources-apply/prox-sources-apply.js
-install -m 644 deploy/provider-sources.json ~/.local/share/prox/sources-apply/provider-sources.json
-install -D -m 644 deploy/prox-sources-apply.service ~/.config/systemd/user/prox-sources-apply.service
-install -D -m 644 deploy/prox-sources.path ~/.config/systemd/user/prox-sources.path
-systemctl --user daemon-reload
-# First run: publish the baked sources only. Nothing serves the directory yet, so this run
-# neither reloads Nginx nor admits a hub; it is refused once a manifest exists.
-# The same umask as the unit, so Nginx's worker can read the directory.
-(umask 022; bun ~/.local/share/prox/sources-apply/prox-sources-apply.js --seed \
-  --base ~/.local/share/prox/sources-apply/provider-sources.json)
-```
+`deploy/prox.container` masks the baked routes (`/dev/null` over
+`/etc/nginx/provider-routes.conf`) and mounts the directory at `/etc/nginx/runtime`.
+Both are needed together: the published routes repeat the baked ones, so Nginx refuses to
+start with both. The directory is mounted, not its files, because a single-file mount
+keeps the old file after a rename. `deploy/prox-history.container` mounts it at
+`/run/prox-sources` and sets `PROX_SOURCE_MANIFEST` to the effective manifest there. The
+lines live in the Quadlets themselves because Podman 4.9 (this homelab's version) ignores
+`.container.d` drop-ins, and the deploy reinstalls both files every time.
 
-Reinstall the bundle and `provider-sources.json` whenever the images are rebuilt, and run
-the service again, so the effective manifest follows the new baked one.
+In order, `scripts/deploy-homelab.sh`:
 
-Only after the seed run has succeeded, overlay the baked seed. All lines below are needed
-together: the generated routes repeat the baked ones, so Nginx refuses to start if the
-directory is mounted without masking the baked file. The directory is mounted as a directory
-because a single-file mount would keep the old file after a rename.
+1. Installs `dist/sources-apply/prox-sources-apply.js` (built by `bun run verify`) and
+   `deploy/provider-sources.json` into `~/.local/share/prox/sources-apply/`, each renamed
+   into place so a run started meanwhile never reads a half-written file, and installs
+   `prox-sources-apply.service` and `prox-sources.path` beside the Quadlets.
+2. Seeds the directory when it holds no `effective-manifest.json` yet: a `--seed` run
+   publishes the baked sources alone, checked with `nginx -t` in the new image, without
+   probing a hub or touching the running Nginx. With the mask in place, an empty directory
+   would start Nginx with no hub routes at all, so this happens before prox restarts. A
+   seed is refused once a manifest exists.
+3. Runs `systemctl --user daemon-reload`, so the Quadlets' mounts and both units load, and
+   restarts prox. Until the next step, it serves the set that was published before the
+   deploy (on the first deploy, the seed).
+4. Starts `prox-sources-apply.service`, which applies this deploy's baked manifest and
+   `instances.json` to the live Nginx. A baked source the deploy added, changed or removed
+   reaches the routes, the manifest and discovery here.
+5. Restarts prox-history, after the apply: its watcher only adds sources, so a baked
+   source the deploy changed or removed reaches it only through a start.
+6. Enables `prox-sources.path` with `--now`. From then on every change to
+   `instances.json` starts the apply service.
 
-```ini
-# prox.container, [Container] section
-Volume=/dev/null:/etc/nginx/provider-routes.conf:ro
-Volume=%h/.local/share/prox/sources:/etc/nginx/runtime:ro
-```
-
-```ini
-# prox-history.container, [Container] section
-Volume=%h/.local/share/prox/sources:/run/prox-sources:ro
-Environment=PROX_SOURCE_MANIFEST=/run/prox-sources/effective-manifest.json
-```
-
-Where these go depends on the Podman version. Podman 5 reads Quadlet drop-ins, so put each
-block in `~/.config/containers/systemd/<name>.container.d/runtime-sources.conf` under a
-`[Container]` header. Podman 4.9 (this homelab's version) ignores `.container.d`, so add the
-lines to the installed `~/.config/containers/systemd/prox.container` and
-`prox-history.container` themselves; `scripts/deploy-homelab.sh` reinstalls both files from
-`deploy/` on every deploy, so add them again after each deploy until the script carries them.
-
-Then run `systemctl --user daemon-reload` and restart `prox` and `prox-history` once to pick
-up the mounts. Then `systemctl --user start prox-sources-apply.service` admits the hubs
-`instances.json` lists (read its journal), and `systemctl --user enable --now
-prox-sources.path` applies every later change to
-`instances.json`. The path unit fires only on a change to that file: after a hub outage,
-start `prox-sources-apply.service` by hand to retry its admission.
+A failed apply does not stop the deploy: the previous routes, manifest and discovery stay
+live, the remaining steps still run, and the script then exits 1 and points to
+`journalctl --user -u prox-sources-apply.service`. The path unit fires only on a change to
+`instances.json`: after a hub outage, `systemctl --user start prox-sources-apply.service`
+retries its admission.
 
 While running, prox-history checks the manifest's modification time every 30 seconds and
 hands a revision with new sources to the quota collector's `applySources`, which starts
 collecting the new hubs from the next read without disturbing existing ones. The watcher never
 removes or changes a source, and a manifest that fails validation is logged and ignored;
-removals and edits take a restart. prox-usage reads the manifest at start only. A signed-in browser
-re-reads `/prox/sources.json` every 60 seconds and adds or removes hubs when the revision
-changes, keeping the sessions of hubs whose route and scope did not change.
+removals and edits take a restart. prox-usage reads the baked manifest at start only. A
+signed-in browser re-reads `/prox/sources.json` every 60 seconds and adds or removes hubs when
+the revision changes, keeping the sessions of hubs whose route and scope did not change.
 
-To go back to the baked seed, disable `prox-sources.path`, remove the lines above (the
-drop-ins, or the lines added to the installed Quadlets), run `systemctl --user daemon-reload`
-and restart the two containers.
+### Turning it off
+
+To stop following `instances.json` until the next deploy, run
+`systemctl --user disable --now prox-sources.path`. The last published set stays live, and
+the next deploy enables the unit and applies again.
+
+To go back to the baked sources alone, change the repository and deploy: remove the two
+`Volume=` lines from `deploy/prox.container`, the `Volume=` and `PROX_SOURCE_MANIFEST` lines
+from `deploy/prox-history.container`, and the runtime-discovery steps from
+`scripts/deploy-homelab.sh` (the bundle and unit installs, the seed, the apply start and the
+path enable). After that deploy, run `systemctl --user disable --now prox-sources.path`,
+remove both units from `~/.config/systemd/user/` and run `systemctl --user daemon-reload`.
+`~/.local/share/prox/sources/` is then unused and can be removed.
 
 ## Retiring CPA-Manager-Plus (Step G runbook)
 
