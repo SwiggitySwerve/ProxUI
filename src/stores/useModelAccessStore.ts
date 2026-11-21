@@ -86,6 +86,12 @@ export interface ModelAccessState {
    * sources (instance ids) where a re-read failed; their last good data stays.
    */
   refreshLoaded(): Promise<string[]>;
+  /**
+   * After one hub's model catalog was updated: force fresh reads of that hub's loaded catalogs and
+   * account model lists. A read already in flight is not reused (it may predate the update);
+   * its answer is superseded. Other hubs are left alone.
+   */
+  refreshSourceModels(owner: SourceOwner): Promise<void>;
   /** Forget per-account slices (all of them without names); the next ensure re-reads them. */
   invalidateAccounts(owner: SourceOwner, names?: readonly string[]): void;
   reset(): void;
@@ -315,6 +321,18 @@ export function createModelAccessStore() {
           get().ensureConfig(owner, options),
           get().ensureCatalog(owner, provider, options),
           get().ensureAccounts(owner, accounts, options),
+        ]);
+      },
+
+      refreshSourceModels: async (owner) => {
+        const source = sourceOf(owner);
+        if (!source) return;
+        const force = { force: true };
+        await Promise.all([
+          ...Object.keys(source.catalogs).map((provider) =>
+            get().ensureCatalog(owner, provider, force)
+          ),
+          get().ensureAccountsModels(owner, Object.keys(source.accountModels), force),
         ]);
       },
 

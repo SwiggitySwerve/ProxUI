@@ -228,9 +228,10 @@ function SourceSystemPage() {
     try {
       // Refreshes this hub's backend model catalogs, not auth-file credentials.
       await scope.session.management.post('/models/refresh');
-      // The Models screen keeps the hub's model definitions in the shared model-access store;
-      // re-read what it has loaded so it does not keep showing the catalog from before.
-      void modelAccess().refreshLoaded();
+      if (!isCurrent()) return;
+      // The Models screen keeps this hub's model definitions in the shared model-access store;
+      // force fresh reads there so it does not keep showing the catalog from before.
+      await modelAccess().refreshSourceModels(scope.session.owner);
       if (!isCurrent()) return;
       await fetchModels({ forceRefresh: true });
       if (!isCurrent()) return;

@@ -26,9 +26,9 @@ describe('system page', () => {
 
   test('the catalog refresh goes to the selected hub, never the compatibility client', () => {
     expect(source).toContain("await scope.session.management.post('/models/refresh');");
-    // The shared model-access store re-reads its loaded catalogs after the update.
+    // This hub's slices of the shared model-access store are re-read after the update.
     expect(source).toMatch(
-      /post\('\/models\/refresh'\);[\s\S]{0,260}void modelAccess\(\)\.refreshLoaded\(\);/
+      /post\('\/models\/refresh'\);[\s\S]{0,320}await modelAccess\(\)\.refreshSourceModels\(scope\.session\.owner\);/
     );
     expect(source).not.toMatch(/\bapiClient\b/);
   });
