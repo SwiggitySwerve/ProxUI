@@ -1,9 +1,10 @@
-# Template only: not enabled by deployment. The operator enables it (docs/PROX-SETUP.md).
+# Enabled by scripts/deploy-homelab.sh. ProxD's instance map; ~/.config/cli-proxy is a legacy
+# symlink to ~/.config/proxd.
 [Unit]
 Description=Apply ProxD hub membership when instances.json changes
 
 [Path]
-PathChanged=%h/.config/cli-proxy/instances.json
+PathChanged=%h/.config/proxd/instances.json
 Unit=prox-sources-apply.service
 
 [Install]

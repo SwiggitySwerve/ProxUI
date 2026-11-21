@@ -734,6 +734,56 @@ describe('prox-sources-apply', () => {
     expect(steps).toEqual(['validate:true', 'reload:true', 'verify:kimi-primary']);
   });
 
+  test('a deploy that changes the baked manifest carries it into the published set', async () => {
+    const { runtimeDir, state, steps, run, snapshot } = setup(both);
+    // The first deploy seeds, then applies instances.json.
+    state.seed = true;
+    await run();
+    state.seed = false;
+    await run();
+    expect(ids(loadSourceManifest(join(runtimeDir, 'effective-manifest.json')).manifest)).toEqual([
+      'codex-primary',
+      'claude-primary',
+      'kimi-primary',
+    ]);
+    // The next deploy installs a baked manifest that moves Claude, adds Gemini and bakes Kimi.
+    const next = baseInput();
+    next.sources[1].upstreamOrigin = 'http://127.0.0.1:8329';
+    next.sources.push({
+      ...next.sources[0],
+      instanceId: 'gemini-primary',
+      label: 'gemini-primary',
+      publicBasePath: '/gemini',
+      providers: ['antigravity'],
+      upstreamOrigin: 'http://127.0.0.1:8321',
+    });
+    next.sources.push({
+      ...next.sources[0],
+      instanceId: 'kimi-primary',
+      label: 'kimi-primary',
+      publicBasePath: '/kimi',
+      providers: ['kimi'],
+      upstreamOrigin: KIMI,
+    });
+    writeFileSync(join(runtimeDir, '..', 'base.json'), JSON.stringify(next));
+    steps.length = 0;
+    const result = await run();
+    expect(result.changed).toBe(true);
+    // Baked sources are not probed through Nginx; nothing run-time is new.
+    expect(steps).toEqual(['validate:true', 'reload:true', 'verify:']);
+    expect(outcome(result, 'kimi-primary')?.state).toBe('base');
+    const published = loadSourceManifest(join(runtimeDir, 'effective-manifest.json'));
+    expect(published.revision).toBe(result.revision);
+    expect(published.manifest).toEqual(validateSourceManifest(next));
+    const routes = snapshot()['provider-routes.conf'];
+    expect(routes).toContain('proxy_pass http://127.0.0.1:8329/v8/management/;');
+    expect(routes).not.toContain('//127.0.0.1:8319/');
+    expect(routes).toContain('location ^~ /gemini/v8/management/ {');
+    expect(routes).toContain('location ^~ /kimi/v8/management/ {');
+    expect(routes).not.toContain(route('kimi-primary', KIMI));
+    expect(JSON.parse(snapshot()['sources.json'])).toEqual(published.discovery);
+  });
+
   test('a first run whose routes are not served leaves nothing behind', async () => {
     const { state, run, snapshot } = setup(both);
     state.verify = async () => {
@@ -1071,28 +1121,62 @@ describe('deployment templates', () => {
     expect(conf).toContain('include /etc/nginx/runtime/provider-routes*.conf;');
   });
 
-  test('the containers mount nothing for runtime discovery by default', () => {
-    for (const unit of ['prox.container', 'prox-history.container']) {
-      const lines = read(unit)
-        .split('\n')
-        .filter((line) => !line.startsWith('#'));
-      expect(lines.join('\n')).not.toContain('prox/sources');
-      expect(lines.join('\n')).not.toContain('PROX_SOURCE_MANIFEST');
-    }
+  const lines = (unit: string) =>
+    read(unit)
+      .split('\n')
+      .filter((line) => !line.startsWith('#'));
+
+  test('prox masks the baked routes and mounts the runtime directory', () => {
+    // Podman 4.9 ignores .container.d drop-ins, so the mounts must be in the shipped Quadlet.
+    expect(lines('prox.container')).toEqual(
+      expect.arrayContaining([
+        'Volume=/dev/null:/etc/nginx/provider-routes.conf:ro',
+        'Volume=%h/.local/share/prox/sources:/etc/nginx/runtime:ro',
+      ])
+    );
   });
 
-  test('the path unit watches instances.json and starts the oneshot', () => {
+  test('prox-history reads the effective manifest from the runtime directory', () => {
+    expect(lines('prox-history.container')).toEqual(
+      expect.arrayContaining([
+        'Volume=%h/.local/share/prox/sources:/run/prox-sources:ro',
+        'Environment=PROX_SOURCE_MANIFEST=/run/prox-sources/effective-manifest.json',
+      ])
+    );
+  });
+
+  test('the path unit and the timer start the oneshot; the path unit watches proxd', () => {
     const path = read('prox-sources.path');
-    expect(path).toContain('PathChanged=%h/.config/cli-proxy/instances.json');
+    expect(path).toContain('PathChanged=%h/.config/proxd/instances.json');
+    expect(path).not.toContain('cli-proxy/');
     expect(path).toContain('Unit=prox-sources-apply.service');
+    expect(path).toContain('WantedBy=default.target');
     const service = read('prox-sources-apply.service');
     expect(service).toContain('Type=oneshot');
     expect(service).toContain('%h/.local/share/prox/sources-apply/prox-sources-apply.js');
-    // Enablement is the operator's: the service has no install target of its own.
+    expect(service).toContain(
+      'PROX_SOURCES_BASE_MANIFEST=%h/.local/share/prox/sources-apply/provider-sources.json'
+    );
+    // Started by the deploy, the path unit and the timer, never at login on its own.
     expect(service).not.toContain('[Install]');
+    // PathChanged= misses an edit made during a run, and an offline hub needs another run.
+    const timer = read('prox-sources-apply.timer');
+    expect(timer).toContain('OnActiveSec=10min');
+    expect(timer).toContain('OnUnitActiveSec=10min');
+    expect(timer).toContain('WantedBy=timers.target');
+    for (const unit of [path, service, timer]) expect(unit).not.toMatch(/template only|operator/i);
     const scripts = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
       .scripts as Record<string, string>;
     expect(scripts['build:sources-apply']).toContain('./scripts/prox-sources-apply.ts');
     expect(scripts.build).toContain('bun run build:sources-apply');
+  });
+
+  test('the apply script defaults to the proxd instances.json', () => {
+    const script = readFileSync(
+      new URL('../scripts/prox-sources-apply.ts', import.meta.url),
+      'utf8'
+    );
+    expect(script).toContain("join(home, '.config/proxd/instances.json')");
+    expect(script).not.toContain('cli-proxy/');
   });
 });

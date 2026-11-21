@@ -1,5 +1,6 @@
-# Template only: started by prox-sources.path once the operator enables it, or by hand.
-# Runs the bundle built from the deployed commit, never a source checkout.
+# Started by scripts/deploy-homelab.sh after each deploy, by prox-sources.path whenever
+# instances.json changes and by prox-sources-apply.timer every 10 minutes. Runs the bundle built
+# from the deployed commit, never a source checkout.
 [Unit]
 Description=Probe ProxD hubs and publish Prox source routes
 After=prox.service

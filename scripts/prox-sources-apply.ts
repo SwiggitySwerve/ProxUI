@@ -1,5 +1,5 @@
 // Host oneshot: admit the hubs ProxD's instances.json lists and publish their Nginx routes.
-// Usage and enablement: docs/PROX-SETUP.md, "Runtime hub discovery".
+// scripts/deploy-homelab.sh installs and runs it; docs/PROX-SETUP.md, "Runtime hub discovery".
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -123,7 +123,7 @@ if (import.meta.main) {
       instancesPath:
         values.instances ??
         process.env.PROX_SOURCES_INSTANCES ??
-        join(home, '.config/cli-proxy/instances.json'),
+        join(home, '.config/proxd/instances.json'),
       runtimeDir:
         values['runtime-dir'] ??
         process.env.PROX_SOURCES_DIR ??

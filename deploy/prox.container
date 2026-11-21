@@ -7,8 +7,12 @@ Wants=network-online.target
 Image=localhost/prox:dev
 ContainerName=prox
 Network=host
-# Baked routes and discovery are the default. Runtime hub discovery overlays them from a drop-in
-# the operator adds (docs/PROX-SETUP.md, "Runtime hub discovery"); nothing is mounted here.
+# Runtime hub discovery (docs/PROX-SETUP.md): prox-sources-apply publishes the baked sources plus
+# the admitted hubs into this directory, so the baked routes are masked; leaving them would repeat
+# every location and Nginx would refuse to start. The directory is mounted, not its files, because
+# a single-file mount keeps the old file after a rename. scripts/deploy-homelab.sh seeds it first.
+Volume=/dev/null:/etc/nginx/provider-routes.conf:ro
+Volume=%h/.local/share/prox/sources:/etc/nginx/runtime:ro
 
 [Service]
 Restart=always
