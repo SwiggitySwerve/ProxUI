@@ -22,7 +22,17 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function deploy(options: { seeded?: boolean; applyFails?: boolean; routesMissing?: boolean } = {}) {
+interface DeployOptions {
+  /** A set was published by an earlier deploy. */
+  seeded?: boolean;
+  applyFails?: boolean;
+  seedFails?: boolean;
+  routesMissing?: boolean;
+  /** How many checks still see a timer- or path-started apply run in progress. */
+  activeRuns?: number;
+}
+
+function deploy(options: DeployOptions = {}) {
   const root = mkdtempSync(join(tmpdir(), 'prox-deploy-'));
   roots.push(root);
   const home = join(root, 'home');
@@ -48,6 +58,12 @@ function deploy(options: { seeded?: boolean; applyFails?: boolean; routesMissing
     mkdirSync(join(home, '.local/share/prox/sources'), { recursive: true });
     writeFileSync(join(home, '.local/share/prox/sources/effective-manifest.json'), '{}\n');
   }
+  // What the previous deploy installed: the Quadlets without the runtime mounts.
+  for (const quadlet of ['prox.container', 'prox-history.container']) {
+    mkdirSync(join(home, '.config/containers/systemd'), { recursive: true });
+    writeFileSync(join(home, '.config/containers/systemd', quadlet), `# previous ${quadlet}\n`);
+  }
+  writeFileSync(join(home, 'active-runs'), String(options.activeRuns ?? 0));
   // The deploy puts ~/.local/bin first on PATH, so stubs there shadow the real commands.
   const bin = join(home, '.local/bin');
   mkdirSync(bin, { recursive: true });
@@ -56,9 +72,15 @@ function deploy(options: { seeded?: boolean; applyFails?: boolean; routesMissing
       name === 'node'
         ? 'echo bun@1.4.3'
         : name === 'bun'
-          ? 'case "$*" in *--seed*) echo "umask $(umask)" >> "$HOME/calls";; esac'
+          ? 'case "$*" in *--seed*) echo "umask $(umask)" >> "$HOME/calls"; [[ -z "${SEED_FAILS:-}" ]] || exit 1;; esac'
           : name === 'systemctl'
-            ? 'if [[ -n "${APPLY_FAILS:-}" && "$*" == "--user start prox-sources-apply.service" ]]; then exit 1; fi'
+            ? [
+                'if [[ -n "${APPLY_FAILS:-}" && "$*" == "--user start prox-sources-apply.service" ]]; then exit 1; fi',
+                'if [[ "$*" == "--user show --property=ActiveState --value prox-sources-apply.service" ]]; then',
+                '  runs=$(cat "$HOME/active-runs"); echo $((runs - 1)) > "$HOME/active-runs"',
+                '  if ((runs > 0)); then echo activating; else echo inactive; fi',
+                'fi',
+              ].join('\n')
             : name === 'curl'
               ? 'if [[ -n "${ROUTES_MISSING:-}" && "$*" == *routes-revision* ]]; then exit 22; fi'
               : '';
@@ -74,6 +96,7 @@ function deploy(options: { seeded?: boolean; applyFails?: boolean; routesMissing
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       ...(options.applyFails ? { APPLY_FAILS: '1' } : {}),
       ...(options.routesMissing ? { ROUTES_MISSING: '1' } : {}),
+      ...(options.seedFails ? { SEED_FAILS: '1' } : {}),
     },
   });
   const calls = readFileSync(join(home, 'calls'), 'utf8').trim().split('\n');
@@ -86,18 +109,23 @@ function deploy(options: { seeded?: boolean; applyFails?: boolean; routesMissing
 }
 
 const SOURCES_APPLY = '.local/share/prox/sources-apply';
+const ENABLE = 'systemctl --user enable --now prox-sources.path prox-sources-apply.timer';
 const SEED_CALL = (home: string) =>
   `bun ${home}/${SOURCES_APPLY}/prox-sources-apply.js --seed --base ${home}/${SOURCES_APPLY}/provider-sources.json`;
 
 describe('deploy-homelab.sh runtime hub discovery', () => {
-  test('installs the apply bundle, the baked manifest, both units and the mounting Quadlets', () => {
+  test('installs the apply bundle, the baked manifest, the three units and the mounting Quadlets', () => {
     const { home, repo, result } = deploy();
     expect(result.exitCode).toBe(0);
     const installed = (path: string, from: string) =>
       expect(readFileSync(join(home, path), 'utf8')).toBe(readFileSync(join(repo, from), 'utf8'));
     installed(`${SOURCES_APPLY}/prox-sources-apply.js`, 'dist/sources-apply/prox-sources-apply.js');
     installed(`${SOURCES_APPLY}/provider-sources.json`, 'deploy/provider-sources.json');
-    for (const unit of ['prox-sources-apply.service', 'prox-sources.path'])
+    for (const unit of [
+      'prox-sources-apply.service',
+      'prox-sources-apply.timer',
+      'prox-sources.path',
+    ])
       installed(`.config/systemd/user/${unit}`, `deploy/${unit}`);
     for (const quadlet of ['prox.container', 'prox-history.container'])
       installed(`.config/containers/systemd/${quadlet}`, `deploy/${quadlet}`);
@@ -120,7 +148,7 @@ describe('deploy-homelab.sh runtime hub discovery', () => {
     const prox = at('systemctl --user restart prox.service');
     const apply = at('systemctl --user start prox-sources-apply.service');
     const history = at('systemctl --user restart prox-history.service');
-    const path = at('systemctl --user enable --now prox-sources.path');
+    const path = at(ENABLE);
     // The seed checks its routes in the image this deploy just built.
     expect(
       at(
@@ -152,7 +180,7 @@ describe('deploy-homelab.sh runtime hub discovery', () => {
     expect(at('systemctl --user start prox-sources-apply.service')).toBeLessThan(
       at('systemctl --user restart prox-history.service')
     );
-    expect(calls.at(-1)).toBe('systemctl --user enable --now prox-sources.path');
+    expect(calls.at(-1)).toBe(ENABLE);
     expect(existsSync(join(home, '.config/systemd/user/prox-sources.path'))).toBe(true);
   });
 
@@ -161,5 +189,31 @@ describe('deploy-homelab.sh runtime hub discovery', () => {
     expect(result.exitCode).not.toBe(0);
     expect(calls).toContain('systemctl --user start prox-sources-apply.service');
     expect(calls).not.toContain('systemctl --user restart prox-history.service');
+  });
+
+  test('a run the triggers started finishes before its inputs are replaced', () => {
+    const { home, calls, at } = deploy({ seeded: true, activeRuns: 2 });
+    const pause = at('systemctl --user stop prox-sources.path prox-sources-apply.timer');
+    const checks = calls
+      .map((call, index) => (call.includes('show --property=ActiveState') ? index : -1))
+      .filter((index) => index >= 0);
+    // Two checks see the run still active; the third sees it finished.
+    expect(checks).toHaveLength(3);
+    expect(pause).toBeLessThan(checks[0]);
+    // The bundle is only replaced after the wait; --check-install is the first later step.
+    expect(checks[2]).toBeLessThan(
+      at(`bun ${home}/.local/share/prox/usage-jobs/usage-nightly.js --check-install`)
+    );
+    expect(calls.at(-1)).toBe(ENABLE);
+  });
+
+  test('a failed first seed leaves the previous Quadlets installed', () => {
+    const { home, result, calls } = deploy({ seedFails: true });
+    expect(result.exitCode).not.toBe(0);
+    for (const quadlet of ['prox.container', 'prox-history.container'])
+      expect(readFileSync(join(home, '.config/containers/systemd', quadlet), 'utf8')).toBe(
+        `# previous ${quadlet}\n`
+      );
+    expect(calls).not.toContain('systemctl --user daemon-reload');
   });
 });

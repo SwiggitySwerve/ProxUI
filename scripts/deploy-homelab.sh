@@ -24,6 +24,36 @@ revision=$(git rev-parse HEAD)
 podman build -f deploy/Dockerfile --label "org.opencontainers.image.revision=$revision" -t localhost/prox:dev .
 podman run --rm --network host --entrypoint nginx localhost/prox:dev -t
 podman build -f deploy/Dockerfile.history --label "org.opencontainers.image.revision=$revision" -t localhost/prox-history:dev .
+# Each file is written beside its target and renamed, so a run that starts meanwhile never reads
+# a half-written one.
+install_renamed() { # <source> <target>
+  local tmp
+  tmp=$(mktemp "${2%/*}/.${2##*/}.XXXXXX")
+  install -m 644 "$1" "$tmp" && mv -f -- "$tmp" "$2" || { rm -f -- "$tmp"; return 1; }
+}
+# Runtime hub discovery. Pause its triggers and let a run they started finish, so no run of the
+# previous bundle or baked manifest outlives this deploy; they are enabled again at the end.
+systemctl --user stop prox-sources.path prox-sources-apply.timer 2>/dev/null || true
+while [[ $(systemctl --user show --property=ActiveState --value prox-sources-apply.service) == \
+  activating ]]; do
+  sleep 1
+done
+sources_apply_dir="$HOME/.local/share/prox/sources-apply"
+install -d -m 755 "$sources_apply_dir"
+install_renamed dist/sources-apply/prox-sources-apply.js "$sources_apply_dir/prox-sources-apply.js"
+install_renamed deploy/provider-sources.json "$sources_apply_dir/provider-sources.json"
+for unit in prox-sources-apply.service prox-sources-apply.timer prox-sources.path; do
+  install -D -m 644 "deploy/$unit" "$HOME/.config/systemd/user/$unit"
+done
+# The prox Quadlet masks the baked routes and mounts this directory, so it must hold a published
+# set before prox restarts, or Nginx would start with no hub routes; podman will not start either
+# container while the directory is missing, so the Quadlets are installed only after this. The
+# first deploy publishes the baked sources alone (no hub probed, Nginx untouched); later ones keep
+# the last set until the apply below. The umask matches the service: Nginx's worker reads it.
+if [[ ! -e "$HOME/.local/share/prox/sources/effective-manifest.json" ]]; then
+  (umask 022 && bun "$sources_apply_dir/prox-sources-apply.js" --seed \
+    --base "$sources_apply_dir/provider-sources.json")
+fi
 install -d -m 700 "$HOME/.local/share/prox-history" "$HOME/.local/share/prox-usage" "$HOME/.config/prox-usage"
 # The rate book is re-read on its modification time; no restart is needed for a price change.
 install -m 644 deploy/usage-rates.json "$HOME/.local/share/prox-usage/usage-rates.json"
@@ -34,40 +64,14 @@ install -D -m 755 deploy/prox-auth-janitor.sh "$HOME/.local/share/prox/prox-auth
 install -D -m 644 deploy/prox-auth-janitor.service "$HOME/.config/systemd/user/prox-auth-janitor.service"
 install -D -m 644 deploy/prox-auth-janitor.timer "$HOME/.config/systemd/user/prox-auth-janitor.timer"
 # Install the self-contained usage job bundles that `bun run verify` just built from this commit.
-# Each file is written beside its target and renamed, so a deploy during a run never leaves a
-# half-written script. The nightly job spawns parity, so parity is replaced first.
+# The nightly job spawns parity, so parity is replaced first.
 usage_jobs_dir="$HOME/.local/share/prox/usage-jobs"
 install -d -m 755 "$usage_jobs_dir"
 for bundle in usage-parity.js usage-restore-check.js usage-nightly.js; do
-  bundle_tmp=$(mktemp "$usage_jobs_dir/.$bundle.XXXXXX")
-  trap 'rm -f -- "$bundle_tmp"' EXIT
-  install -m 644 "dist/usage-jobs/$bundle" "$bundle_tmp"
-  mv -f -- "$bundle_tmp" "$usage_jobs_dir/$bundle"
-  trap - EXIT
+  install_renamed "dist/usage-jobs/$bundle" "$usage_jobs_dir/$bundle"
 done
 # Fail the deploy now, not at 04:20, if the installed nightly cannot start its sibling parity.
 bun "$usage_jobs_dir/usage-nightly.js" --check-install
-# Runtime hub discovery: the apply bundle and the baked manifest these images were built from,
-# renamed into place like the usage bundles because prox-sources.path may start a run at any time.
-sources_apply_dir="$HOME/.local/share/prox/sources-apply"
-install -d -m 755 "$sources_apply_dir"
-for artefact in dist/sources-apply/prox-sources-apply.js deploy/provider-sources.json; do
-  artefact_tmp=$(mktemp "$sources_apply_dir/.${artefact##*/}.XXXXXX")
-  trap 'rm -f -- "$artefact_tmp"' EXIT
-  install -m 644 "$artefact" "$artefact_tmp"
-  mv -f -- "$artefact_tmp" "$sources_apply_dir/${artefact##*/}"
-  trap - EXIT
-done
-install -D -m 644 deploy/prox-sources-apply.service "$HOME/.config/systemd/user/prox-sources-apply.service"
-install -D -m 644 deploy/prox-sources.path "$HOME/.config/systemd/user/prox-sources.path"
-# The prox quadlet masks the baked routes and mounts this directory, so it must hold a published
-# set before prox restarts, or Nginx would start with no hub routes. The first deploy publishes
-# the baked sources alone (no hub probed, Nginx untouched); later ones keep the last set until
-# the apply below. The umask matches the service: Nginx's worker reads the directory.
-if [[ ! -e "$HOME/.local/share/prox/sources/effective-manifest.json" ]]; then
-  (umask 022 && bun "$sources_apply_dir/prox-sources-apply.js" --seed \
-    --base "$sources_apply_dir/provider-sources.json")
-fi
 # Ship job schedules disabled. The operator enables them after the migration gates.
 install -D -m 755 deploy/prox-usage-job.sh "$HOME/.local/share/prox/prox-usage-job.sh"
 install -D -m 644 deploy/prox-usage-job@.service "$HOME/.config/systemd/user/prox-usage-job@.service"
@@ -114,7 +118,7 @@ curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1
 systemctl --user restart prox-history.service
 curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 \
   --max-time 5 http://127.0.0.1:18319/healthz
-systemctl --user enable --now prox-sources.path
+systemctl --user enable --now prox-sources.path prox-sources-apply.timer
 if ((sources_failed)); then
   echo 'Prox UI deployed, but prox-sources-apply failed; the previous source routes stay live.' \
     'See journalctl --user -u prox-sources-apply.service.' >&2

@@ -73,8 +73,12 @@ function runInstallBlock(root: string, dist: Record<string, string>) {
     writeFileSync(join(repo, 'dist/usage-jobs', name), text);
   const home = join(root, 'home');
   mkdirSync(home, { recursive: true });
+  // The block calls the deploy's shared rename helper, defined earlier in the script.
+  const helper = deploy.indexOf('install_renamed() {');
+  expect(helper).toBeGreaterThan(-1);
+  const helperText = deploy.slice(helper, deploy.indexOf('\n}\n', helper) + 3);
   const result = Bun.spawnSync(
-    ['bash', '-euo', 'pipefail', '-c', deploy.slice(start, end)],
+    ['bash', '-euo', 'pipefail', '-c', helperText + deploy.slice(start, end)],
     { cwd: repo, env: { PATH: process.env.PATH!, HOME: home } }
   );
   return { result, dir: join(home, '.local/share/prox/usage-jobs') };

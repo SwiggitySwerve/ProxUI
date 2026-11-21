@@ -1145,7 +1145,7 @@ describe('deployment templates', () => {
     );
   });
 
-  test('the path unit watches the proxd instances.json and starts the oneshot', () => {
+  test('the path unit and the timer start the oneshot; the path unit watches proxd', () => {
     const path = read('prox-sources.path');
     expect(path).toContain('PathChanged=%h/.config/proxd/instances.json');
     expect(path).not.toContain('cli-proxy/');
@@ -1157,9 +1157,14 @@ describe('deployment templates', () => {
     expect(service).toContain(
       'PROX_SOURCES_BASE_MANIFEST=%h/.local/share/prox/sources-apply/provider-sources.json'
     );
-    // Started by the deploy and the path unit, never at login on its own.
+    // Started by the deploy, the path unit and the timer, never at login on its own.
     expect(service).not.toContain('[Install]');
-    for (const unit of [path, service]) expect(unit).not.toMatch(/template only|operator/i);
+    // PathChanged= misses an edit made during a run, and an offline hub needs another run.
+    const timer = read('prox-sources-apply.timer');
+    expect(timer).toContain('OnActiveSec=10min');
+    expect(timer).toContain('OnUnitActiveSec=10min');
+    expect(timer).toContain('WantedBy=timers.target');
+    for (const unit of [path, service, timer]) expect(unit).not.toMatch(/template only|operator/i);
     const scripts = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
       .scripts as Record<string, string>;
     expect(scripts['build:sources-apply']).toContain('./scripts/prox-sources-apply.ts');

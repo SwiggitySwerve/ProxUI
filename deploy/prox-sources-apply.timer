@@ -1,0 +1,12 @@
+# Enabled by scripts/deploy-homelab.sh. prox-sources.path misses an instances.json edit made while
+# a run is active, and a hub that was down at the last run is only admitted by another run; this
+# periodic run covers both. A run whose result is already published leaves Nginx alone.
+[Unit]
+Description=Re-apply ProxD hub membership periodically
+
+[Timer]
+OnActiveSec=10min
+OnUnitActiveSec=10min
+
+[Install]
+WantedBy=timers.target
