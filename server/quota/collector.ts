@@ -113,7 +113,8 @@ interface CollectionSource {
 
 /**
  * The catalog entries Quota Management shows for one source: every provider with a credential,
- * and a waiting provider only where Auth Files shows it too (`ownsWaitingProvider`).
+ * and a waiting provider where Auth Files shows it too (`ownsWaitingProvider`) and that can be
+ * signed in to, since its card offers Connect.
  */
 export function sourceCatalogEntries(
   catalog: ProviderCatalog,
@@ -123,7 +124,7 @@ export function sourceCatalogEntries(
   return catalog.providers.filter(
     (entry) =>
       entry.credentials.total > 0 ||
-      ownsWaitingProvider(catalog, entry, declared, claimedElsewhere)
+      (entry.oauth !== null && ownsWaitingProvider(catalog, entry, declared, claimedElsewhere))
   );
 }
 

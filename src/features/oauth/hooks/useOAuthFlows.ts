@@ -304,8 +304,10 @@ export function useOAuthFlows({ providerCards, isFocused }: UseOAuthFlowsOptions
       if (!destination) throw new Error(t('auth_login.destination_unavailable'));
       pinned.current.set(provider, destination);
       const card = providerCards.find((item) => item.id === provider);
+      // A plugin tile carries the catalog's own id; it is sent as is, never folded onto a built-in.
       const res = await pinnedApi(destination).startAuth(provider, attempt.signal, {
         webui: card?.kind === 'plugin' ? card.webui : undefined,
+        exact: card?.kind === 'plugin',
       });
       if (!attempt.isCurrent()) return;
       if (!res.state) {
@@ -391,7 +393,10 @@ export function useOAuthFlows({ providerCards, isFocused }: UseOAuthFlowsOptions
       callbackValidation: undefined,
     });
     try {
-      await pinnedApi(destination).submitCallback(provider, redirectUrl, attempt.signal);
+      const card = providerCards.find((item) => item.id === provider);
+      await pinnedApi(destination).submitCallback(provider, redirectUrl, attempt.signal, {
+        exact: card?.kind === 'plugin',
+      });
       if (!attempt.isCurrent()) return;
       updateProviderState(provider, { callbackSubmitting: false, callbackStatus: 'success' });
       notify(provider, t('auth_login.oauth_callback_success'), 'success');

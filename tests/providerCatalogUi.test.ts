@@ -502,6 +502,18 @@ describe('Auth Files: providers waiting for auth', () => {
     ).toEqual(['example-plugin', 'codex']);
   });
 
+  test('an upload-only plugin waiting for its first credential still shows on Auth Files', () => {
+    const quotaOnly = {
+      ...catalog.providers[1],
+      id: 'quota-only',
+      source: 'plugin' as const,
+      lifecycle: 'awaiting_auth' as const,
+      oauth: null,
+    };
+    const open: ProviderCatalog = { ...catalog, acceptedProviders: null, providers: [quotaOnly] };
+    expect(awaitingAuthProviders(open, [], []).map((entry) => entry.id)).toEqual(['quota-only']);
+  });
+
   test('ownership uses exact ids: a grok plugin is not the xAI provider another hub owns', () => {
     const grok = {
       ...catalog.providers[1],
