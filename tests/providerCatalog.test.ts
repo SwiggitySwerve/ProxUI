@@ -64,6 +64,17 @@ describe('provider catalog wire contract', () => {
     ).toBeNull();
   });
 
+  test('an entry the parser cannot use is left out without losing the catalog', () => {
+    const raw = JSON.parse(readFileSync(GOLDEN_PATH, 'utf8')) as Record<string, unknown>;
+    const entries = raw.providers as Record<string, unknown>[];
+    const golden = parseProviderCatalog(raw)!;
+    // e.g. a credential-bearing OpenAI-compatible config whose name is not a slug.
+    const legacy = { ...entries[0], id: 'openai-compatible-my gateway' };
+    const parsed = parseProviderCatalog({ ...raw, providers: [...entries, legacy, 'junk'] });
+    expect(parsed?.providers).toEqual(golden.providers);
+    expect(parsed?.instanceId).toBe(golden.instanceId);
+  });
+
   test('auto-discovery i18n keys exist in all six locales', () => {
     const readLocale = (code: string) =>
       JSON.parse(

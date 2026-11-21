@@ -262,7 +262,8 @@ export async function resolveEffectiveManifest(
         if (was && was.upstreamOrigin !== plan.upstreamOrigin)
           return {
             candidate,
-            failure: 'An admitted hub keeps its address; remove its entry, apply, then add it again',
+            failure:
+              'An admitted hub keeps its address; remove its entry, apply, then add it again',
           };
         const failure = conflict(base, base.sources, plan);
         if (failure) return { candidate, failure };
@@ -309,7 +310,8 @@ export async function resolveEffectiveManifest(
       fail(
         candidate.id,
         probe.reason,
-        probe.state === 'mismatch' && prior.get(candidate.id)?.upstreamOrigin === plan.upstreamOrigin
+        probe.state === 'mismatch' &&
+          prior.get(candidate.id)?.upstreamOrigin === plan.upstreamOrigin
       );
   }
   const verified = probed

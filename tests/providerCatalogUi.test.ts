@@ -459,7 +459,7 @@ describe('Auth Files: providers waiting for auth', () => {
     expect(awaitingAuthProviders(null, undefined, [])).toEqual([]);
   });
 
-  test('scopes by accepted providers, then owned providers, else plugin providers only', () => {
+  test('scopes by accepted providers; an open hub adds plugins no other source declares', () => {
     const builtInAwaiting = {
       ...catalog.providers[0],
       id: 'codex',
@@ -473,7 +473,15 @@ describe('Auth Files: providers waiting for auth', () => {
     expect(awaitingAuthProviders(open, undefined, []).map((entry) => entry.id)).toEqual([
       'example-plugin',
     ]);
-    expect(awaitingAuthProviders(open, ['codex'], []).map((entry) => entry.id)).toEqual(['codex']);
+    // A baked provider list does not hide a newly installed plugin on an open hub...
+    expect(awaitingAuthProviders(open, ['codex'], []).map((entry) => entry.id)).toEqual([
+      'example-plugin',
+      'codex',
+    ]);
+    // ...unless another source declares that provider.
+    expect(
+      awaitingAuthProviders(open, ['codex'], [], ['example-plugin']).map((entry) => entry.id)
+    ).toEqual(['codex']);
     expect(
       awaitingAuthProviders(
         { ...open, acceptedProviders: ['codex', 'example-plugin'] },

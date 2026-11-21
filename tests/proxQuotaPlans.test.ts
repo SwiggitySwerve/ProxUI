@@ -88,7 +88,11 @@ describe('plan weights', () => {
     });
     // An operator's weight never reaches an account that reports no plan.
     for (const plan of [null, undefined])
-      expect(planWeight('zcode', plan, units)).toEqual({ multiplier: 1, label: null, known: false });
+      expect(planWeight('zcode', plan, units)).toEqual({
+        multiplier: 1,
+        label: null,
+        known: false,
+      });
   });
   test('read the plan from provider responses', () => {
     expect(planFromCodexUsage({ plan_type: 'promax', rate_limit: {} })).toBe('promax');

@@ -37,7 +37,11 @@ export function DiscoveredQuota({
                 <h3>
                   {displayName} <small>· {sourceLabel}</small>
                 </h3>
-                <Link className={styles.accountLink} to="/oauth">
+                {/* Sign in on the hub that is waiting, not whichever hub is selected. */}
+                <Link
+                  className={styles.accountLink}
+                  to={`/oauth?source=${encodeURIComponent(instanceId)}`}
+                >
                   {t('provider_catalog.connect_action')} <span aria-hidden="true">→</span>
                 </Link>
               </div>

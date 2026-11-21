@@ -190,7 +190,10 @@ export function AuthFilesPage() {
       result[view.source.instanceId] = awaitingAuthProviders(
         catalog,
         view.source.providers,
-        filesBySource[view.source.instanceId]
+        filesBySource[view.source.instanceId],
+        sources.flatMap((other) =>
+          other.source.instanceId === view.source.instanceId ? [] : (other.source.providers ?? [])
+        )
       );
     }
     return result;

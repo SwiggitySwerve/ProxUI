@@ -9,28 +9,32 @@ export const catalogProviderKey = (entry: ProviderCatalogEntry): string =>
 
 /**
  * Providers a hub's catalog lists as waiting for their first credential, which this source shows
- * as placeholder cards. The hub's own `accepted_providers` scopes them, else the providers the
- * deployment declares for this source; a hub declaring neither accepts everything, so only the
- * providers its plugins add count as discovered (every built-in would otherwise appear on every
- * hub). A provider with any credential file here is never a placeholder, so an added credential
- * replaces it at once, before the catalog is re-read. Nothing is shown until the files are known.
+ * as placeholder cards. A hub that declares `accepted_providers` gets exactly those. An open hub
+ * (one that accepts everything) gets the providers the deployment declares for this source, plus
+ * any provider its plugins add that no other source declares: a newly installed plugin shows up
+ * on the hub that has it, while every built-in does not appear on every hub. A provider with any
+ * credential file here is never a placeholder, so an added credential replaces it at once, before
+ * the catalog is re-read. Nothing is shown until the files are known.
  */
 export function awaitingAuthProviders(
   catalog: ProviderCatalog | null,
   ownedProviders: readonly string[] | undefined,
-  files: readonly AuthFileItem[] | undefined
+  files: readonly AuthFileItem[] | undefined,
+  /** Providers other sources declare; an open hub's plugin entry for one belongs to them. */
+  claimedElsewhere: readonly string[] = []
 ): ProviderCatalogEntry[] {
   if (!catalog || !files) return [];
-  const scope = catalog.acceptedProviders ?? ownedProviders ?? null;
-  const scoped = scope ? new Set(scope.map(normalizeOAuthProviderKey)) : null;
+  const keys = (list: readonly string[]) => new Set(list.map(normalizeOAuthProviderKey));
+  const accepted = catalog.acceptedProviders ? keys(catalog.acceptedProviders) : null;
+  const owned = keys(ownedProviders ?? []);
+  const elsewhere = keys(claimedElsewhere);
   const present = new Set(files.map(providerGroupOf));
   return catalog.providers.filter((entry) => {
     const key = catalogProviderKey(entry);
-    return (
-      entry.lifecycle === 'awaiting_auth' &&
-      (scoped ? scoped.has(key) : entry.source === 'plugin') &&
-      !present.has(key)
-    );
+    const ours = accepted
+      ? accepted.has(key)
+      : owned.has(key) || (entry.source === 'plugin' && !elsewhere.has(key));
+    return entry.lifecycle === 'awaiting_auth' && ours && !present.has(key);
   });
 }
 

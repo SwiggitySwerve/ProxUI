@@ -149,7 +149,11 @@ function parseEntry(raw: unknown): ProviderCatalogEntry | null {
   };
 }
 
-/** Validates and normalizes a `GET /v8/management/providers` payload; returns null if malformed. */
+/**
+ * Validates and normalizes a `GET /v8/management/providers` payload. The envelope (schema, instance
+ * identity, accepted providers, unique ids) must be valid or the catalog is null; one entry the
+ * parser cannot use, such as a provider id that is not a slug, is left out on its own.
+ */
 export function parseProviderCatalog(raw: unknown): ProviderCatalog | null {
   if (!isRecord(raw)) return null;
   const schemaVersion = raw.schema_version ?? raw.schemaVersion;
@@ -180,10 +184,14 @@ export function parseProviderCatalog(raw: unknown): ProviderCatalog | null {
   const seenIds = new Set<string>();
   const providers: ProviderCatalogEntry[] = [];
   for (const item of raw.providers) {
+    // Two entries under one id leave no way to tell which the hub meant.
+    const rawId = isRecord(item) ? item.id : undefined;
+    if (typeof rawId === 'string') {
+      if (seenIds.has(rawId)) return null;
+      seenIds.add(rawId);
+    }
     const entry = parseEntry(item);
-    if (!entry || seenIds.has(entry.id)) return null;
-    seenIds.add(entry.id);
-    providers.push(entry);
+    if (entry) providers.push(entry);
   }
 
   return {
