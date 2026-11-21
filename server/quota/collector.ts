@@ -192,7 +192,13 @@ function inventory(payload: unknown, provider: PoolProviderId, nowMs: number): I
     ) {
       throw new Error('Invalid quota inventory');
     }
-    if (kind !== provider) continue;
+    // ProxD catalogues a plugin credential under its login entry (`oauth_provider`) when that
+    // differs from its runtime provider; discovered providers are grouped the same way.
+    const portal =
+      !isBuiltInPoolProvider(provider) && boundedString(file.oauth_provider, 64)
+        ? file.oauth_provider.toLowerCase()
+        : null;
+    if ((portal ?? kind) !== provider) continue;
     if (
       !boundedString(file.auth_index, 256) ||
       !boundedString(file.name, 1024) ||
@@ -1416,10 +1422,9 @@ export class QuotaCollector {
       }
       for (const entry of catalog.providers) {
         if (isBuiltInPoolProvider(entry.id)) continue;
-        readers.set(
-          entry.id,
-          entry.lifecycle === 'active' && entry.quota.supported && entry.quota.reader !== 'none'
-        );
+        // Not gated on lifecycle: a credential in quota cooldown is `needs_attention`, and its
+        // exhausted balance is exactly what to read. Disabled credentials are skipped one by one.
+        readers.set(entry.id, entry.quota.supported && entry.quota.reader !== 'none');
       }
     }
     if (!readers.size) return { key, groups: [] };

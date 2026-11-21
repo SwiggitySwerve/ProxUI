@@ -79,6 +79,17 @@ describe('plan weights', () => {
     });
     expect(planWeight('claude', undefined)).toEqual({ multiplier: 1, label: null, known: false });
   });
+  test('a discovered provider weights only plans it names; a missing plan stays unknown', () => {
+    const units = { 'team-plan': 4, '*': 9 };
+    expect(planWeight('zcode', 'team-plan', units)).toEqual({
+      multiplier: 4,
+      label: 'team-plan',
+      known: true,
+    });
+    // An operator's weight never reaches an account that reports no plan.
+    for (const plan of [null, undefined])
+      expect(planWeight('zcode', plan, units)).toEqual({ multiplier: 1, label: null, known: false });
+  });
   test('read the plan from provider responses', () => {
     expect(planFromCodexUsage({ plan_type: 'promax', rate_limit: {} })).toBe('promax');
     expect(planFromCodexUsage('{"plan_type":"pro"}')).toBe('pro');

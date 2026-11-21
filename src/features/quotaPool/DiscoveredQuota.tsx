@@ -112,8 +112,8 @@ function PoolProfileForm({
       const previous = byId.get(window.id);
       if (!previous || previous.periodHours == null) byId.set(window.id, window);
     }
-    const plan = account.planType ?? '*';
-    plans.set(plan, account.planLabel ?? t('quota_pool.plan_column'));
+    // Only a plan the provider names can be weighted (server/quota/plans.ts).
+    if (account.planType) plans.set(account.planType, account.planLabel ?? account.planType);
   }
   const windows = [...byId.values()];
   const [weekly, setWeekly] = useState<string | null>(null);

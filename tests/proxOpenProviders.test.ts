@@ -339,6 +339,30 @@ function fixture(initial: readonly string[] = ['hub-a']) {
 }
 
 describe('discovery and additive collection', () => {
+  test('a plugin credential is collected under its login entry, even while it needs attention', async () => {
+    const f = fixture();
+    try {
+      // ProxD lists the credential under its runtime provider and names the catalog entry it
+      // signed in through; a quota cooldown makes the provider `needs_attention`.
+      f.catalog('hub-a', entry(PROVIDER, 'needs_attention'));
+      f.credentials.set('hub-a', [
+        { ...credential('orbit-runtime'), oauth_provider: PROVIDER } as ReturnType<
+          typeof credential
+        >,
+      ]);
+      await f.collector.refresh();
+      const accounts = f.store.listAccounts().filter((account) => !account.retired);
+      expect(accounts.map(({ provider, instanceId }) => [provider, instanceId])).toEqual([
+        [PROVIDER, 'hub-a'],
+      ]);
+      expect(f.calls.filter(({ path }) => path.endsWith('/quota/fetch'))).toHaveLength(1);
+      const dashboard = await f.dashboard();
+      expect(dashboard.unpooled?.[0].accounts[0]).toMatchObject({ status: 'ok' });
+    } finally {
+      f.close();
+    }
+  });
+
   test('hot-adds during an in-flight collection and keeps the original source binding', async () => {
     const f = fixture();
     try {

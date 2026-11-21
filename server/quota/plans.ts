@@ -52,8 +52,8 @@ export function planWeight(
     const entry = plan && owns(PLANS[provider], plan) ? PLANS[provider][plan] : undefined;
     return entry ? { ...entry, known: true } : { multiplier: 1, label: plan || null, known: false };
   }
-  const key = plan ?? '*';
-  const units = overrides && owns(overrides, key) ? overrides[key] : undefined;
+  // Only an identified plan can be weighted; an account that names none stays one unknown unit.
+  const units = plan && overrides && owns(overrides, plan) ? overrides[plan] : undefined;
   return { multiplier: units ?? 1, label: displayName ?? plan ?? null, known: units !== undefined };
 }
 
