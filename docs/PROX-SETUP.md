@@ -422,8 +422,10 @@ lines live in the Quadlets themselves because Podman 4.9 (this homelab's version
 
 In order, `scripts/deploy-homelab.sh`:
 
-1. Stops `prox-sources.path` and `prox-sources-apply.timer` and waits for a run they started
-   to finish, so no run of the previous bundle or baked manifest outlives the deploy.
+1. Stops `prox-sources.path` and `prox-sources-apply.timer` if they are running and waits
+   until no apply job they started or queued is left, so no run of the previous bundle or
+   baked manifest outlives the deploy. If the deploy fails before step 7, it starts the
+   triggers it stopped again.
 2. Installs `dist/sources-apply/prox-sources-apply.js` (built by `bun run verify`) and
    `deploy/provider-sources.json` into `~/.local/share/prox/sources-apply/`, each renamed
    into place, and installs `prox-sources-apply.service`, `prox-sources-apply.timer` and
@@ -453,7 +455,9 @@ In order, `scripts/deploy-homelab.sh`:
 
 A failed apply does not stop the deploy: the previous routes, manifest and discovery stay
 live, the remaining steps still run, and the script then exits 1 and points to
-`journalctl --user -u prox-sources-apply.service`.
+`journalctl --user -u prox-sources-apply.service`. The timer retries the apply, but
+prox-history has already restarted on the previous manifest: a baked source the deploy changed
+or removed reaches it only at its next restart (the next deploy).
 
 While running, prox-history checks the manifest's modification time every 30 seconds and
 hands a revision with new sources to the quota collector's `applySources`, which starts

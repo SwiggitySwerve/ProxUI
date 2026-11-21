@@ -31,11 +31,18 @@ install_renamed() { # <source> <target>
   tmp=$(mktemp "${2%/*}/.${2##*/}.XXXXXX")
   install -m 644 "$1" "$tmp" && mv -f -- "$tmp" "$2" || { rm -f -- "$tmp"; return 1; }
 }
-# Runtime hub discovery. Pause its triggers and let a run they started finish, so no run of the
-# previous bundle or baked manifest outlives this deploy; they are enabled again at the end.
-systemctl --user stop prox-sources.path prox-sources-apply.timer 2>/dev/null || true
-while [[ $(systemctl --user show --property=ActiveState --value prox-sources-apply.service) == \
-  activating ]]; do
+# Runtime hub discovery. Pause its triggers and let a run they started or queued finish, so no
+# run of the previous bundle or baked manifest outlives this deploy; they are enabled again at the
+# end, and restarted if the deploy fails before then.
+paused=()
+for trigger in prox-sources.path prox-sources-apply.timer; do
+  if systemctl --user --quiet is-active "$trigger"; then paused+=("$trigger"); fi
+done
+if ((${#paused[@]})); then
+  systemctl --user stop "${paused[@]}"
+  trap 'systemctl --user start "${paused[@]}"' EXIT
+fi
+while [[ -n $(systemctl --user list-jobs --no-legend prox-sources-apply.service) ]]; do
   sleep 1
 done
 sources_apply_dir="$HOME/.local/share/prox/sources-apply"
@@ -118,10 +125,12 @@ curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1
 systemctl --user restart prox-history.service
 curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 \
   --max-time 5 http://127.0.0.1:18319/healthz
+trap - EXIT
 systemctl --user enable --now prox-sources.path prox-sources-apply.timer
 if ((sources_failed)); then
   echo 'Prox UI deployed, but prox-sources-apply failed; the previous source routes stay live.' \
-    'See journalctl --user -u prox-sources-apply.service.' >&2
+    'See journalctl --user -u prox-sources-apply.service. The timer retries it; prox-history' \
+    'picks up a changed or removed baked source only at its next restart (the next deploy).' >&2
   exit 1
 fi
 echo 'Prox UI deployed. Cluster routing and Authentik registration are separate; see docs/PROX-SETUP.md.'

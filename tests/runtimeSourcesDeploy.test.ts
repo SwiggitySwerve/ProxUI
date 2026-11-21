@@ -23,12 +23,12 @@ afterEach(() => {
 });
 
 interface DeployOptions {
-  /** A set was published by an earlier deploy. */
+  /** A set was published by an earlier deploy, which also left both triggers running. */
   seeded?: boolean;
   applyFails?: boolean;
   seedFails?: boolean;
   routesMissing?: boolean;
-  /** How many checks still see a timer- or path-started apply run in progress. */
+  /** How many checks still see an apply job the triggers started or queued. */
   activeRuns?: number;
 }
 
@@ -76,9 +76,10 @@ function deploy(options: DeployOptions = {}) {
           : name === 'systemctl'
             ? [
                 'if [[ -n "${APPLY_FAILS:-}" && "$*" == "--user start prox-sources-apply.service" ]]; then exit 1; fi',
-                'if [[ "$*" == "--user show --property=ActiveState --value prox-sources-apply.service" ]]; then',
+                'if [[ "$*" == "--user --quiet is-active "* && -z "${TRIGGERS_ACTIVE:-}" ]]; then exit 3; fi',
+                'if [[ "$*" == "--user list-jobs --no-legend prox-sources-apply.service" ]]; then',
                 '  runs=$(cat "$HOME/active-runs"); echo $((runs - 1)) > "$HOME/active-runs"',
-                '  if ((runs > 0)); then echo activating; else echo inactive; fi',
+                '  if ((runs > 0)); then echo "7 prox-sources-apply.service start waiting"; fi',
                 'fi',
               ].join('\n')
             : name === 'curl'
@@ -97,6 +98,7 @@ function deploy(options: DeployOptions = {}) {
       ...(options.applyFails ? { APPLY_FAILS: '1' } : {}),
       ...(options.routesMissing ? { ROUTES_MISSING: '1' } : {}),
       ...(options.seedFails ? { SEED_FAILS: '1' } : {}),
+      ...(options.seeded ? { TRIGGERS_ACTIVE: '1' } : {}),
     },
   });
   const calls = readFileSync(join(home, 'calls'), 'utf8').trim().split('\n');
@@ -191,20 +193,29 @@ describe('deploy-homelab.sh runtime hub discovery', () => {
     expect(calls).not.toContain('systemctl --user restart prox-history.service');
   });
 
-  test('a run the triggers started finishes before its inputs are replaced', () => {
-    const { home, calls, at } = deploy({ seeded: true, activeRuns: 2 });
+  test('a run the triggers started or queued finishes before its inputs are replaced', () => {
+    const { calls, at } = deploy({ seeded: true, activeRuns: 2 });
     const pause = at('systemctl --user stop prox-sources.path prox-sources-apply.timer');
     const checks = calls
-      .map((call, index) => (call.includes('show --property=ActiveState') ? index : -1))
+      .map((call, index) => (call.includes('list-jobs') ? index : -1))
       .filter((index) => index >= 0);
-    // Two checks see the run still active; the third sees it finished.
+    // Two checks still see the job; the third sees none.
     expect(checks).toHaveLength(3);
     expect(pause).toBeLessThan(checks[0]);
-    // The bundle is only replaced after the wait; --check-install is the first later step.
-    expect(checks[2]).toBeLessThan(
-      at(`bun ${home}/.local/share/prox/usage-jobs/usage-nightly.js --check-install`)
-    );
+    // The wait is the first runtime-discovery step; everything after it uses the new inputs.
+    expect(checks[2]).toBeLessThan(at('systemctl --user daemon-reload'));
     expect(calls.at(-1)).toBe(ENABLE);
+  });
+
+  test('the first deploy pauses nothing: the triggers are not running yet', () => {
+    const { calls } = deploy();
+    expect(calls.filter((call) => call.startsWith('systemctl --user stop'))).toEqual([]);
+  });
+
+  test('a later deploy that fails restarts the triggers it paused', () => {
+    const { result, calls } = deploy({ seeded: true, routesMissing: true });
+    expect(result.exitCode).not.toBe(0);
+    expect(calls.at(-1)).toBe('systemctl --user start prox-sources.path prox-sources-apply.timer');
   });
 
   test('a failed first seed leaves the previous Quadlets installed', () => {
