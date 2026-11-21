@@ -1,9 +1,11 @@
 # Models screen: hide old models, and hill-climb rounds 6–12
 
-Fixture data only (the Playwright fake hub in `scripts/visual/`); no live hub was called.
+Fixture data only (the Playwright fake hub in `scripts/visual/`), except `live/` below.
 
 - `before/` — `main` after #47 (hill-climb round 5).
 - `after/` — this branch (round 10, the best-scored state; the branch's UI is identical to it).
+- `live/` — the built UI against the live hub after main was merged in (2026-11-21), every
+  non-GET request blocked; account names and emails replaced with placeholders before capture.
 - `matrix-r10.md` — round 10's medians per screen and aspect, every reviewer note, and the measured checks.
 - `keep.md` — decisions the panel cannot reverse without a failed check or 5 of 8 seats in one round
   (K10, hiding changes no count, is a user decision and cannot be reversed by the panel at all).
