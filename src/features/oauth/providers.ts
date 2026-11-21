@@ -1,4 +1,7 @@
 import type { BuiltInOAuthProvider } from '@/services/api';
+import type { ProviderCatalog, ProviderCatalogEntry } from '@/domain/providerCatalog';
+import { canonicalCredentialProvider } from '@/domain/providerSources/ownership';
+import { isManagementOAuthProviderKey, normalizeOAuthProviderKey } from '@/utils/providerKeys';
 import { getPluginTitle, resolvePluginAssetURL } from '@/features/plugins/pluginResources';
 import {
   KIMI_CHINESE_AFFILIATE_URL,
@@ -38,6 +41,8 @@ export interface BuiltInOAuthProviderCard {
    * （目前是 Kimi 国内站 / 国际站）。`siteKey` 是卡内站点短名（品牌名由卡片标题承载）。
    */
   sponsor?: SponsorSite;
+  /** The hub's catalog lists this provider with no credentials yet. */
+  awaitingAuth?: boolean;
 }
 
 export interface SponsorSite {
@@ -45,11 +50,18 @@ export interface SponsorSite {
   siteKey: string;
 }
 
+/** A plugin's OAuth provider, or one the hub's catalog advertises without a built-in tile. */
 export interface PluginOAuthProviderCard {
   kind: 'plugin';
   id: string;
   title: string;
+  /** Empty for a discovered provider without a logo: the tile shows the fallback glyph. */
   icon: string;
+  /** From the catalog; plugin-list cards leave these unset. */
+  flow?: OAuthFlowKind;
+  manualCallback?: boolean;
+  webui?: boolean;
+  awaitingAuth?: boolean;
 }
 
 export type OAuthProviderCard = BuiltInOAuthProviderCard | PluginOAuthProviderCard;
@@ -141,7 +153,9 @@ export const CALLBACK_SUPPORTED = new Set<string>([
 ]);
 
 export const supportsManualCallback = (provider: OAuthProviderCard): boolean =>
-  provider.kind === 'plugin' || CALLBACK_SUPPORTED.has(provider.id);
+  provider.kind === 'plugin'
+    ? (provider.manualCallback ?? true)
+    : CALLBACK_SUPPORTED.has(provider.id);
 
 export const isSponsor = (
   provider: OAuthProviderCard
@@ -176,4 +190,60 @@ export const buildPluginOAuthProviderCards = (
       },
     ];
   });
+};
+
+/** Whether a catalog entry describes this built-in tile (catalog ids are credential types). */
+const matchesBuiltIn = (card: BuiltInOAuthProviderCard, entry: ProviderCatalogEntry): boolean => {
+  const entryKey = normalizeOAuthProviderKey(entry.id);
+  return (
+    card.id === entryKey ||
+    canonicalCredentialProvider(card.id) === entryKey ||
+    entry.oauth?.aliases.some((alias) => normalizeOAuthProviderKey(alias) === card.id) === true
+  );
+};
+
+/**
+ * OAuth tiles from a hub's provider catalog. Built-in tiles keep their presentation (label, icon,
+ * sponsor) and order; providers the catalog adds follow in catalog order with the catalog's name
+ * and logo. Only entries with an OAuth flow appear. `include` lets the caller drop providers the
+ * hub would refuse (not accepted here and not routed to another hub).
+ */
+export const buildCatalogOAuthProviderCards = (
+  catalog: ProviderCatalog,
+  apiBase: string,
+  include: (providerId: string) => boolean = () => true
+): OAuthProviderCard[] => {
+  const entries = catalog.providers.filter((entry) => entry.oauth !== null && include(entry.id));
+  const claimed = new Set<ProviderCatalogEntry>();
+  const builtIns = OAUTH_PROVIDERS.flatMap((card) => {
+    const entry = entries.find((candidate) => matchesBuiltIn(card, candidate));
+    if (!entry) return [];
+    claimed.add(entry);
+    return [{ ...card, awaitingAuth: entry.lifecycle === 'awaiting_auth' }];
+  });
+  const discovered = entries.flatMap((entry): PluginOAuthProviderCard[] => {
+    // The id is sent as-is to the OAuth start route, which only takes management keys
+    // (no underscores); a provider it cannot name cannot be signed in from here.
+    const id = entry.id;
+    if (
+      claimed.has(entry) ||
+      !isManagementOAuthProviderKey(id) ||
+      BUILTIN_PROVIDER_IDS.has(normalizeOAuthProviderKey(id))
+    ) {
+      return [];
+    }
+    return [
+      {
+        kind: 'plugin',
+        id,
+        title: entry.displayName,
+        icon: entry.logo ? resolvePluginAssetURL(entry.logo, apiBase) : '',
+        flow: entry.oauth?.flow,
+        manualCallback: entry.oauth?.manualCallback,
+        webui: entry.oauth?.webui,
+        awaitingAuth: entry.lifecycle === 'awaiting_auth',
+      },
+    ];
+  });
+  return [...builtIns, ...discovered];
 };

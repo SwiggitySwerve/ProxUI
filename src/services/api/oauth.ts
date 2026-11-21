@@ -52,10 +52,11 @@ function buildOAuthApi(client: ManagementTransport) {
     startSiwcBind: (name: string, signal?: AbortSignal) =>
       client.post<SiwcBindResponse>('/oauth/siwc/bind', { name }, signal ? { signal } : undefined),
 
-    startAuth: (provider: string, signal?: AbortSignal) => {
+    /** `webui` comes from the hub's provider catalog for providers this UI does not list. */
+    startAuth: (provider: string, signal?: AbortSignal, options?: { webui?: boolean }) => {
       const providerKey = normalizeProviderForManagementPath(provider);
       const params: Record<string, string | boolean> = { provider: providerKey };
-      if (WEBUI_SUPPORTED.has(providerKey)) {
+      if (options?.webui === true || WEBUI_SUPPORTED.has(providerKey)) {
         params.is_webui = true;
       }
       return client.get<OAuthStartResponse>('/oauth/auth-url', {

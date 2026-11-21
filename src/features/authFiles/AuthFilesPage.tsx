@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useHeaderRefresh, type HeaderRefreshRound } from '@/hooks/useHeaderRefresh';
 import { providerSources } from '@/stores/useProviderSources';
@@ -39,6 +39,14 @@ import {
 } from '@/stores/useCredentialInventoryStore';
 import type { SourceView } from '@/services/providerSources/registry';
 import type { AuthFileItem } from '@/types';
+import type { ProviderCatalogEntry } from '@/domain/providerCatalog';
+import {
+  selectSourceCatalog,
+  usableCatalog,
+  useProviderCatalogStore,
+} from '@/stores/useProviderCatalogStore';
+import { providerCatalog } from './providerCatalogRuntime';
+import { awaitingAuthProviders, catalogProviderKey } from './awaitingProviders';
 import { AuthFilesSourceProvider } from './AuthFilesSourceContext';
 import {
   AuthFilesSourceContent,
@@ -69,8 +77,14 @@ export function AuthFilesPage() {
       refreshers.current.delete(key);
     };
   }, []);
-  // The header refresh: every group re-lists from the round's one read and refreshes its quota.
+  // The header refresh: every group re-lists from the round's one read and refreshes its quota,
+  // and every hub's provider catalog is re-read (an unchanged one answers 304).
   const refreshAllSources = useCallback(async (round?: HeaderRefreshRound) => {
+    for (const view of providerSources.getSnapshot().sources) {
+      if (view.status === 'ready' && view.session) {
+        void providerCatalog().ensure(view.session, { force: true });
+      }
+    }
     const results = await Promise.allSettled(
       [...refreshers.current.values()].map((refresh) => refresh(round))
     );
@@ -145,6 +159,43 @@ export function AuthFilesPage() {
     }
     return result;
   }, [inventorySources, sources]);
+
+  // Each signed-in hub's provider catalog: providers it lists with no credential yet get a tab
+  // and a placeholder card. A hub without the catalog route (older ProxD) simply adds none.
+  const inventoryRevision = useCredentialInventoryStore((state) => state.revision);
+  const catalogSources = useProviderCatalogStore((state) => state.sources);
+  useEffect(() => {
+    for (const view of sources) {
+      if (view.status === 'ready' && view.session) void providerCatalog().ensure(view.session);
+    }
+  }, [sources]);
+  // Credentials changed (here, in another tab or on another device): lifecycles may have moved.
+  const seenRevision = useRef(inventoryRevision);
+  useEffect(() => {
+    if (seenRevision.current === inventoryRevision) return;
+    seenRevision.current = inventoryRevision;
+    for (const view of providerSources.getSnapshot().sources) {
+      if (view.status === 'ready' && view.session) {
+        void providerCatalog().ensure(view.session, { force: true });
+      }
+    }
+  }, [inventoryRevision]);
+  const awaitingBySource = useMemo(() => {
+    const result: Record<string, ProviderCatalogEntry[]> = {};
+    for (const view of sources) {
+      if (view.status !== 'ready' || !view.session) continue;
+      const catalog = usableCatalog(
+        selectSourceCatalog({ sources: catalogSources }, view.session.owner)
+      );
+      result[view.source.instanceId] = awaitingAuthProviders(
+        catalog,
+        view.source.providers,
+        filesBySource[view.source.instanceId]
+      );
+    }
+    return result;
+  }, [catalogSources, filesBySource, sources]);
+
   const answerOf = (instanceId: string): SourceAnswer => ({
     state: answers[instanceId] ?? 'loading',
     files: filesBySource[instanceId],
@@ -163,9 +214,14 @@ export function AuthFilesPage() {
   const scopedLoadable = loadable.filter((view) => inScope(view.source.instanceId));
   const scopedKnown = scopedLoadable.every((view) => isKnown(view.source.instanceId));
   const scopedFiles = scopedLoadable.flatMap((view) => filesBySource[view.source.instanceId] ?? []);
+  const scopedAwaiting = scopedLoadable.flatMap(
+    (view) => awaitingBySource[view.source.instanceId] ?? []
+  );
   const providerTypes = [
     'all',
-    ...[...new Set(scopedFiles.map(providerGroupOf))].sort(
+    ...[
+      ...new Set([...scopedFiles.map(providerGroupOf), ...scopedAwaiting.map(catalogProviderKey)]),
+    ].sort(
       (a, b) =>
         Number(a === OTHER_PROVIDER_GROUP) - Number(b === OTHER_PROVIDER_GROUP) ||
         a.localeCompare(b)
@@ -262,6 +318,7 @@ export function AuthFilesPage() {
   // Every source in view answered and has nothing: one page-level empty state, not one per source.
   const pageEmpty =
     scopedLoadable.length > 0 &&
+    scopedAwaiting.length === 0 &&
     scopedLoadable.every(
       (view) =>
         answerOf(view.source.instanceId).state === 'ready' &&
@@ -382,6 +439,7 @@ export function AuthFilesPage() {
           registerUpload={registerUpload}
           registerQuotaRefresh={registerQuotaRefresh}
           onAnswer={reportAnswer}
+          awaiting={awaitingBySource[view.source.instanceId]}
         />
       ))}
     </div>
@@ -398,6 +456,7 @@ export function AuthFilesSourcePanel({
   registerUpload,
   registerQuotaRefresh,
   onAnswer,
+  awaiting,
 }: {
   view: SourceView;
   hidden: boolean;
@@ -409,6 +468,7 @@ export function AuthFilesSourcePanel({
   registerUpload?: RegisterUpload;
   registerQuotaRefresh?: RegisterQuotaRefresh;
   onAnswer?: ReportAnswer;
+  awaiting?: readonly ProviderCatalogEntry[];
 }) {
   const { t } = useTranslation();
   const signInText =
@@ -435,6 +495,7 @@ export function AuthFilesSourcePanel({
             registerUpload={registerUpload}
             registerQuotaRefresh={registerQuotaRefresh}
             onAnswer={onAnswer}
+            awaiting={awaiting}
           />
         </AuthFilesSourceProvider>
       ) : (
