@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { IconAlertTriangle } from '@/components/ui/icons';
+import { IconAlertTriangle, IconEye } from '@/components/ui/icons';
 import { useAuthFilesSource } from '@/features/authFiles/AuthFilesSourceContext';
 import { getTypeLabel } from '@/features/authFiles/constants';
 import { notifyAuthFilesChanged } from '@/features/authFiles/authFilesEvents';
@@ -15,6 +15,14 @@ import { useModelEditSession } from '@/features/authFiles/hooks/useModelEditSess
 import { buildMatrix, followsProviderList, inventoryOf } from '@/features/authFiles/modelAccess';
 import { AccessSaveBar } from './AccessSaveBar';
 import { AccessKey, ModelAccessMatrix } from './ModelAccessMatrix';
+import {
+  browserStorage,
+  hiddenHubId,
+  hiddenStorageKey,
+  readHidden,
+  withHidden,
+  writeHidden,
+} from './hiddenModels';
 import { ModelEditDialog } from './ModelEditDialog';
 import { ModelAliasesPanel } from './ModelAliasesPanel';
 import { ModelRulesPanel } from './ModelRulesPanel';
@@ -48,6 +56,8 @@ type Props = {
   registerRefresh: (key: string, refresh: () => Promise<void>) => () => void;
   /** What this hub's access table shows, for the page counter; null when it shows no table. */
   reportCounts: (key: string, counts: VisibleCounts | null) => void;
+  /** How many account columns this hub's grid has (unfiltered), for the page's width. */
+  reportColumns: (key: string, columns: number | null) => void;
   /** Where the Save bar goes (fixed at the bottom of the viewport); inline until it exists. */
   saveDock: HTMLElement | null;
 };
@@ -96,6 +106,7 @@ export function ModelsHubSection({
   setParam,
   registerRefresh,
   reportCounts,
+  reportColumns,
   saveDock,
 }: Props) {
   const { t } = useTranslation();
@@ -111,6 +122,38 @@ export function ModelsHubSection({
   const edit = useModelEditSession(inventory, io, reload, onChanged);
   const draft = useAccessDraft(inventory, io, reload, onChanged);
   const [overflowing, setOverflowing] = useState(false);
+
+  // Models hidden from the bands: this browser's view of this hub and provider, never access.
+  const hiddenKey = hiddenStorageKey(hiddenHubId(scope.source), provider);
+  const [hidden, setHidden] = useState(() => readHidden(browserStorage(), hiddenKey));
+  const [hiddenOpen, setHiddenOpen] = useState(false);
+  const sectionRef = useRef<HTMLDivElement>(null);
+  // The "N hidden" button is for when the Hidden band is out of sight; it steps aside otherwise,
+  // and when there is no band to go to.
+  const [hiddenBandInView, setHiddenBandInView] = useState(true);
+  useEffect(() => {
+    const check = () => {
+      const band = sectionRef.current?.querySelector('[data-section="hidden"]');
+      const box = band?.getBoundingClientRect();
+      setHiddenBandInView(!box || (box.top < window.innerHeight && box.bottom > 0));
+    };
+    const frame = requestAnimationFrame(check);
+    window.addEventListener('scroll', check, { capture: true, passive: true });
+    window.addEventListener('resize', check);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', check, { capture: true });
+      window.removeEventListener('resize', check);
+    };
+  });
+  const setModelsHidden = useCallback(
+    (models: string[], hide: boolean) => {
+      const next = withHidden(hidden, models, hide);
+      setHidden(next);
+      writeHidden(browserStorage(), hiddenKey, next);
+    },
+    [hidden, hiddenKey]
+  );
 
   // The top bar's refresh re-lists the credentials and re-reads this provider's model access.
   useEffect(
@@ -139,6 +182,13 @@ export function ModelsHubSection({
     [inventory, accountQuery]
   );
   const counts = countServed(visibleRows);
+  const hiddenShown = modelQuery.trim()
+    ? 0
+    : visibleRows.filter((row) => hidden.has(row.model)).length;
+  const staged = useMemo(
+    () => new Set(draft.changes.map((change) => change.model)),
+    [draft.changes]
+  );
   const showsTable = tab === 'access' && inventory !== null && inventory.accounts.length > 0;
   const models = showsTable ? visibleRows.length : 0;
   const served = showsTable ? counts.served : 0;
@@ -147,6 +197,9 @@ export function ModelsHubSection({
     reportCounts(hubId, showsTable ? { models, served, accounts } : null);
   }, [accounts, hubId, models, reportCounts, served, showsTable]);
   useEffect(() => () => reportCounts(hubId, null), [hubId, reportCounts]);
+  const columns = inventory?.accounts.length ?? null;
+  useEffect(() => reportColumns(hubId, columns), [columns, hubId, reportColumns]);
+  useEffect(() => () => reportColumns(hubId, null), [hubId, reportColumns]);
 
   const unreadable =
     inventory?.accounts.filter(
@@ -179,6 +232,12 @@ export function ModelsHubSection({
   }, [draft.save, inventory]);
 
   const saveBar = (bar: ReactNode) => (saveDock ? createPortal(bar, saveDock) : bar);
+
+  const apiKeysNote = (
+    <>
+      {t('model_access.api_keys_note')} <Link to="/ai-providers">{t('nav.ai_providers')}</Link>
+    </>
+  );
 
   const renderAccess = () => {
     if (!inventory) return null;
@@ -227,6 +286,29 @@ export function ModelsHubSection({
               ? t('model_access.models_scroll', { count: visibleRows.length })
               : ''}
           </span>
+          {/* Where hidden models went, above the fold: opens the Hidden group and goes to it. */}
+          {hiddenShown > 0 && !hiddenOpen && !hiddenBandInView && (
+            <button
+              type="button"
+              className={styles.hiddenJump}
+              onClick={() => {
+                setHiddenOpen(true);
+                requestAnimationFrame(() =>
+                  sectionRef.current
+                    ?.querySelector('[data-section="hidden"]')
+                    ?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+                );
+              }}
+              data-hidden-jump
+            >
+              <IconEye size={14} />
+              <Trans
+                i18nKey="model_access.hidden_jump"
+                values={{ count: hiddenShown }}
+                components={{ count: <span className={styles.sectionCount} /> }}
+              />
+            </button>
+          )}
         </div>
         {visibleRows.length === 0 || visibleAccounts.length === 0 ? (
           <SectionState kind="no-rows">
@@ -251,6 +333,13 @@ export function ModelsHubSection({
             failed={failed}
             onStage={draft.stage}
             onOverflowChange={setOverflowing}
+            hidden={hidden}
+            hiddenOpen={hiddenOpen}
+            onHiddenOpenChange={setHiddenOpen}
+            searching={modelQuery.trim() !== ''}
+            staged={staged}
+            onHide={setModelsHidden}
+            note={apiKeysNote}
           />
         )}
         {saveBar(
@@ -264,9 +353,10 @@ export function ModelsHubSection({
             onDiscard={draft.discard}
           />
         )}
-        <p className={styles.matrixNote}>
-          {t('model_access.api_keys_note')} <Link to="/ai-providers">{t('nav.ai_providers')}</Link>
-        </p>
+        {/* Inside the grid as its last row; here only when no grid is shown. */}
+        {(visibleRows.length === 0 || visibleAccounts.length === 0) && (
+          <p className={styles.matrixNote}>{apiKeysNote}</p>
+        )}
       </>
     );
   };
@@ -324,6 +414,7 @@ export function ModelsHubSection({
 
   return (
     <div
+      ref={sectionRef}
       className={styles.hubBody}
       data-machine="model-inventory"
       data-state={load.status}
