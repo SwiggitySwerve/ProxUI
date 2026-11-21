@@ -20,6 +20,8 @@ export interface SourceStatus {
   state:
     'connecting' | 'replaying' | 'subscribed' | 'backoff' | 'auth-error' | 'paused' | 'stopped';
   lastEventAtMs: number | null;
+  /** When the current subscription reached `subscribed`; null in every other state. */
+  subscribedAtMs: number | null;
   lastActivityAtMs: number | null;
   drainRequests: number;
   drained: number;
@@ -61,6 +63,7 @@ export class UsageCollector {
       instance: source.instanceId,
       state: 'stopped',
       lastEventAtMs: null,
+      subscribedAtMs: null,
       lastActivityAtMs: null,
       drainRequests: 0,
       drained: 0,
@@ -329,11 +332,15 @@ export class UsageCollector {
           await this.labels.refresh(true);
           await this.replay();
           this.status.state = 'subscribed';
+          this.status.subscribedAtMs = this.clock.now();
           this.dropReason = 'subscription-dropped';
           await this.connection.closed;
         } catch (error) {
           if (error instanceof UsageAuthError) this.authRetryAt = this.clock.now() + 60_000;
         } finally {
+          // The session is over: stop reporting it as subscribed before the cleanup awaits.
+          this.status.state = 'backoff';
+          this.status.subscribedAtMs = null;
           this.session.abort();
           this.connection?.close();
           socketLifetime.abort();
