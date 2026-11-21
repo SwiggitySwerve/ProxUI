@@ -32,17 +32,14 @@ describe('hidden models', () => {
   });
 
   test('two external hubs (both id "external") keep separate hidden models', () => {
-    const external = (apiBase: string) => ({
-      instanceId: 'external',
-      authScope: 'external',
-      apiBase,
-    });
+    const external = (apiBase: string) => ({ instanceId: 'external', apiBase });
     expect(hiddenHubId(external('https://a.example/v0/management'))).not.toBe(
       hiddenHubId(external('https://b.example/v0/management'))
     );
-    expect(
-      hiddenHubId({ instanceId: 'claude-primary', authScope: 'deployment', apiBase: 'x' })
-    ).toBe('claude-primary');
+    // The same hub written another way is the same hub.
+    expect(hiddenHubId(external('https://A.example:443/v0/management/'))).toBe(
+      hiddenHubId(external('https://a.example/v0/management'))
+    );
   });
 
   test('hidden ids round-trip through storage; none hidden removes the key', () => {

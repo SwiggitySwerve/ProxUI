@@ -12,6 +12,7 @@ import { Select } from '@/components/ui/Select';
 import { IconCheck, IconChevronDown, IconEye, IconEyeOff } from '@/components/ui/icons';
 import {
   accessCell,
+  pendingAccessChanges,
   type AccessCell,
   type AccessChange,
   type AccessOverrides,
@@ -162,14 +163,13 @@ export function ModelAccessMatrix(props: Props) {
   const accountState = (account: AccountAccess) =>
     combined(rows.map((row) => cellOf(account, row)));
 
-  // A hidden row stays in its band while it has staged switches (on any account, shown or
-  // filtered out) or a search finds it.
+  // A hidden row stays in its band while the draft has a change for it (on any account, shown,
+  // filtered out or unreadable) or a search finds it.
+  const staged = new Set(pendingAccessChanges(inventory, overrides).map((change) => change.model));
   const { shown, collapsed } = arrangeRows(
     rows,
     props.hidden,
-    (row) =>
-      props.searching ||
-      Boolean(combined(inventory.accounts.map((account) => cellOf(account, row)))?.changed)
+    (row) => props.searching || staged.has(row.model)
   );
   // Collapsed rows have nothing staged: "still on" is what the hub serves, as the bands are split.
   const hiddenGroup = { rows: collapsed, ...hiddenSummary(collapsed, isServed) };

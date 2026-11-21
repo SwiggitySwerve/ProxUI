@@ -22,7 +22,7 @@ const hub = inventory();
 const rows = buildMatrix(hub);
 const HIDDEN = 'claude-haiku-4-5';
 
-function grid(hidden: string[]) {
+function grid(hidden: string[], extra: Record<string, unknown> = {}) {
   return render(
     h(
       I18nextProvider,
@@ -43,6 +43,7 @@ function grid(hidden: string[]) {
         searching: false,
         onHide: () => {},
         note: null,
+        ...extra,
       })
     )
   );
@@ -84,5 +85,28 @@ describe('hiding a model changes no count', () => {
     expect(visibleRows).toBe('filterRows(rows, modelQuery, view)');
     expect(section).toContain('const counts = countServed(visibleRows);');
     expect(section).toContain('const models = showsTable ? visibleRows.length : 0;');
+  });
+});
+
+describe('a hidden model with a pending change stays in its band', () => {
+  const overrides = { 'team-a.json': { [HIDDEN]: false } };
+  const collapsed = (html: string) => !html.includes(`data-model="${HIDDEN}"`);
+
+  test('while its account is filtered out of the grid', () => {
+    const accounts = hub.accounts.filter((account) => account.name !== 'team-a.json');
+    expect(collapsed(grid([HIDDEN], { accounts }))).toBe(true);
+    expect(collapsed(grid([HIDDEN], { accounts, overrides }))).toBe(false);
+  });
+
+  test('while its account’s list has become unreadable', () => {
+    const unreadable = {
+      ...hub,
+      accounts: hub.accounts.map((account) =>
+        account.name === 'team-a.json'
+          ? { ...account, ownList: { status: 'unknown' as const, message: 'read failed' } }
+          : account
+      ),
+    };
+    expect(collapsed(grid([HIDDEN], { inventory: unreadable, overrides }))).toBe(false);
   });
 });

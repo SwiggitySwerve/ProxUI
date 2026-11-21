@@ -8,9 +8,14 @@
 export const hiddenStorageKey = (hub: string, provider: string) =>
   `prox:models:hidden:v1:${hub}:${provider}`;
 
-/** A hub's id for the key: every external hub shares the id `external`, so use its address. */
-export const hiddenHubId = (source: { instanceId: string; authScope: string; apiBase: string }) =>
-  source.authScope === 'external' ? source.apiBase : source.instanceId;
+/**
+ * A hub's id for the key: its source id and address, as the source registry tells sources apart
+ * (every external hub has the id `external`). `URL` folds case and default ports.
+ */
+export function hiddenHubId(source: { instanceId: string; apiBase: string }): string {
+  const url = new URL(source.apiBase);
+  return `${source.instanceId}@${url.origin}${url.pathname.replace(/\/+$/, '')}`;
+}
 
 /** The browser's localStorage, or null where reading it throws (blocked or sandboxed). */
 export function browserStorage(): Storage | null {
