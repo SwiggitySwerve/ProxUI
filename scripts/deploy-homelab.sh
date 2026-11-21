@@ -105,6 +105,10 @@ curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1
 # live, so the deploy still finishes and reports the failure at the end.
 sources_failed=0
 systemctl --user start prox-sources-apply.service || sources_failed=1
+# Only the published routes serve this path. /healthz answers even when the masked baked routes
+# left Nginx with no hub routes at all.
+curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 \
+  --max-time 5 --output /dev/null http://127.0.0.1:18318/prox/routes-revision
 # prox-history restarts after the apply: its watcher only adds sources, so a baked source this
 # deploy changed or removed reaches it only through a start that reads the new manifest.
 systemctl --user restart prox-history.service

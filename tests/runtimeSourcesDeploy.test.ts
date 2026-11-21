@@ -22,7 +22,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function deploy(options: { seeded?: boolean; applyFails?: boolean } = {}) {
+function deploy(options: { seeded?: boolean; applyFails?: boolean; routesMissing?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'prox-deploy-'));
   roots.push(root);
   const home = join(root, 'home');
@@ -59,7 +59,9 @@ function deploy(options: { seeded?: boolean; applyFails?: boolean } = {}) {
           ? 'case "$*" in *--seed*) echo "umask $(umask)" >> "$HOME/calls";; esac'
           : name === 'systemctl'
             ? 'if [[ -n "${APPLY_FAILS:-}" && "$*" == "--user start prox-sources-apply.service" ]]; then exit 1; fi'
-            : '';
+            : name === 'curl'
+              ? 'if [[ -n "${ROUTES_MISSING:-}" && "$*" == *routes-revision* ]]; then exit 22; fi'
+              : '';
     writeFileSync(
       join(bin, name),
       `#!/bin/bash\necho "${name} $*" >> "$HOME/calls"\n${extra}\nexit 0\n`
@@ -71,6 +73,7 @@ function deploy(options: { seeded?: boolean; applyFails?: boolean } = {}) {
       HOME: home,
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       ...(options.applyFails ? { APPLY_FAILS: '1' } : {}),
+      ...(options.routesMissing ? { ROUTES_MISSING: '1' } : {}),
     },
   });
   const calls = readFileSync(join(home, 'calls'), 'utf8').trim().split('\n');
@@ -127,7 +130,9 @@ describe('deploy-homelab.sh runtime hub discovery', () => {
     expect(seed).toBeLessThan(prox);
     expect(reload).toBeLessThan(prox);
     expect(prox).toBeLessThan(apply);
-    expect(apply).toBeLessThan(history);
+    const routed = calls.findIndex((call) => call.endsWith('/prox/routes-revision'));
+    expect(apply).toBeLessThan(routed);
+    expect(routed).toBeLessThan(history);
     expect(history).toBeLessThan(path);
   });
 
@@ -149,5 +154,12 @@ describe('deploy-homelab.sh runtime hub discovery', () => {
     );
     expect(calls.at(-1)).toBe('systemctl --user enable --now prox-sources.path');
     expect(existsSync(join(home, '.config/systemd/user/prox-sources.path'))).toBe(true);
+  });
+
+  test('Nginx without published routes fails the deploy even though /healthz answers', () => {
+    const { result, calls } = deploy({ routesMissing: true });
+    expect(result.exitCode).not.toBe(0);
+    expect(calls).toContain('systemctl --user start prox-sources-apply.service');
+    expect(calls).not.toContain('systemctl --user restart prox-history.service');
   });
 });
