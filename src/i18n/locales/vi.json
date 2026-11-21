@@ -3172,5 +3172,27 @@
     "unreported_spent_limit": "Chưa báo cáo số đã chi và hạn mức",
     "unreported_spent": "Chưa báo cáo số đã chi",
     "unreported_limit": "Chưa báo cáo hạn mức"
+  },
+  "provider_catalog": {
+    "awaiting_auth": "Đang chờ xác thực",
+    "awaiting_auth_desc": "Đã phát hiện trên hub này. Đăng nhập hoặc tải lên thông tin xác thực để kích hoạt trong Tệp xác thực và Quản lý hạn mức.",
+    "connect_action": "Đăng nhập",
+    "upload_action": "Tải lên thông tin xác thực",
+    "lifecycle_active": "Đang hoạt động",
+    "lifecycle_disabled": "Đã tắt",
+    "lifecycle_needs_attention": "Cần chú ý",
+    "unpooled_section_title": "Nhà cung cấp đã phát hiện (chưa gộp nhóm)",
+    "unpooled_section_help": "Các tài khoản đã xác thực có dữ liệu hạn mức hiển thị ở đây cho đến khi bạn chọn đưa vào nhóm dự báo.",
+    "awaiting_auth_section_title": "Đang chờ xác thực",
+    "awaiting_auth_section_help": "Các nhà cung cấp do hub công bố nhưng chưa có thông tin xác thực.",
+    "opt_in_pool": "Thêm vào nhóm hạn mức",
+    "opt_out_pool": "Xóa khỏi nhóm",
+    "pool_profile_title": "Cấu hình nhóm hạn mức",
+    "pool_profile_weekly": "Cửa sổ hàng tuần",
+    "pool_profile_five_hour": "Cửa sổ 5 giờ",
+    "pool_profile_none": "Không có",
+    "pool_profile_units": "Đơn vị gói cơ bản (1 đơn vị = 100 điểm)",
+    "pool_profile_save": "Lưu cấu hình nhóm",
+    "no_quota_reader": "Đã xác thực · không có trình đọc hạn mức"
   }
 }

@@ -3166,5 +3166,27 @@
     "unreported_spent_limit": "사용액과 한도가 보고되지 않음",
     "unreported_spent": "사용액이 보고되지 않음",
     "unreported_limit": "한도가 보고되지 않음"
+  },
+  "provider_catalog": {
+    "awaiting_auth": "인증 대기 중",
+    "awaiting_auth_desc": "이 허브에서 감지되었습니다. 로그인하거나 자격 증명을 업로드하여 인증 파일 및 할당량 관리에서 활성화하세요.",
+    "connect_action": "로그인",
+    "upload_action": "자격 증명 업로드",
+    "lifecycle_active": "활성",
+    "lifecycle_disabled": "비활성화됨",
+    "lifecycle_needs_attention": "주의 필요",
+    "unpooled_section_title": "감지된 공급자(풀 미포함)",
+    "unpooled_section_help": "할당량 데이터가 있는 인증 계정은 풀 예측에 포함하도록 선택하기 전까지 여기에 표시됩니다.",
+    "awaiting_auth_section_title": "인증 대기 중",
+    "awaiting_auth_section_help": "허브에서 광고하지만 아직 자격 증명이 없는 공급자입니다.",
+    "opt_in_pool": "할당량 풀에 추가",
+    "opt_out_pool": "풀에서 제거",
+    "pool_profile_title": "할당량 풀 구성",
+    "pool_profile_weekly": "주간 창",
+    "pool_profile_five_hour": "5시간 창",
+    "pool_profile_none": "없음",
+    "pool_profile_units": "기본 플랜 단위(1단위 = 100포인트)",
+    "pool_profile_save": "풀 설정 저장",
+    "no_quota_reader": "인증됨 · 할당량 리더 없음"
   }
 }

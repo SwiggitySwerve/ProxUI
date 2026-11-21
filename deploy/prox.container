@@ -7,6 +7,8 @@ Wants=network-online.target
 Image=localhost/prox:dev
 ContainerName=prox
 Network=host
+# Baked routes and discovery are the default. Runtime hub discovery overlays them from a drop-in
+# the operator adds (docs/PROX-SETUP.md, "Runtime hub discovery"); nothing is mounted here.
 
 [Service]
 Restart=always

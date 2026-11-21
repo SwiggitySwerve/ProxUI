@@ -1,4 +1,4 @@
-import type { AccountResets, PoolProviderId } from '../../src/domain/quotaPool/types';
+import type { AccountResets, BuiltInPoolProviderId } from '../../src/domain/quotaPool/types';
 import {
   anthropicResetGrantBlocker,
   parseAnthropicResetGrantStatus,
@@ -9,7 +9,7 @@ import { isRecord } from '../../src/utils/helpers';
 
 /** Missing or malformed reset data must not replace the last successful reading. */
 export function readAccountResets(
-  provider: PoolProviderId,
+  provider: BuiltInPoolProviderId,
   body: unknown,
   observedAtMs: number
 ): AccountResets | null {

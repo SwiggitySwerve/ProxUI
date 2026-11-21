@@ -10,6 +10,7 @@ import { copyToClipboard } from '@/utils/clipboard';
 import { getQuotaCacheKey } from '@/utils/quota/identity';
 import {
   QUOTA_PROVIDER_TYPES,
+  getAuthFileIcon,
   getTypeLabel,
   isRuntimeOnlyAuthFile,
   type AuthFileQuotaFilter,
@@ -22,6 +23,10 @@ import { AuthFileDetailsSheet } from '@/features/authFiles/components/AuthFileDe
 import { getAuthFileRefreshKey } from '@/features/authFiles/manualRefresh';
 import { AuthFileRefreshResults } from '@/features/authFiles/components/AuthFileRefreshResults';
 import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';
+import { AwaitingAuthCard } from '@/features/authFiles/components/AwaitingAuthCard';
+import { awaitingMatchesFilters, catalogProviderKey } from '@/features/authFiles/awaitingProviders';
+import { resolvePluginAssetURL } from '@/features/plugins/pluginResources';
+import type { ProviderCatalogEntry } from '@/domain/providerCatalog';
 import { BatchActionBar } from '@/features/authFiles/components/BatchActionBar';
 import { invalidateAuthFileDerivedCaches } from '@/features/authFiles/cacheInvalidation';
 import { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';
@@ -55,6 +60,7 @@ import { useAuthFilesSource, useAuthFilesNotifications } from './AuthFilesSource
 import styles from './AuthFilesPage.module.scss';
 
 const SKELETON_CARD_COUNT = 6;
+const NO_AWAITING: readonly ProviderCatalogEntry[] = [];
 /** First-render cascade budget for cards, the same 360 ms vocabulary as useRevealGroup. */
 const CARD_ENTRANCE_BUDGET_MS = 360;
 
@@ -185,6 +191,7 @@ export function AuthFilesSourceContent({
   registerUpload,
   registerQuotaRefresh,
   onAnswer,
+  awaiting = NO_AWAITING,
 }: {
   hidden: boolean;
   pageEmpty: boolean;
@@ -194,6 +201,8 @@ export function AuthFilesSourceContent({
   registerUpload?: RegisterUpload;
   registerQuotaRefresh?: RegisterQuotaRefresh;
   onAnswer?: ReportAnswer;
+  /** Providers the hub's catalog lists with no credential here (see awaitingProviders.ts). */
+  awaiting?: readonly ProviderCatalogEntry[];
 }) {
   const { t } = useTranslation();
   const sourceScope = useAuthFilesSource();
@@ -539,8 +548,15 @@ export function AuthFilesSourceContent({
       </Button>
     </div>
   );
-  const isFirstRunEmpty = listState === 'empty';
-  const isNoResults = !loading && files.length > 0 && pageItems.length === 0;
+  // Placeholders take the place of the empty states: they say what to do next more precisely.
+  const shownAwaiting = awaiting.filter((entry) => awaitingMatchesFilters(entry, filters));
+  const isFirstRunEmpty = listState === 'empty' && shownAwaiting.length === 0;
+  const isNoResults =
+    !loading && files.length > 0 && pageItems.length === 0 && shownAwaiting.length === 0;
+  const openOAuth = () =>
+    navigate(`/oauth?source=${encodeURIComponent(instanceId)}`, {
+      state: { sourceOwner: sourceScope.session.owner },
+    });
   const linkState = { fromAuthFiles: true, sourceOwner: sourceScope.session.owner };
 
   const gridClasses = [
@@ -729,15 +745,7 @@ export function AuthFilesSourceContent({
                 >
                   {t('auth_files.upload_button')}
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    navigate(`/oauth?source=${encodeURIComponent(instanceId)}`, {
-                      state: { sourceOwner: sourceScope.session.owner },
-                    })
-                  }
-                >
+                <Button variant="ghost" size="sm" onClick={openOAuth}>
                   {t('auth_files.empty_oauth_link')}
                 </Button>
               </div>
@@ -792,6 +800,39 @@ export function AuthFilesSourceContent({
           );
         })
       )}
+
+      {!loading &&
+        listState !== 'error' &&
+        shownAwaiting.map((entry) => {
+          const key = catalogProviderKey(entry);
+          return (
+            <div key={`awaiting:${key}`} className={styles.providerGroup}>
+              <div className={styles.providerHeader}>
+                <h3 className={styles.providerHeading}>
+                  {t('auth_files.unified_provider_heading', {
+                    provider: entry.displayName,
+                    count: 0,
+                  })}
+                </h3>
+              </div>
+              <div className={styles.grid}>
+                <AwaitingAuthCard
+                  label={entry.displayName}
+                  iconSrc={
+                    getAuthFileIcon(key, resolvedTheme) ??
+                    (entry.logo
+                      ? resolvePluginAssetURL(entry.logo, sourceScope.source.apiBase)
+                      : null)
+                  }
+                  compact={filters.compactMode}
+                  onSignIn={entry.oauth ? openOAuth : null}
+                  onUpload={handleUploadClick}
+                  disabled={groupActionsDisabled || uploading}
+                />
+              </div>
+            </div>
+          );
+        })}
 
       {!loading && sorted.length > pageSize && (
         <div className={styles.pagination}>

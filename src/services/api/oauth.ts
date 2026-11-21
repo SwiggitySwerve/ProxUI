@@ -31,12 +31,16 @@ export interface OAuthCancelResponse {
 
 const WEBUI_SUPPORTED = new Set<string>(['codex', 'claude', 'antigravity', 'xai', 'devin']);
 
-const normalizeProviderForManagementPath = (provider: string): string => {
-  const key = normalizeManagementOAuthProviderKey(provider);
+/**
+ * The provider key the OAuth routes take. Built-in callers get the aliases folded (muse → meta,
+ * anthropic → claude); `exact` keeps a catalog plugin's own id, which may look like an alias.
+ */
+const normalizeProviderForManagementPath = (provider: string, exact = false): string => {
+  const key = exact ? provider : normalizeManagementOAuthProviderKey(provider);
   if (!isManagementOAuthProviderKey(key)) {
     throw new Error('Invalid OAuth provider');
   }
-  return key === 'anthropic' ? 'claude' : key;
+  return exact || key !== 'anthropic' ? key : 'claude';
 };
 
 export interface SiwcBindResponse {
@@ -52,10 +56,15 @@ function buildOAuthApi(client: ManagementTransport) {
     startSiwcBind: (name: string, signal?: AbortSignal) =>
       client.post<SiwcBindResponse>('/oauth/siwc/bind', { name }, signal ? { signal } : undefined),
 
-    startAuth: (provider: string, signal?: AbortSignal) => {
-      const providerKey = normalizeProviderForManagementPath(provider);
+    /** `webui` comes from the hub's provider catalog for providers this UI does not list. */
+    startAuth: (
+      provider: string,
+      signal?: AbortSignal,
+      options?: { webui?: boolean; exact?: boolean }
+    ) => {
+      const providerKey = normalizeProviderForManagementPath(provider, options?.exact);
       const params: Record<string, string | boolean> = { provider: providerKey };
-      if (WEBUI_SUPPORTED.has(providerKey)) {
+      if (options?.webui === true || WEBUI_SUPPORTED.has(providerKey)) {
         params.is_webui = true;
       }
       return client.get<OAuthStartResponse>('/oauth/auth-url', {
@@ -76,8 +85,13 @@ function buildOAuthApi(client: ManagementTransport) {
         ...(signal ? { signal } : {}),
       }),
 
-    submitCallback: (provider: string, redirectUrl: string, signal?: AbortSignal) => {
-      const providerKey = normalizeProviderForManagementPath(provider);
+    submitCallback: (
+      provider: string,
+      redirectUrl: string,
+      signal?: AbortSignal,
+      options?: { exact?: boolean }
+    ) => {
+      const providerKey = normalizeProviderForManagementPath(provider, options?.exact);
       return client.post<OAuthCallbackResponse>(
         '/oauth/callback',
         { provider: providerKey, redirect_url: redirectUrl },

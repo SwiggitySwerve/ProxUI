@@ -20,6 +20,12 @@ timeline call it; do not compare window ids to `'seven-day'` or `'weekly'` elsew
 Same-period model windows (Fable, Opus, Sonnet, Codex Spark) are never the weekly lane.
 `tests/quotaLanes.test.ts` fails when a new id appears without a lane.
 
+`normalized.ts` decodes the hub's normalized quota response for discovered providers.
+Legacy buckets can use the window name when it uniquely identifies a bucket. A missing
+or ambiguous ID leaves the bucket available for display only. A pool profile can select
+an account-wide bucket for a lane when its reported period matches that lane, or when
+the hub leaves the period unspecified. A model-scoped bucket is display only.
+
 A Codex payload whose only account-wide window is the weekly one (`primary_window` of 604800 s,
 `secondary_window` null or absent) yields a weekly window and no `five-hour` window; the collector
 records the five-hour lane as an explicit missing observation, and `server/quota/RULES.md` says

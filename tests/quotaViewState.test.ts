@@ -15,10 +15,10 @@ describe('quota view state in the address', () => {
         new URLSearchParams('provider=codex&window=five-hour&mode=burn&lookback=6&future=0.5')
       )
     ).toEqual({ provider: 'codex', window: 'five-hour', mode: 'burn', lookback: 6, future: 0.5 });
-    // Unknown or malformed values fall back to the default instead of reaching the server.
+    // Malformed values fall back to the default.
     expect(
       readViewState(
-        new URLSearchParams('provider=gemini&window=daily&mode=x&lookback=24&future=9&offset=3')
+        new URLSearchParams('provider=Gemini!&window=daily&mode=x&lookback=24&future=9&offset=3')
       )
     ).toEqual(DEFAULT_VIEW_STATE);
     expect(readViewState(new URLSearchParams('future=0')).future).toBe(0);

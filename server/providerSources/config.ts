@@ -5,8 +5,13 @@ import {
   validateSourceManifest,
 } from '../../src/domain/providerSources/manifest';
 
-export function loadSourceManifest(path: string) {
-  const manifest = validateSourceManifest(JSON.parse(readFileSync(path, 'utf8')));
+/** Validation rebuilds every object in a fixed key order, so the hash depends on content alone. */
+export function describeSourceManifest(input: unknown) {
+  const manifest = validateSourceManifest(input);
   const revision = createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
   return { manifest, revision, discovery: publicSourceDiscovery(manifest, revision) };
+}
+
+export function loadSourceManifest(path: string) {
+  return describeSourceManifest(JSON.parse(readFileSync(path, 'utf8')));
 }

@@ -11,10 +11,12 @@ import { weeklyOnlyAccountIds } from './quota/values';
 import { buildInventory, inventoryVersion, type InventorySourceStatus } from './quota/inventory';
 import type { ClaudeUsageSnapshot } from '../src/types/quota';
 import { DAY_MS, HOUR_MS, type InventoryChange } from './quota/types';
+import { parsePoolProfile, parsePoolProfileKey, validProfileWindows } from './quota/poolProfiles';
 
 /** `GET /v1/inventory` re-reads the sources when the last read is older than this. */
 const INVENTORY_FRESH_MS = 5000;
 const MAX_SYNC_BODY_BYTES = 256 * 1024;
+const MAX_PROFILE_BODY_BYTES = 32 * 1024;
 const MAX_DELETED_NAMES = 200;
 const MAX_NAME_LENGTH = 1024;
 const SYNC_REASONS = ['add', 'delete', 'change'] as const;
@@ -26,7 +28,12 @@ interface CollectorState extends Omit<CollectionState, 'historyStartedAtMs'> {
   accountRetryAtMs?(accountId: string): number | null;
   balances?: ReadonlyMap<string, Pick<ClaudeUsageSnapshot, 'extraUsage' | 'dollarWindows'>>;
   credits?: ReadonlyMap<string, { balance: string | null; unlimited: boolean }>;
-  syncInventory(options?: { deletedNames?: readonly string[] }): Promise<InventoryChange>;
+  observedAt?: ReadonlyMap<string, number>;
+  discoveredPlanLabels?: ReadonlyMap<string, string>;
+  syncInventory(options?: {
+    deletedNames?: readonly string[];
+    instanceId?: string;
+  }): Promise<InventoryChange>;
   pollAdded(accountIds: readonly string[]): Promise<void>;
   inventorySources: readonly InventorySourceStatus[];
   inventorySyncedAtMs: number | null;
@@ -78,7 +85,11 @@ function etagMatches(header: string | null, etag: string): boolean {
     .some((candidate) => candidate === '*' || candidate === etag);
 }
 
-type SyncRequest = { reason: (typeof SYNC_REASONS)[number]; deletedNames: string[] };
+type SyncRequest = {
+  reason: (typeof SYNC_REASONS)[number];
+  deletedNames: string[];
+  instanceId?: string;
+};
 function parseSyncRequest(text: string): SyncRequest | null {
   let body: unknown;
   try {
@@ -88,14 +99,23 @@ function parseSyncRequest(text: string): SyncRequest | null {
   }
   if (!isRecord(body) || !SYNC_REASONS.some((reason) => reason === body.reason)) return null;
   const names = body.deletedNames ?? [];
+  const instanceId = body.instanceId;
   if (
     !Array.isArray(names) ||
     names.length > MAX_DELETED_NAMES ||
-    names.some((name) => typeof name !== 'string' || !name.trim() || name.length > MAX_NAME_LENGTH)
+    names.some(
+      (name) => typeof name !== 'string' || !name.trim() || name.length > MAX_NAME_LENGTH
+    ) ||
+    (instanceId !== undefined &&
+      (typeof instanceId !== 'string' || !instanceId || instanceId.length > 64))
   ) {
     return null;
   }
-  return { reason: body.reason as SyncRequest['reason'], deletedNames: names as string[] };
+  return {
+    reason: body.reason as SyncRequest['reason'],
+    deletedNames: names as string[],
+    instanceId,
+  };
 }
 
 export function createHandler({
@@ -124,6 +144,76 @@ export function createHandler({
       if (!authorized(request, keyFile)) return json({ error: 'Unauthorized' }, 401);
     } catch {
       return json({ error: 'Management authentication unavailable' }, 503);
+    }
+    if (url.pathname === '/v1/pool-profiles') {
+      return (async () => {
+        try {
+          if (request.method === 'GET') return json({ profiles: store.listPoolProfiles() });
+          if (request.method === 'PUT') {
+            let profile: ReturnType<typeof parsePoolProfile> = null;
+            try {
+              if (request.body) {
+                profile = parsePoolProfile(
+                  JSON.parse(await readText(request.body, MAX_PROFILE_BODY_BYTES))
+                );
+              }
+            } catch {
+              return json({ error: 'Invalid quota pool profile' }, 400);
+            }
+            if (
+              !profile ||
+              !collector.sources?.some((source) => source.instanceId === profile.instanceId)
+            ) {
+              return json({ error: 'Invalid quota pool profile' }, 400);
+            }
+            const provider = store
+              .listProviderCatalog(profile.instanceId)
+              .find((entry) => entry.provider === profile.provider);
+            if (!provider) {
+              return json({ error: 'Unknown provider for this instance' }, 404);
+            }
+            const accounts = store
+              .listAccounts()
+              .filter(
+                (account) =>
+                  account.instanceId === profile.instanceId &&
+                  account.provider === profile.provider &&
+                  !account.retired
+              );
+            const windows = accounts.flatMap(({ id }) => collector.windows?.get(id) ?? []);
+            if (
+              profile.enabled &&
+              (!provider.quotaSupported ||
+                !validProfileWindows(profile, windows, store.getPoolProfile(profile)))
+            )
+              return json({ error: 'Unknown or unsupported quota window' }, 400);
+            const saved = store.putPoolProfile(profile, now());
+            if (saved.enabled)
+              void collector.pollAdded(accounts.map(({ id }) => id)).catch(() => {});
+            return json({ profile: saved });
+          }
+          if (request.method === 'DELETE') {
+            const instances = url.searchParams.getAll('instanceId');
+            const providers = url.searchParams.getAll('provider');
+            const key = parsePoolProfileKey({ instanceId: instances[0], provider: providers[0] });
+            if (
+              !key ||
+              instances.length !== 1 ||
+              providers.length !== 1 ||
+              (!collector.sources?.some((source) => source.instanceId === key.instanceId) &&
+                !store.getPoolProfile(key))
+            ) {
+              return json({ error: 'Invalid quota pool profile identity' }, 400);
+            }
+            store.deletePoolProfile(key);
+            return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
+          }
+          return json({ error: 'Not found' }, 404);
+        } catch {
+          console.error('Quota pool profile request failed');
+          return json({ error: 'Quota pool profiles are temporarily unavailable' }, 503);
+        }
+      })();
     }
     if (url.pathname === '/v1/refresh' && request.method === 'POST') {
       // A body naming an account asks for that one account now; anything else (no body, an
@@ -266,6 +356,7 @@ export function createHandler({
           // Only an explicit delete may purge by name; any other reason just reconciles.
           const change = await collector.syncInventory({
             deletedNames: parsed.reason === 'delete' ? parsed.deletedNames : [],
+            ...(parsed.instanceId === undefined ? {} : { instanceId: parsed.instanceId }),
           });
           void collector.pollAdded(change.added).catch(() => {});
           if (collector.inventorySources.every((source) => source.state === 'unavailable')) {
@@ -341,7 +432,7 @@ export function createHandler({
           (options.offsetDays - 3) * DAY_MS -
           6 * HOUR_MS
       );
-      const firstSamples = store.firstSampleTimes();
+      const firstSamples = store.firstSampleTimes(options.window);
       const accounts = store.listAccounts();
       return json({
         ...buildDashboard(
@@ -362,6 +453,12 @@ export function createHandler({
             resets: collector.resets,
             billing: collector.billing,
             weeklyOnly: weeklyOnlyAccountIds(store.latestSamples()),
+            discovery: {
+              catalog: store.listProviderCatalog(),
+              poolProfiles: store.listPoolProfiles(),
+              observedAt: collector.observedAt,
+              planLabels: collector.discoveredPlanLabels,
+            },
           }
         ),
         inventoryVersion: inventoryVersion(accounts),
