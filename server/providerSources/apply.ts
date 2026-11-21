@@ -1,5 +1,6 @@
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { DeploymentSource } from '../../src/domain/providerSources/types';
 import { describeSourceManifest, loadSourceManifest } from './config';
 import {
   parseInstancesFile,
@@ -23,6 +24,11 @@ export interface ApplyOptions extends Omit<ResolveOptions, 'previous' | 'discove
   readonly validate: (stagingDir: string) => Promise<void>;
   /** Makes the running Nginx load the routes; rejects when it did not. */
   readonly reload: () => Promise<void>;
+  /**
+   * Resolves once the running Nginx routes each run-time hub to the instance it was admitted as
+   * (a reload is acknowledged before the workers switch); rejects when it does not in time.
+   */
+  readonly verify: (admitted: readonly DeploymentSource[]) => Promise<void>;
 }
 
 export interface ApplyResult {
@@ -42,8 +48,9 @@ async function readOptional(path: string): Promise<string | null> {
 
 /**
  * Resolves the effective manifest and publishes it with its routes and discovery. Everything is
- * staged and checked first; discovery is renamed into place last, so a browser never learns of a
- * hub Nginx cannot route to. Any failure leaves the runtime directory as it was.
+ * staged and checked first; the routes go live, the running Nginx is confirmed to route every hub,
+ * and only then are the manifest and discovery renamed into place, so a browser never learns of a
+ * hub Nginx cannot route to. Any failure puts the previous routes and manifest back and reloads.
  */
 export async function applyRuntimeSources(options: ApplyOptions): Promise<ApplyResult> {
   const live = (name: string) => join(options.runtimeDir, name);
@@ -79,21 +86,32 @@ export async function applyRuntimeSources(options: ApplyOptions): Promise<ApplyR
       await chmod(staged(name), mode);
     }
     await options.validate(staging);
-    const previousRoutes = current[1];
+    const [previousManifest, previousRoutes] = current;
+    /** Puts a live file back as it was before this run (absent stays absent). */
+    const restore = async (name: string, content: string | null, mode: number) => {
+      if (content === null) return rm(live(name), { force: true });
+      await writeFile(staged(`${name}.restore`), content, { mode });
+      await rename(staged(`${name}.restore`), live(name));
+    };
     await rename(staged(RUNTIME_ROUTES), live(RUNTIME_ROUTES));
+    let reloaded = false;
     try {
       await options.reload();
+      reloaded = true;
+      const baked = new Set(base.sources.map((source) => source.instanceId));
+      await options.verify(
+        resolved.manifest.sources.filter((source) => !baked.has(source.instanceId))
+      );
+      // prox-history follows the manifest and browsers follow discovery, so discovery goes last.
+      await rename(staged(EFFECTIVE_MANIFEST), live(EFFECTIVE_MANIFEST));
+      await rename(staged(RUNTIME_DISCOVERY), live(RUNTIME_DISCOVERY));
     } catch (error) {
-      // Nginx is still serving its old configuration; put back the file that matches it.
-      if (previousRoutes === null) await rm(live(RUNTIME_ROUTES), { force: true });
-      else {
-        await writeFile(staged(RUNTIME_ROUTES), previousRoutes, { mode: 0o644 });
-        await rename(staged(RUNTIME_ROUTES), live(RUNTIME_ROUTES));
-      }
+      // Return to the previous set: routes, the manifest if it was already renamed, and Nginx.
+      await restore(RUNTIME_ROUTES, previousRoutes, 0o644);
+      await restore(EFFECTIVE_MANIFEST, previousManifest, 0o600);
+      if (reloaded) await options.reload();
       throw error;
     }
-    await rename(staged(EFFECTIVE_MANIFEST), live(EFFECTIVE_MANIFEST));
-    await rename(staged(RUNTIME_DISCOVERY), live(RUNTIME_DISCOVERY));
     return { ...result, changed: true };
   } finally {
     await rm(staging, { recursive: true, force: true });

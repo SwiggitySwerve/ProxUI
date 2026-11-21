@@ -500,6 +500,8 @@ export class QuotaCollector {
       seen.add(source.instanceId);
       additions.push(collectionSource(source));
     }
+    // Removals and edits wait for a restart, so a revision that adds nothing is not applied.
+    if (!additions.length) return;
     this.collectionSources = [...this.collectionSources, ...additions];
     this.appliedRevision = revision;
   }

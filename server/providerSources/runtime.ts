@@ -1,5 +1,4 @@
 import { readFile } from 'node:fs/promises';
-import { isAbsolute, posix, relative } from 'node:path';
 import { parseProviderCatalog } from '../../src/domain/providerCatalog/validate';
 import { validateSourceManifest } from '../../src/domain/providerSources/manifest';
 import { canonicalCredentialProvider } from '../../src/domain/providerSources/ownership';
@@ -27,8 +26,8 @@ export interface HubCandidate {
   readonly upstreamOrigin: string;
   readonly label?: string;
   readonly authScope?: string;
-  /** Host path of the hub's own management key. */
-  readonly managementKeyFile?: string;
+  /** Set when the entry names its own key: such a hub must be added to the baked manifest. */
+  readonly ownKey: boolean;
 }
 
 export interface InstancesFile {
@@ -49,10 +48,6 @@ export interface ResolveOptions {
   readonly previous?: SourceManifest | null;
   /** Host file holding the key the base manifest calls `history.managementKeyFile`. */
   readonly historyKeyFile: string;
-  /** Host directory a hub's own key file must be in. */
-  readonly keyRoot: string;
-  /** Where prox-history sees `keyRoot`; the manifest records key files under this path. */
-  readonly keyMount: string;
   /** Passed to the route generator: where Nginx finds the discovery published with the routes. */
   readonly discoveryFile?: string;
   readonly fetcher?: typeof fetch;
@@ -110,7 +105,7 @@ export function parseInstancesFile(raw: unknown): InstancesFile {
         upstreamOrigin: entry.base_url,
         label: entry.label as string | undefined,
         authScope: entry.auth_scope as string | undefined,
-        managementKeyFile: entry.management_key_file as string | undefined,
+        ownKey: entry.management_key_file !== undefined,
       });
     }
   }
@@ -164,18 +159,8 @@ async function probeHub(
         ? { state: 'verified', acceptedProviders: parsed.acceptedProviders }
         : mismatch;
     }
-    if (catalog.status !== 404)
-      return { state: 'unreachable', reason: `Hub answered ${catalog.status}` };
-    // A hub older than the provider catalog still stamps each credential with its instance.
-    const credentials = await get('/credentials?page=1&page_size=1');
-    if (credentials.status !== 200)
-      return { state: 'unreachable', reason: `Hub answered ${credentials.status}` };
-    const files = isRecord(credentials.body) ? credentials.body.files : null;
-    if (!Array.isArray(files) || !files.length)
-      return { state: 'unreachable', reason: 'Hub lists no credential to prove its instance_id' };
-    return files.every((file) => isRecord(file) && file.instance_id === claimedId)
-      ? { state: 'verified', acceptedProviders: null }
-      : mismatch;
+    // Only the provider catalog proves an identity; a hub without it is added to the baked manifest.
+    return { state: 'unreachable', reason: `Hub answered ${catalog.status} to the catalog probe` };
   } catch {
     return { state: 'unreachable', reason: 'Hub did not answer the identity probe' };
   }
@@ -183,12 +168,12 @@ async function probeHub(
 
 type Planned = Omit<DeploymentSource, 'providers'>;
 
-/** Decides the key and scope a candidate would use, before anything is sent to it. */
-function planCandidate(
-  base: SourceManifest,
-  candidate: HubCandidate,
-  options: ResolveOptions
-): { source: Planned; hostKeyFile: string } | string {
+/**
+ * Decides the scope a candidate would use, before anything is sent to it. Run-time admission takes
+ * only loopback hubs that accept the shared management key: a remote hub, or one with its own key,
+ * needs transport and origin isolation decided by an operator, so it goes in the baked manifest.
+ */
+function planCandidate(base: SourceManifest, candidate: HubCandidate): Planned | string {
   let url: URL;
   try {
     url = new URL(candidate.upstreamOrigin);
@@ -203,33 +188,15 @@ function planCandidate(
     aliases: [],
     upstreamOrigin: candidate.upstreamOrigin,
   };
-  const ownKey = candidate.managementKeyFile;
-  if (ownKey !== undefined) {
-    const inRoot = relative(options.keyRoot, ownKey);
-    if (!isAbsolute(ownKey) || !inRoot || inRoot.startsWith('..') || isAbsolute(inRoot))
-      return 'management_key_file must be inside the trusted key directory';
-    if (!candidate.authScope) return 'A hub with its own key must declare auth_scope';
-    return {
-      source: {
-        ...source,
-        authScope: candidate.authScope,
-        managementKeyFile: posix.join(options.keyMount, inRoot),
-      },
-      hostKeyFile: ownKey,
-    };
-  }
-  if (!LOOPBACK_HOSTS.has(url.hostname))
-    return 'A remote hub must declare management_key_file and auth_scope';
+  if (candidate.ownKey || !LOOPBACK_HOSTS.has(url.hostname))
+    return 'Only loopback hubs on the shared key are admitted at run time; add this hub to provider-sources.json';
   // The probe proves this hub accepts the shared key, which is what sharing the scope asserts.
   const authScope =
     candidate.authScope ??
     base.sources.find((entry) => entry.managementKeyFile === base.history.managementKeyFile)
       ?.authScope;
   if (!authScope) return 'No baked source shares the history key; declare auth_scope';
-  return {
-    source: { ...source, authScope, managementKeyFile: base.history.managementKeyFile },
-    hostKeyFile: options.historyKeyFile,
-  };
+  return { ...source, authScope, managementKeyFile: base.history.managementKeyFile };
 }
 
 /** Why `source` cannot join `sources`, or null. Sources already present always win a conflict. */
@@ -288,20 +255,27 @@ export async function resolveEffectiveManifest(
     instances.candidates
       .filter((candidate) => !baseIds.has(candidate.id))
       .map(async (candidate) => {
-        const plan = planCandidate(base, candidate, options);
+        const plan = planCandidate(base, candidate);
         if (typeof plan === 'string') return { candidate, failure: plan };
-        const failure = conflict(base, base.sources, plan.source);
+        // An open browser session stays bound to a hub's route, so an admitted hub keeps its address.
+        const was = prior.get(candidate.id);
+        if (was && was.upstreamOrigin !== plan.upstreamOrigin)
+          return {
+            candidate,
+            failure: 'An admitted hub keeps its address; remove its entry, apply, then add it again',
+          };
+        const failure = conflict(base, base.sources, plan);
         if (failure) return { candidate, failure };
         let key: string;
         try {
-          key = (await readKey(plan.hostKeyFile)).trim();
+          key = (await readKey(options.historyKeyFile)).trim();
         } catch {
           key = '';
         }
         if (!key || key.length > MAX_KEY_LENGTH)
           return { candidate, failure: 'Management key file is unreadable' };
         const probe = await probeHub(
-          plan.source.upstreamOrigin,
+          plan.upstreamOrigin,
           key,
           candidate.id,
           fetcher,
@@ -326,28 +300,29 @@ export async function resolveEffectiveManifest(
     else outcomes.push({ id, state: 'removed' });
   }
   for (const id of listed) if (baseIds.has(id)) outcomes.push({ id, state: 'base' });
-  const membersFirst = [...probed].sort(
-    (a, b) => Number(!prior.has(a.candidate.id)) - Number(!prior.has(b.candidate.id))
-  );
-  for (const { candidate, failure, plan, probe } of membersFirst) {
-    if (failure !== undefined) {
-      fail(candidate.id, failure);
-      continue;
-    }
-    if (probe.state !== 'verified') {
+  // Members that failed keep their last-known-good place first, so a healthy hub cannot take a
+  // provider from one that is only offline; then members, then newcomers, are admitted.
+  for (const { candidate, failure, plan, probe } of probed) {
+    if (failure !== undefined) fail(candidate.id, failure);
+    else if (probe.state !== 'verified')
       // Another instance answering at the address this hub was admitted on is not an outage.
-      const replaced =
-        probe.state === 'mismatch' &&
-        prior.get(candidate.id)?.upstreamOrigin === plan.source.upstreamOrigin;
-      fail(candidate.id, probe.reason, replaced);
-      continue;
-    }
+      fail(
+        candidate.id,
+        probe.reason,
+        probe.state === 'mismatch' && prior.get(candidate.id)?.upstreamOrigin === plan.upstreamOrigin
+      );
+  }
+  const verified = probed
+    .filter((entry) => entry.failure === undefined && entry.probe.state === 'verified')
+    .sort((a, b) => Number(!prior.has(a.candidate.id)) - Number(!prior.has(b.candidate.id)));
+  for (const { candidate, plan, probe } of verified) {
+    if (plan === undefined || probe?.state !== 'verified') continue;
     const owned = [
       ...new Set(
         (probe.acceptedProviders ?? [candidate.provider]).map(canonicalCredentialProvider)
       ),
     ];
-    const source = { ...plan.source, ...(owned.length ? { providers: owned } : {}) };
+    const source = { ...plan, ...(owned.length ? { providers: owned } : {}) };
     const taken = conflict(base, sources, source);
     if (taken) fail(candidate.id, taken);
     else {

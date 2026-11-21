@@ -363,6 +363,8 @@ describe('discovery and additive collection', () => {
       expect(f.store.listAccounts().map((account) => account.instanceId)).toEqual(['hub-a']);
       expect(f.collector.revision).toBe('rev-2');
       f.collector.applySources([], 'rev-3');
+      // A revision that adds nothing (a removal waits for a restart) is not applied.
+      expect(f.collector.revision).toBe('rev-2');
       f.later();
       await f.collector.refresh();
       expect(f.collector.sources?.map((source) => source.instanceId)).toEqual(['hub-a', 'hub-b']);

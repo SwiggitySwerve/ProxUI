@@ -26,7 +26,6 @@ import { applyRuntimeSources } from '../scripts/prox-sources-apply';
 
 const SHARED_KEY_FILE = '/run/secrets/proxy-management-key';
 const HOST_SHARED_KEY = '/host/proxd/management-key';
-const HOST_KEY_ROOT = '/host/proxd/hub-keys';
 
 function baseInput() {
   const source = (instanceId: string, path: string, provider: string, port: number) => ({
@@ -81,16 +80,10 @@ const legacyHub =
       ? Response.json({ files })
       : new Response('', { status: 404 });
 
-function options(
-  fetcher: typeof fetch,
-  extra: Partial<ResolveOptions> = {},
-  keys: Record<string, string> = {}
-): ResolveOptions {
-  const known: Record<string, string> = { [HOST_SHARED_KEY]: 'shared-key\n', ...keys };
+function options(fetcher: typeof fetch, extra: Partial<ResolveOptions> = {}): ResolveOptions {
+  const known: Record<string, string> = { [HOST_SHARED_KEY]: 'shared-key\n' };
   return {
     historyKeyFile: HOST_SHARED_KEY,
-    keyRoot: HOST_KEY_ROOT,
-    keyMount: '/run/secrets/hub-keys',
     fetcher,
     readKey: async (path) => {
       if (!(path in known)) throw new Error('ENOENT');
@@ -118,7 +111,7 @@ describe('instances.json parsing', () => {
           upstreamOrigin: KIMI,
           label: 'Kimi',
           authScope: undefined,
-          managementKeyFile: undefined,
+          ownKey: false,
         },
       ],
       rejected: [],
@@ -240,26 +233,21 @@ describe('effective manifest admission', () => {
     expect(result.manifest.sources.at(-1)?.providers).toEqual(['kimi']);
   });
 
-  test('a hub older than the catalog is verified through its credentials', async () => {
+  test('a hub older than the catalog is not admitted, even with matching credentials', async () => {
     const { fetcher, calls } = network({
       [KIMI]: legacyHub([{ name: 'a.json', instance_id: 'kimi-primary' }]),
     });
     const result = await resolveEffectiveManifest(base(), instances(kimi), options(fetcher));
-    expect(calls.map((call) => call.url)).toEqual([
-      `${KIMI}/v8/management/providers`,
-      `${KIMI}/v8/management/credentials?page=1&page_size=1`,
-    ]);
-    expect(calls[1].init.redirect).toBe('error');
-    expect(outcome(result, 'kimi-primary')?.state).toBe('admitted');
-    expect(result.manifest.sources.at(-1)?.providers).toEqual(['kimi']);
+    // Only the catalog proves an identity; the credential list is never asked.
+    expect(calls.map((call) => call.url)).toEqual([`${KIMI}/v8/management/providers`]);
+    expect(outcome(result, 'kimi-primary')?.state).toBe('rejected');
+    expect(ids(result.manifest)).toEqual(['codex-primary', 'claude-primary']);
   });
 
   const refused: [string, Hub][] = [
     ['another instance_id', catalog('claude-primary')],
     ['no instance_id', catalog(null)],
-    ['another instance_id on its credentials', legacyHub([{ instance_id: 'other' }])],
-    ['credentials without an instance_id', legacyHub([{ name: 'a.json' }])],
-    ['no credential to prove itself with', legacyHub([])],
+    ['no provider catalog', legacyHub([{ instance_id: 'kimi-primary' }])],
     ['a redirect', () => new Response('', { status: 302, headers: { Location: 'http://x/' } })],
     ['401', () => new Response('', { status: 401 })],
     ['a body that is not a provider catalog', () => Response.json({ instance_id: 'kimi-primary' })],
@@ -279,99 +267,35 @@ describe('effective manifest admission', () => {
     expect(result.revision).toBe(createHash('sha256').update(JSON.stringify(base())).digest('hex'));
   });
 
-  test('a remote hub without its own key and scope is rejected and never contacted', async () => {
+  test('a remote hub, or one naming its own key, is rejected and never contacted', async () => {
     const remote = 'https://hub.example.test';
     const entry = { id: 'far', provider: 'kimi', base_url: remote };
     for (const partial of [
       entry,
       { ...entry, auth_scope: 'far-scope' },
-      { ...entry, management_key_file: `${HOST_KEY_ROOT}/far` },
+      { ...entry, auth_scope: 'far-scope', management_key_file: '/host/proxd/hub-keys/far' },
+      // A loopback hub with its own key is not admitted at run time either.
+      { ...entry, base_url: KIMI, auth_scope: 'own', management_key_file: HOST_SHARED_KEY },
+      { ...entry, base_url: KIMI, management_key_file: '/etc/passwd' },
       // Lookalike loopback addresses are not on the allowlist.
       { ...entry, base_url: 'http://127.0.0.2:8317' },
       { ...entry, base_url: 'http://localhost.example.test:8317' },
     ]) {
-      const { fetcher, calls } = network({ [remote]: catalog('far') });
-      const result = await resolveEffectiveManifest(
-        base(),
-        instances(partial),
-        options(fetcher, {}, { [`${HOST_KEY_ROOT}/far`]: 'far-key' })
-      );
-      expect(outcome(result, 'far')?.state).toBe('rejected');
-      expect(calls).toEqual([]);
-      expect(ids(result.manifest)).toEqual(['codex-primary', 'claude-primary']);
-    }
-  });
-
-  test('a remote hub with its own key and scope is probed with that key only', async () => {
-    const remote = 'https://hub.example.test';
-    const { fetcher, calls } = network({ [remote]: catalog('far', ['kimi']) });
-    const result = await resolveEffectiveManifest(
-      base(),
-      instances({
-        id: 'far',
-        provider: 'kimi',
-        base_url: remote,
-        label: 'Far hub',
-        auth_scope: 'far-scope',
-        management_key_file: `${HOST_KEY_ROOT}/far/key`,
-      }),
-      options(fetcher, {}, { [`${HOST_KEY_ROOT}/far/key`]: 'far-key' })
-    );
-    expect(calls[0].init.headers).toEqual({ Authorization: 'Bearer far-key' });
-    expect(JSON.stringify(calls)).not.toContain('shared-key');
-    expect(result.manifest.sources.at(-1)).toMatchObject({
-      instanceId: 'far',
-      label: 'Far hub',
-      authScope: 'far-scope',
-      upstreamOrigin: remote,
-      managementKeyFile: '/run/secrets/hub-keys/far/key',
-    });
-  });
-
-  test('a hub with its own key cannot join the scope of the shared key', async () => {
-    const remote = 'https://hub.example.test';
-    const { fetcher } = network({ [remote]: catalog('far', ['kimi']) });
-    const result = await resolveEffectiveManifest(
-      base(),
-      instances({
-        id: 'far',
-        provider: 'kimi',
-        base_url: remote,
-        auth_scope: 'homelab-management',
-        management_key_file: `${HOST_KEY_ROOT}/far`,
-      }),
-      options(fetcher, {}, { [`${HOST_KEY_ROOT}/far`]: 'far-key' })
-    );
-    expect(outcome(result, 'far')).toEqual({
-      id: 'far',
-      state: 'rejected',
-      reason: 'auth_scope is already used with a different management key',
-    });
-  });
-
-  test.each([
-    '/host/proxd/management-key',
-    '/host/proxd/hub-keys/../management-key',
-    '/host/proxd/hub-keys',
-    'hub-keys/far',
-    '/etc/passwd',
-  ])('a key file outside the trusted directory is never read: %s', async (file) => {
-    const { fetcher, calls } = network({ [KIMI]: catalog('kimi-primary') });
-    const read: string[] = [];
-    const result = await resolveEffectiveManifest(
-      base(),
-      instances({ ...kimi, auth_scope: 'own', management_key_file: file }),
-      {
+      const { fetcher, calls } = network({ [remote]: catalog('far'), [KIMI]: catalog('far') });
+      const read: string[] = [];
+      const result = await resolveEffectiveManifest(base(), instances(partial), {
         ...options(fetcher),
         readKey: async (path) => {
           read.push(path);
           return 'key';
         },
-      }
-    );
-    expect(outcome(result, 'kimi-primary')?.state).toBe('rejected');
-    expect(read).toEqual([]);
-    expect(calls).toEqual([]);
+      });
+      expect(outcome(result, 'far')?.state).toBe('rejected');
+      expect(outcome(result, 'far')?.reason).toContain('provider-sources.json');
+      expect(calls).toEqual([]);
+      expect(read).toEqual([]);
+      expect(ids(result.manifest)).toEqual(['codex-primary', 'claude-primary']);
+    }
   });
 
   // "anthropic" is the OAuth name of the credential type the baked Claude source owns.
@@ -494,6 +418,47 @@ describe('last-known-good membership', () => {
     expect(result.manifest).toEqual(base());
   });
 
+  test('an admitted hub keeps its address; a moved entry is not probed', async () => {
+    const previous = await admitted();
+    const moved = { ...kimi, base_url: 'http://127.0.0.1:8499' };
+    const { fetcher, calls } = network({ [moved.base_url]: catalog('kimi-primary', ['kimi']) });
+    const result = await resolveEffectiveManifest(
+      base(),
+      instances(moved),
+      options(fetcher, { previous })
+    );
+    expect(calls).toEqual([]);
+    expect(outcome(result, 'kimi-primary')?.state).toBe('retained');
+    expect(result.manifest).toEqual(previous);
+  });
+
+  test('an offline member keeps its provider against a healthy member listed first', async () => {
+    const lima = { id: 'lima', provider: 'lima', base_url: 'http://127.0.0.1:8400' };
+    const first = await resolveEffectiveManifest(
+      base(),
+      instances(kimi, lima),
+      options(
+        network({ [KIMI]: catalog('kimi-primary', ['kimi']), [lima.base_url]: catalog('lima') })
+          .fetcher
+      )
+    );
+    // kimi-primary is offline; lima now claims kimi too and is listed first.
+    const result = await resolveEffectiveManifest(
+      base(),
+      instances(lima, kimi),
+      options(network({ [lima.base_url]: catalog('lima', ['lima', 'kimi']) }).fetcher, {
+        previous: first.manifest,
+      })
+    );
+    expect(outcome(result, 'kimi-primary')?.state).toBe('retained');
+    // lima's new claim conflicts, so it keeps its own last-known-good binding.
+    expect(outcome(result, 'lima')?.state).toBe('retained');
+    const providers = (id: string) =>
+      result.manifest.sources.find((source) => source.instanceId === id)?.providers;
+    expect(providers('kimi-primary')).toEqual(['kimi']);
+    expect(providers('lima')).toEqual(['lima']);
+  });
+
   test('a retained hub still yields to a baked source that now claims its provider', async () => {
     const previous = await admitted();
     const input = baseInput();
@@ -524,15 +489,18 @@ describe('prox-sources-apply', () => {
     writeFileSync(join(root, 'management-key'), 'shared-key\n');
     writeFileSync(instancesPath, JSON.stringify({ instances: [kimi] }));
     const steps: string[] = [];
-    const state = { hubs, validate: async (_staging: string) => {}, reload: async () => {} };
+    const state = {
+      hubs,
+      validate: async (_staging: string) => {},
+      reload: async () => {},
+      verify: async (_admitted: readonly { instanceId: string }[]) => {},
+    };
     const run = () =>
       applyRuntimeSources({
         baseManifestPath: join(root, 'base.json'),
         instancesPath,
         runtimeDir,
         historyKeyFile: join(root, 'management-key'),
-        keyRoot: join(root, 'hub-keys'),
-        keyMount: '/run/secrets/hub-keys',
         fetcher: network(state.hubs).fetcher,
         validate: async (staging) => {
           steps.push(`validate:${existsSync(join(runtimeDir, 'sources.json'))}`);
@@ -541,6 +509,10 @@ describe('prox-sources-apply', () => {
         reload: async () => {
           steps.push(`reload:${existsSync(join(runtimeDir, 'sources.json'))}`);
           await state.reload();
+        },
+        verify: async (admitted) => {
+          steps.push(`verify:${admitted.map((source) => source.instanceId).join(',')}`);
+          await state.verify(admitted);
         },
       });
     // A leftover staging directory shows up as an entry, so "intact" also means cleaned up.
@@ -563,7 +535,7 @@ describe('prox-sources-apply', () => {
     const { runtimeDir, steps, run, snapshot } = setup(both);
     const result = await run();
     expect(result.changed).toBe(true);
-    expect(steps).toEqual(['validate:false', 'reload:false']);
+    expect(steps).toEqual(['validate:false', 'reload:false', 'verify:kimi-primary']);
     expect(Object.keys(snapshot()).sort()).toEqual([
       'effective-manifest.json',
       'provider-routes.conf',
@@ -649,6 +621,35 @@ describe('prox-sources-apply', () => {
     state.reload = async () => {};
     expect((await run()).changed).toBe(true);
     expect(snapshot()['sources.json']).toContain('"lima"');
+  });
+
+  test('routes Nginx does not serve yet are rolled back and nothing is published', async () => {
+    const { instancesPath, state, steps, run, snapshot } = setup(both);
+    await run();
+    const before = snapshot();
+    writeFileSync(instancesPath, JSON.stringify({ instances: [kimi, lima] }));
+    state.verify = async () => {
+      throw new Error('Nginx does not route lima');
+    };
+    steps.length = 0;
+    await expect(run()).rejects.toThrow('does not route');
+    // Reloaded onto the new routes, then back onto the previous ones.
+    expect(steps).toEqual([
+      'validate:true',
+      'reload:true',
+      'verify:kimi-primary,lima',
+      'reload:true',
+    ]);
+    expect(snapshot()).toEqual(before);
+  });
+
+  test('a first run whose routes are not served leaves nothing behind', async () => {
+    const { state, run, snapshot } = setup(both);
+    state.verify = async () => {
+      throw new Error('Nginx does not route kimi-primary');
+    };
+    await expect(run()).rejects.toThrow();
+    expect(snapshot()).toEqual({});
   });
 
   test.each(['{ "instances": [', '"instances"', '{"instances": {}}'])(
@@ -762,32 +763,43 @@ describe('prox-history manifest watcher', () => {
     expect(added).toHaveLength(1);
   });
 
-  test('never reports a removal, and a missing file is not fatal', () => {
+  test('delivers each revision once, removals included, and a missing file is not fatal', () => {
     const { path, write, added, warnings, check } = setup();
     const fewer = baseInput();
     fewer.sources.pop();
     write(JSON.stringify(fewer));
     check();
-    expect(added).toEqual([]);
+    check();
+    // The collector decides what a revision means; it only ever adds (quotaCollector test).
+    expect(added.map((entry) => entry.ids)).toEqual([['codex-primary']]);
     expect(warnings).toEqual([]);
     rmSync(path);
     expect(() => check()).not.toThrow();
-    expect(added).toEqual([]);
+    expect(added).toHaveLength(1);
   });
 
-  test('a failing consumer does not stop the watcher', () => {
-    const { path, write, check } = setup();
-    const failing = createManifestWatcher(
+  test('a revision the consumer failed on is delivered again on the next check', () => {
+    const { path, write } = setup();
+    let fail = true;
+    const delivered: string[] = [];
+    const warnings: string[] = [];
+    const watcher = createManifestWatcher(
       path,
       loadSourceManifest(path),
-      () => {
-        throw new Error('collector refused');
+      (_manifest, revision) => {
+        if (fail) throw new Error('collector refused');
+        delivered.push(revision);
       },
-      () => {}
+      (message) => warnings.push(message)
     );
     write(JSON.stringify(withHub('kimi', 8323)));
-    expect(() => failing()).not.toThrow();
-    expect(() => check()).not.toThrow();
+    expect(() => watcher()).not.toThrow();
+    expect(delivered).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    fail = false;
+    watcher();
+    watcher();
+    expect(delivered).toEqual([loadSourceManifest(path).revision]);
   });
 });
 

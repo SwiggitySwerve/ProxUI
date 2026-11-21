@@ -1,11 +1,14 @@
 // Host oneshot: admit the hubs ProxD's instances.json lists and publish their Nginx routes.
 // Usage and enablement: docs/PROX-SETUP.md, "Runtime hub discovery".
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 import { applyRuntimeSources, RUNTIME_MOUNT } from '../server/providerSources/apply';
+import type { DeploymentSource } from '../src/domain/providerSources/types';
+import { MANAGEMENT_API_PREFIX } from '../src/utils/constants';
 
 export { applyRuntimeSources };
 
@@ -34,6 +37,51 @@ async function reloadNginx(): Promise<void> {
   await run('podman', ['exec', CONTAINER, 'nginx', '-s', 'reload']);
 }
 
+/** Where deploy/prox.container publishes the prox Nginx on the host. */
+const PROX_ORIGIN = 'http://127.0.0.1:18318';
+const VERIFY_DEADLINE_MS = 15_000;
+
+/**
+ * Asks the running Nginx, through each admitted hub's public route, who answers there; retries
+ * until every route reaches its instance or the deadline passes.
+ */
+function verifyRoutes(keyFile: string) {
+  return async (admitted: readonly DeploymentSource[]): Promise<void> => {
+    if (!admitted.length) return;
+    const key = (await readFile(keyFile, 'utf8')).trim();
+    const routed = async (source: DeploymentSource) => {
+      try {
+        const response = await fetch(
+          `${PROX_ORIGIN}${source.publicBasePath}${MANAGEMENT_API_PREFIX}/providers`,
+          {
+            headers: { Authorization: `Bearer ${key}` },
+            redirect: 'error',
+            signal: AbortSignal.timeout(3_000),
+          }
+        );
+        const body: unknown = response.ok ? await response.json() : null;
+        return (
+          !!body &&
+          typeof body === 'object' &&
+          (body as { instance_id?: unknown }).instance_id === source.instanceId
+        );
+      } catch {
+        return false;
+      }
+    };
+    const deadline = Date.now() + VERIFY_DEADLINE_MS;
+    let pending = [...admitted];
+    while (pending.length) {
+      const results = await Promise.all(pending.map(routed));
+      pending = pending.filter((_, index) => !results[index]);
+      if (!pending.length) return;
+      if (Date.now() > deadline)
+        throw new Error(`Nginx does not route ${pending.map((s) => s.instanceId).join(', ')}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+}
+
 if (import.meta.main) {
   const { values } = parseArgs({
     options: {
@@ -41,11 +89,13 @@ if (import.meta.main) {
       instances: { type: 'string' },
       'runtime-dir': { type: 'string' },
       'history-key-file': { type: 'string' },
-      'key-root': { type: 'string' },
-      'key-mount': { type: 'string' },
     },
   });
   const home = homedir();
+  const historyKeyFile =
+    values['history-key-file'] ??
+    process.env.PROX_SOURCES_HISTORY_KEY_FILE ??
+    join(home, '.config/proxd/management-key');
   try {
     const result = await applyRuntimeSources({
       baseManifestPath:
@@ -60,18 +110,10 @@ if (import.meta.main) {
         values['runtime-dir'] ??
         process.env.PROX_SOURCES_DIR ??
         join(home, '.local/share/prox/sources'),
-      historyKeyFile:
-        values['history-key-file'] ??
-        process.env.PROX_SOURCES_HISTORY_KEY_FILE ??
-        join(home, '.config/proxd/management-key'),
-      keyRoot:
-        values['key-root'] ??
-        process.env.PROX_SOURCES_KEY_ROOT ??
-        join(home, '.config/proxd/hub-keys'),
-      keyMount:
-        values['key-mount'] ?? process.env.PROX_SOURCES_KEY_MOUNT ?? '/run/secrets/hub-keys',
+      historyKeyFile,
       validate: validateStaged,
       reload: reloadNginx,
+      verify: verifyRoutes(historyKeyFile),
     });
     for (const { id, state, reason } of result.outcomes)
       console.log(`${id}: ${state}${reason ? ` (${reason})` : ''}`);

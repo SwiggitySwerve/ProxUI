@@ -361,7 +361,7 @@ the oneshot, runs it once and adds the two drop-ins below.
 
 `prox-sources-apply` is a host oneshot. It reads the baked manifest and ProxD's
 operator-owned `~/.config/cli-proxy/instances.json` (`{"instances": [{id, provider,
-base_url, management_path?, label?, auth_scope?, management_key_file?}]}`; a bare array
+base_url, management_path?, label?, auth_scope?}]}`; a bare array
 is accepted too) and writes three files into `~/.local/share/prox/sources/`:
 
 | File | Mode | Read by |
@@ -375,29 +375,30 @@ Admission rules:
 - A baked source always wins. An entry that reuses a baked instance ID, public path or
   claimed provider is rejected, never merged.
 - An entry is published at `/<id>` and labelled with its `label`, or its ID.
-- A loopback hub (`127.0.0.1`, `localhost`, `[::1]`) may omit the key and scope. It is
-  probed with `~/.config/proxd/management-key` and joins the scope of the baked sources
-  that use that key.
-- Any other hub must declare `management_key_file` and `auth_scope`. The key file must be
-  inside `~/.config/proxd/hub-keys/`; the manifest records it under `/run/secrets/hub-keys/`,
-  where the prox-history drop-in mounts that directory. A scope is never shared between
-  two different key files, so a remote hub cannot join `homelab-management`.
+- Only loopback hubs (`127.0.0.1`, `localhost`, `[::1]`) that accept the shared key are
+  admitted at run time. Each is probed with `~/.config/proxd/management-key` and joins the
+  scope of the baked sources that use that key. An entry with `management_key_file`, or a
+  remote `base_url`, is rejected: such a hub needs its own transport and origin decisions,
+  so add it to `deploy/provider-sources.json` instead.
 - Before admission the hub must answer `GET /v8/management/providers` with status 200 and
   an `instance_id` equal to the entry's `id`. Redirects are refused; the request has a
-  5-second timeout and a 1 MiB body limit. A hub that answers 404 there (older than the
-  provider catalog) is checked through `GET /v8/management/credentials` instead, which
-  needs `CLIPROXY_INSTANCE_ID` set on the hub and at least one credential.
+  5-second timeout and a 1 MiB body limit. A hub without the provider catalog (older than
+  ProxD's provider discovery) is not admitted.
+- An admitted hub keeps its address. Moving it means removing its entry, applying, and
+  adding it again, so a browser session never follows a route to a different hub.
 - A hub that reports `accepted_providers` owns exactly those providers; otherwise it owns
   the entry's `provider`. If another source already owns one of them, the hub is rejected.
 - A hub that was admitted before stays when its probe fails or its entry becomes
-  unreadable. It leaves only when its entry is removed, or when a different instance
-  answers at its address.
+  unreadable, and keeps its providers ahead of any other hub. It leaves only when its entry
+  is removed, or when a different instance answers at its address.
 
 The files are staged in `.staging/`, checked with `nginx -t` in a throwaway container of
 `localhost/prox:dev`, and then renamed into place: routes first, then `nginx -t` and
-`nginx -s reload` in the running `prox` container, then the manifest, and `sources.json`
-last. If any step fails the directory is left as it was, and a failed reload puts the
-previous routes back. An `instances.json` that is not valid JSON or not a list fails the
+`nginx -s reload` in the running `prox` container. The run then asks the live Nginx on
+`127.0.0.1:18318` for each run-time hub's `/v8/management/providers` until every route
+answers with its own `instance_id` (15 s at most), and only then publishes the manifest and
+`sources.json`, in that order. If any step fails the previous routes and manifest are put
+back and Nginx is reloaded again. An `instances.json` that is not valid JSON or not a list fails the
 run before anything is written.
 
 Install (not done by `scripts/deploy-homelab.sh`):
@@ -408,7 +409,6 @@ install -D -m 644 dist/sources-apply/prox-sources-apply.js ~/.local/share/prox/s
 install -m 644 deploy/provider-sources.json ~/.local/share/prox/sources-apply/provider-sources.json
 install -D -m 644 deploy/prox-sources-apply.service ~/.config/systemd/user/prox-sources-apply.service
 install -D -m 644 deploy/prox-sources.path ~/.config/systemd/user/prox-sources.path
-install -d -m 700 ~/.config/proxd/hub-keys   # mounted by the prox-history drop-in below
 systemctl --user daemon-reload
 systemctl --user start prox-sources-apply.service   # first run; read its journal
 ```
@@ -432,7 +432,6 @@ Volume=%h/.local/share/prox/sources:/etc/nginx/runtime:ro
 # ~/.config/containers/systemd/prox-history.container.d/runtime-sources.conf
 [Container]
 Volume=%h/.local/share/prox/sources:/run/prox-sources:ro
-Volume=%h/.config/proxd/hub-keys:/run/secrets/hub-keys:ro
 Environment=PROX_SOURCE_MANIFEST=/run/prox-sources/effective-manifest.json
 ```
 
