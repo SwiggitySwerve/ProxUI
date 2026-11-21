@@ -1,7 +1,11 @@
 import { Database } from 'bun:sqlite';
 import { chmodSync, closeSync, mkdirSync, openSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type { PoolProviderId, PoolWindow } from '../../src/domain/quotaPool/types';
+import type {
+  PoolProviderId,
+  PoolWindow,
+  ResetProviderId,
+} from '../../src/domain/quotaPool/types';
 import {
   DAY_MS,
   RETIRED_ACCOUNT_NAME,
@@ -22,6 +26,24 @@ type AccountRow = Omit<
   retired: number;
   retiredAtMs: number | null;
 };
+
+const QUOTA_ACCOUNT_COLUMNS =
+  'id, provider, name, email, disabled, retired, lastSeenAtMs, lastErrorAtMs, retiredAtMs';
+
+function quotaAccountsTableSql(tableName: string, ifNotExists = false): string {
+  return `
+      CREATE TABLE ${ifNotExists ? 'IF NOT EXISTS ' : ''}${tableName} (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL CHECK (provider IN ('claude', 'codex', 'antigravity')),
+        name TEXT NOT NULL,
+        email TEXT,
+        disabled INTEGER NOT NULL CHECK (disabled IN (0, 1)),
+        retired INTEGER NOT NULL CHECK (retired IN (0, 1)),
+        lastSeenAtMs INTEGER NOT NULL,
+        lastErrorAtMs INTEGER,
+        retiredAtMs INTEGER
+      );`;
+}
 
 /** Owns durable account metadata and normalized quota observations; never stores credentials. */
 export class QuotaStore {
@@ -46,16 +68,7 @@ export class QuotaStore {
       PRAGMA synchronous = NORMAL;
       PRAGMA foreign_keys = ON;
       PRAGMA busy_timeout = 5000;
-      CREATE TABLE IF NOT EXISTS quota_accounts (
-        id TEXT PRIMARY KEY,
-        provider TEXT NOT NULL CHECK (provider IN ('claude', 'codex', 'antigravity')),
-        name TEXT NOT NULL,
-        email TEXT,
-        disabled INTEGER NOT NULL CHECK (disabled IN (0, 1)),
-        retired INTEGER NOT NULL CHECK (retired IN (0, 1)),
-        lastSeenAtMs INTEGER NOT NULL,
-        lastErrorAtMs INTEGER
-      );
+      ${quotaAccountsTableSql('quota_accounts', true)}
       CREATE INDEX IF NOT EXISTS quota_accounts_provider ON quota_accounts(provider);
       CREATE TABLE IF NOT EXISTS quota_samples (
         accountId TEXT NOT NULL REFERENCES quota_accounts(id),
@@ -131,40 +144,34 @@ export class QuotaStore {
     this.widenAccountProviders();
   }
 
-  /**
-   * Databases created before Antigravity joined the pool limit `quota_accounts.provider` to
-   * claude/codex. SQLite cannot alter a CHECK, so the table is rebuilt once with every row, the
-   * way https://sqlite.org/lang_altertable.html#otheralter describes: foreign keys off, copy,
-   * drop, rename, index, then a foreign key check before commit. Reset events and legacy sources
-   * keep their claude/codex limit: Antigravity has neither.
-   */
-  private widenAccountProviders(): void {
+  private needsProviderWidening(): boolean {
     const table = this.db
       .query<{ sql: string }, []>(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'quota_accounts'"
       )
       .get();
-    if (!table?.sql.includes("CHECK (provider IN ('claude', 'codex'))")) return;
-    const columns =
-      'id, provider, name, email, disabled, retired, lastSeenAtMs, lastErrorAtMs, retiredAtMs';
+    return Boolean(table?.sql.includes("CHECK (provider IN ('claude', 'codex'))"));
+  }
+
+  /**
+   * Databases created before Antigravity joined the pool limit `quota_accounts.provider` to
+   * claude/codex. SQLite cannot alter a CHECK, so the table is rebuilt once with every row, the
+   * way https://sqlite.org/lang_altertable.html#otheralter describes: foreign keys off, copy,
+   * drop, rename, index, then a foreign key check before commit. Migration eligibility is
+   * re-checked inside the immediate transaction so concurrent starts cannot rebuild twice. Reset
+   * events and legacy sources keep their claude/codex limit: Antigravity has neither.
+   */
+  private widenAccountProviders(): void {
+    if (!this.needsProviderWidening()) return;
     this.db.exec('PRAGMA foreign_keys = OFF');
     try {
       this.db
         .transaction(() => {
+          if (!this.needsProviderWidening()) return;
           this.db.exec(`
-            CREATE TABLE quota_accounts_widened (
-              id TEXT PRIMARY KEY,
-              provider TEXT NOT NULL CHECK (provider IN ('claude', 'codex', 'antigravity')),
-              name TEXT NOT NULL,
-              email TEXT,
-              disabled INTEGER NOT NULL CHECK (disabled IN (0, 1)),
-              retired INTEGER NOT NULL CHECK (retired IN (0, 1)),
-              lastSeenAtMs INTEGER NOT NULL,
-              lastErrorAtMs INTEGER,
-              retiredAtMs INTEGER
-            );
-            INSERT INTO quota_accounts_widened (${columns})
-              SELECT ${columns} FROM quota_accounts;
+            ${quotaAccountsTableSql('quota_accounts_widened')}
+            INSERT INTO quota_accounts_widened (${QUOTA_ACCOUNT_COLUMNS})
+              SELECT ${QUOTA_ACCOUNT_COLUMNS} FROM quota_accounts;
             DROP TABLE quota_accounts;
             ALTER TABLE quota_accounts_widened RENAME TO quota_accounts;
             CREATE INDEX quota_accounts_provider ON quota_accounts(provider);
@@ -543,7 +550,7 @@ export class QuotaStore {
   /** Records a claim about to be sent, as `pending`. Throws when the request id was used before. */
   insertResetEvent(input: {
     accountId: string;
-    provider: PoolProviderId;
+    provider: ResetProviderId;
     kind: string;
     grantId: string | null;
     clientRequestId: string;
@@ -622,7 +629,7 @@ export class QuotaStore {
   }
 
   /** Newest first. */
-  listResetEvents(filter: { provider?: PoolProviderId; sinceMs?: number; limit?: number }) {
+  listResetEvents(filter: { provider?: ResetProviderId; sinceMs?: number; limit?: number }) {
     const where = ['1 = 1'];
     const params: (string | number)[] = [];
     if (filter.provider) {

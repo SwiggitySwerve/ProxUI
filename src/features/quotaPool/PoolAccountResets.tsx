@@ -2,7 +2,7 @@ import { Fact, FactSection } from '@/components/ui/FactPanel';
 import { IconAlertTriangle } from '@/components/ui/icons';
 import { Fragment, useCallback, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { PoolAccount, PoolProviderId } from '@/domain/quotaPool/types';
+import type { PoolAccount, ResetProviderId } from '@/domain/quotaPool/types';
 import type { AuthFileItem } from '@/types';
 import { sourceOwnerKey, type SourceSession } from '@/services/api/sourceSession';
 import { useProviderSources } from '@/stores/useProviderSources';
@@ -37,7 +37,7 @@ type Props = {
   account: PoolAccount;
   name: string;
   instanceId?: string;
-  provider: PoolProviderId;
+  provider: ResetProviderId;
   onRefresh: (accountId?: string) => void;
 };
 

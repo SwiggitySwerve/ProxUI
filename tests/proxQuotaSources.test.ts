@@ -531,9 +531,10 @@ describe('enumerated quota sources', () => {
     logged.mockRestore();
     expect(lines).toContainEqual(
       expect.stringMatching(
-        /^Quota request failed: claude 429 account=\S{8} retry-after=30 headers=retry-after,set-cookie$/
+        /^Quota request failed: claude 429 retry-after=30 headers=retry-after,set-cookie$/
       )
     );
+    expect(lines.join('\n')).not.toContain('account=');
     expect(lines.join('\n')).not.toContain(SENTINEL);
   });
 

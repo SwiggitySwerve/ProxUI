@@ -1,4 +1,8 @@
-import type { PoolProviderId, PoolWindow } from '../../src/domain/quotaPool/types';
+import type {
+  PoolProviderId,
+  PoolWindow,
+  ResetProviderId,
+} from '../../src/domain/quotaPool/types';
 
 export interface StoredAccount {
   id: string;
@@ -66,7 +70,7 @@ export interface ResetReading {
 export interface ResetEvent {
   id: number;
   accountId: string;
-  provider: PoolProviderId;
+  provider: ResetProviderId;
   /** Claude: session, weekly, fable or full. Codex: its credit kind, `codex_rate_limits`. */
   kind: string;
   grantId: string | null;

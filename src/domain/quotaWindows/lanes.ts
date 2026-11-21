@@ -36,7 +36,7 @@ const CODEX_ADDITIONAL_LIMIT = /-(five-hour|weekly|monthly)-\d+$/;
 
 export function laneOf(provider: LaneProvider, windowId: string): QuotaLane {
   if (provider === 'claude') return CLAUDE_LANES[windowId] ?? 'other';
-  // Antigravity: the Gemini group's windows are the account's (`buildAntigravityQuotaWindows`);
+  // Antigravity: the Gemini group's windows are the account's (`decodeAntigravityQuotaWindows`);
   // every other group (Claude and GPT models) is its own model-scoped allowance.
   if (provider === 'antigravity')
     return windowId === 'five-hour' || windowId === 'weekly' ? windowId : 'model';

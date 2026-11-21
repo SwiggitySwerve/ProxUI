@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,7 +12,11 @@ import { QuotaStore } from '../server/quota/store';
 import { DAY_MS, HOUR_MS } from '../server/quota/types';
 import { validateSourceManifest } from '../src/domain/providerSources/manifest';
 import { laneOf, poolWindowId } from '../src/domain/quotaWindows/lanes';
-import { readViewState } from '../src/features/quotaPool/model/viewState';
+import {
+  readViewState,
+  resolveViewProvider,
+  visibleProviders,
+} from '../src/features/quotaPool/model/viewState';
 import {
   ANTIGRAVITY_CODE_ASSIST_URL,
   ANTIGRAVITY_QUOTA_URLS,
@@ -237,12 +241,12 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     expect(account.label).toBe('Gemini 1');
     expect(account.plan).toEqual({ label: 'Ultra', capacityPoints: 2000, known: true });
     expect(account.status).toBe('ok');
-    // The Claude and GPT group rides along as its own window, never in the pool balance.
+    // The Claude and GPT group rides along as its own namespaced window, never in the pool balance.
     expect(account.windows.map((window) => [window.id, laneOf('antigravity', window.id)])).toEqual([
       ['five-hour', 'five-hour'],
       ['weekly', 'weekly'],
-      ['3p-5h', 'model'],
-      ['3p-weekly', 'model'],
+      ['claude-and-gpt-models:3p-5h', 'model'],
+      ['claude-and-gpt-models:3p-weekly', 'model'],
     ]);
     expect(weekly.combined?.antigravity?.series?.capacityPoints).toBe(2000);
     expect(weekly.combined?.all.series?.capacityPoints).toBe(2000 + 100);
@@ -273,6 +277,353 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     expect(() => quotaSamples('antigravity', 'account', { nope: true }, NOW)).toThrow();
     expect(poolWindowId('antigravity', 'weekly')).toBe('weekly');
     expect(poolWindowId('antigravity', 'five-hour')).toBe('five-hour');
+  });
+
+  test('non-Gemini buckets cannot collide with Gemini pool ids even if named gemini-weekly or weekly', () => {
+    const colliding = {
+      groups: [
+        {
+          displayName: 'Claude and GPT models',
+          buckets: [
+            {
+              bucketId: 'gemini-weekly',
+              displayName: 'Weekly Limit Remaining',
+              window: 'weekly',
+              resetTime: new Date(NOW + 5 * DAY_MS).toISOString(),
+              remainingFraction: 0.31,
+            },
+            {
+              bucketId: 'weekly',
+              displayName: 'Weekly Limit Remaining',
+              window: 'weekly',
+              resetTime: new Date(NOW + 5 * DAY_MS).toISOString(),
+              remainingFraction: 0.31,
+            },
+            {
+              bucketId: 'five-hour',
+              displayName: 'Five Hour Limit Remaining',
+              window: '5h',
+              resetTime: new Date(NOW + 2 * HOUR_MS).toISOString(),
+              remainingFraction: 0.31,
+            },
+          ],
+        },
+        {
+          displayName: 'Gemini Models',
+          buckets: [
+            {
+              bucketId: 'weekly',
+              displayName: 'Unrecognized Weekly',
+              window: 'weekly',
+              resetTime: new Date(NOW + 5 * DAY_MS).toISOString(),
+              remainingFraction: 0.25,
+            },
+            {
+              bucketId: 'toString',
+              displayName: 'Inherited Key Bucket',
+              window: 'weekly',
+              resetTime: new Date(NOW + 5 * DAY_MS).toISOString(),
+              remainingFraction: 0.4,
+            },
+          ],
+        },
+        {
+          displayName: 'Claude and GPT models',
+          buckets: [
+            {
+              bucketId: 'toString',
+              displayName: 'Inherited Key Third Party',
+              window: 'weekly',
+              resetTime: new Date(NOW + 5 * DAY_MS).toISOString(),
+              remainingFraction: 0.5,
+            },
+          ],
+        },
+      ],
+    };
+    const { samples, windows } = quotaSamples('antigravity', 'account', colliding, NOW);
+    expect(samples.map((s) => [s.window, s.remainingPercent])).toEqual([
+      ['weekly', null],
+      ['five-hour', null],
+    ]);
+    expect(windows.map((w) => [w.id, laneOf('antigravity', w.id)])).toEqual([
+      ['claude-and-gpt-models:five-hour', 'model'],
+      ['claude-and-gpt-models:gemini-weekly', 'model'],
+      ['claude-and-gpt-models:weekly', 'model'],
+      ['gemini-models:toString', 'model'],
+      ['gemini-models:weekly', 'model'],
+      ['claude-and-gpt-models:toString', 'model'],
+    ]);
+    // Inherited object keys must stay plain strings and survive JSON serialization intact.
+    const serialized = JSON.parse(JSON.stringify(windows)) as typeof windows;
+    expect(serialized.every((w) => typeof w.id === 'string' && typeof w.labelKey === 'string')).toBe(
+      true
+    );
+  });
+
+  test('malformed 200 and transport errors fall through to the next Antigravity endpoint, while abort stops', async () => {
+    const makeCollector = (
+      handler: (url: string, signal?: AbortSignal) => Promise<Response> | Response
+    ) => {
+      const root = temporary();
+      const managementKeyFile = join(root, 'gemini.key');
+      writeFileSync(managementKeyFile, 'synthetic-key-gemini');
+      const manifest = validateSourceManifest({
+        schemaVersion: 1,
+        defaultInstanceId: 'gemini-src',
+        history: { upstreamOrigin: 'http://history.invalid', managementKeyFile },
+        sources: [
+          {
+            instanceId: 'gemini-src',
+            label: 'Gemini',
+            publicBasePath: '/gemini',
+            aliases: [],
+            authScope: 'shared',
+            providers: ['antigravity'],
+            upstreamOrigin: 'http://gemini-src.invalid',
+            managementKeyFile,
+          },
+        ],
+      });
+      const attempted: string[] = [];
+      const fetcher = Object.assign(
+        async (_input: string | URL | Request, init: RequestInit = {}) => {
+          const body = init.body ? JSON.parse(String(init.body)) : undefined;
+          if (!body) {
+            return Response.json({
+              files: [
+                {
+                  provider: 'antigravity',
+                  type: 'antigravity',
+                  auth_index: 'gemini-index',
+                  name: 'antigravity.json',
+                  email: 'gemini@example.test',
+                  disabled: false,
+                  project_id: 'synthetic-project',
+                },
+              ],
+            });
+          }
+          if (body.url === ANTIGRAVITY_CODE_ASSIST_URL) {
+            return Response.json({
+              status_code: 200,
+              body: { paidTier: { id: 'g1-ultra-tier', name: 'Google AI Ultra' } },
+            });
+          }
+          attempted.push(String(body.url));
+          return handler(String(body.url), init.signal ?? undefined);
+        },
+        { preconnect: () => {} }
+      ) satisfies typeof fetch;
+      const store = new QuotaStore(':memory:');
+      cleanups.push(() => store.close());
+      const collector = new QuotaCollector(store, {
+        sources: manifest.sources,
+        revision: 'synthetic-revision',
+        fetcher,
+        now: () => NOW,
+      });
+      cleanups.push(() => collector.stop());
+      return { store, collector, attempted };
+    };
+
+    // Case 1: invalid HTTP 200 on first endpoint (including malformed nested group/buckets) falls through.
+    const malformed = makeCollector((url) =>
+      url === ANTIGRAVITY_QUOTA_URLS[0]
+        ? Response.json({
+            status_code: 200,
+            body: JSON.stringify({ groups: [{ displayName: 'Gemini Models', buckets: {} }] }),
+          })
+        : Response.json({ status_code: 200, body: JSON.stringify(summary(0.8, 0.6)) })
+    );
+    await malformed.collector.refresh();
+    expect(malformed.attempted).toEqual(ANTIGRAVITY_QUOTA_URLS.slice(0, 2));
+    expect(malformed.collector.issues).toEqual([]);
+    expect(malformed.store.listSamples(0, NOW).find((s) => s.window === 'weekly')?.remainingPercent)
+      .toBeCloseTo(80, 6);
+
+    // Case 1b: a bare "%" fraction is malformed and falls through to the next endpoint instead of recording 0%.
+    const barePercent = makeCollector((url) =>
+      url === ANTIGRAVITY_QUOTA_URLS[0]
+        ? Response.json({
+            status_code: 200,
+            body: JSON.stringify({
+              groups: [
+                {
+                  displayName: 'Gemini Models',
+                  buckets: [
+                    {
+                      bucketId: 'gemini-weekly',
+                      window: 'weekly',
+                      remainingFraction: '%',
+                    },
+                  ],
+                },
+              ],
+            }),
+          })
+        : Response.json({ status_code: 200, body: JSON.stringify(summary(0.85, 0.65)) })
+    );
+    await barePercent.collector.refresh();
+    expect(barePercent.attempted).toEqual(ANTIGRAVITY_QUOTA_URLS.slice(0, 2));
+    expect(barePercent.collector.issues).toEqual([]);
+    expect(barePercent.store.listSamples(0, NOW).find((s) => s.window === 'weekly')?.remainingPercent)
+      .toBeCloseTo(85, 6);
+
+    // Case 1c: unpersistable or out-of-Date-range resetTime falls through for both pooled and model windows.
+    for (const [resetTime, modelWindow] of [
+      ['1e20', false],
+      ['8640000000000001', false],
+      ['8640000000000001', true],
+    ] as const) {
+      const badReset = makeCollector((url) =>
+        url === ANTIGRAVITY_QUOTA_URLS[0]
+          ? Response.json({
+              status_code: 200,
+              body: JSON.stringify({
+                groups: modelWindow
+                  ? [
+                      summary().groups[0],
+                      {
+                        displayName: 'Claude and GPT models',
+                        buckets: [
+                          {
+                            bucketId: '3p-weekly',
+                            window: 'weekly',
+                            resetTime,
+                            remainingFraction: 0.5,
+                          },
+                        ],
+                      },
+                    ]
+                  : [
+                      {
+                        displayName: 'Gemini Models',
+                        buckets: [
+                          {
+                            bucketId: 'gemini-weekly',
+                            window: 'weekly',
+                            resetTime,
+                            remainingFraction: 0.9,
+                          },
+                        ],
+                      },
+                    ],
+              }),
+            })
+          : Response.json({ status_code: 200, body: JSON.stringify(summary(0.72, 0.52)) })
+      );
+      await badReset.collector.refresh();
+      expect(badReset.attempted).toEqual(ANTIGRAVITY_QUOTA_URLS.slice(0, 2));
+      expect(badReset.collector.issues).toEqual([]);
+      expect(
+        badReset.store.listSamples(0, NOW).find((s) => s.window === 'weekly')?.remainingPercent
+      ).toBeCloseTo(72, 6);
+    }
+
+    // Case 1d: duplicate pooled window IDs with conflicting balances are rejected and fall through.
+    const duplicatePool = makeCollector((url) =>
+      url === ANTIGRAVITY_QUOTA_URLS[0]
+        ? Response.json({
+            status_code: 200,
+            body: JSON.stringify({
+              groups: [
+                {
+                  displayName: 'Gemini Models',
+                  buckets: [
+                    {
+                      bucketId: 'gemini-weekly',
+                      window: 'weekly',
+                      resetTime: new Date(NOW + 5 * DAY_MS).toISOString(),
+                      remainingFraction: 0.9,
+                    },
+                    {
+                      bucketId: 'gemini-weekly',
+                      window: 'weekly',
+                      resetTime: new Date(NOW + 5 * DAY_MS).toISOString(),
+                      remainingFraction: 0.2,
+                    },
+                  ],
+                },
+              ],
+            }),
+          })
+        : Response.json({ status_code: 200, body: JSON.stringify(summary(0.64, 0.44)) })
+    );
+    await duplicatePool.collector.refresh();
+    expect(duplicatePool.attempted).toEqual(ANTIGRAVITY_QUOTA_URLS.slice(0, 2));
+    expect(duplicatePool.collector.issues).toEqual([]);
+    expect(
+      duplicatePool.store.listSamples(0, NOW).find((s) => s.window === 'weekly')?.remainingPercent
+    ).toBeCloseTo(64, 6);
+
+    // Malformed bucket fractions also fail validation instead of recording missing or zero observations.
+    for (const badFraction of ['bad', '%', '  % ', 1.5]) {
+      expect(() =>
+        quotaSamples(
+          'antigravity',
+          'account',
+          {
+            groups: [
+              {
+                displayName: 'Gemini Models',
+                buckets: [{ bucketId: 'gemini-weekly', remainingFraction: badFraction }],
+              },
+            ],
+          },
+          NOW
+        )
+      ).toThrow();
+    }
+
+    // Case 2: transport error on first endpoint falls through to valid second endpoint.
+    const transport = makeCollector((url) => {
+      if (url === ANTIGRAVITY_QUOTA_URLS[0]) throw new Error('upstream reset');
+      return Response.json({ status_code: 200, body: JSON.stringify(summary(0.7, 0.5)) });
+    });
+    await transport.collector.refresh();
+    expect(transport.attempted).toEqual(ANTIGRAVITY_QUOTA_URLS.slice(0, 2));
+    expect(transport.collector.issues).toEqual([]);
+    expect(transport.store.listSamples(0, NOW).find((s) => s.window === 'weekly')?.remainingPercent)
+      .toBeCloseTo(70, 6);
+
+    // Case 3: stopping/aborting during the first endpoint does not attempt the second.
+    let releaseFirst!: () => void;
+    const firstReached = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const aborted = makeCollector(async (_url, signal) => {
+      releaseFirst();
+      await new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new Error('Aborted')), { once: true });
+      });
+      return Response.json({ status_code: 200, body: JSON.stringify(summary()) });
+    });
+    const refreshPromise = aborted.collector.refresh().catch(() => {});
+    await firstReached;
+    aborted.collector.stop();
+    await refreshPromise;
+    expect(aborted.attempted).toEqual([ANTIGRAVITY_QUOTA_URLS[0]]);
+
+    // Case 4: failed Gemini poll logs status, retry-after and header names without any account suffix.
+    const failed = makeCollector(() =>
+      Response.json({
+        status_code: 429,
+        header: { 'Retry-After': ['45'], 'X-Secret-Cookie': [SENTINEL] },
+        body: '',
+      })
+    );
+    const logged = spyOn(console, 'error').mockImplementation(() => {});
+    await failed.collector.refresh();
+    const lines = logged.mock.calls.map((call) => call.join(' '));
+    logged.mockRestore();
+    const geminiAccount = failed.store.listAccounts()[0]!;
+    expect(lines).toContainEqual(
+      'Quota request failed: antigravity 429 retry-after=45 headers=retry-after,x-secret-cookie'
+    );
+    expect(lines.join('\n')).not.toContain('account=');
+    expect(lines.join('\n')).not.toContain(geminiAccount.id.slice(-8));
+    expect(lines.join('\n')).not.toContain(SENTINEL);
   });
 
   test('Google AI Ultra counts 2000 points; other tiers stay unknown at one unit', () => {
@@ -395,12 +746,43 @@ describe('quota_accounts provider constraint migration', () => {
         .all()
         .map((row) => row.name)
     ).toContain('quota_accounts_provider');
+    const migratedCols = check.query('PRAGMA table_info(quota_accounts)').all();
+    const migratedSql = check
+      .query<{ sql: string }, []>(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'quota_accounts'"
+      )
+      .get()?.sql;
     check.close();
+
+    // Fresh and migrated databases share the exact same table definition.
+    const freshPath = join(temporary(), 'fresh.sqlite');
+    const freshStore = new QuotaStore(freshPath, () => NOW);
+    freshStore.close();
+    const freshCheck = new Database(freshPath, { readonly: true });
+    expect(migratedCols).toEqual(freshCheck.query('PRAGMA table_info(quota_accounts)').all());
+    const normalizeSql = (sql: string | undefined) =>
+      sql?.replace('"quota_accounts"', 'quota_accounts').replace(/\s+/g, ' ').trim();
+    expect(normalizeSql(migratedSql)).toBe(
+      normalizeSql(
+        freshCheck
+          .query<{ sql: string }, []>(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'quota_accounts'"
+          )
+          .get()?.sql
+      )
+    );
+    freshCheck.close();
   });
 });
 
 describe('Quota Management view state', () => {
-  test('a link can select the Gemini pool', () => {
+  test('a link can select the Gemini pool, and installations without Gemini hide it and fall back', () => {
     expect(readViewState(new URLSearchParams('provider=antigravity')).provider).toBe('antigravity');
+    const withoutGemini = visibleProviders([{ provider: 'claude' }, { provider: 'codex' }]);
+    const withGemini = visibleProviders([{ provider: 'claude' }, { provider: 'antigravity' }]);
+    expect(withoutGemini).toEqual(['all', 'claude', 'codex']);
+    expect(withGemini).toEqual(['all', 'claude', 'codex', 'antigravity']);
+    expect(resolveViewProvider('antigravity', withoutGemini)).toBe('all');
+    expect(resolveViewProvider('antigravity', withGemini)).toBe('antigravity');
   });
 });

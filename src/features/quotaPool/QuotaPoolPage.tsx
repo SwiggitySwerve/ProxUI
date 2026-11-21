@@ -22,7 +22,14 @@ import { CombinedPoolCard } from './CombinedPoolCard';
 import { movePool, orderPools, poolKey, usePoolOrder } from './poolOrder';
 import { PoolProviderMark } from './PoolProviderMark';
 import { viewRange } from './chartGeometry';
-import { readViewState, sameView, writeViewState, type QuotaViewState } from './model/viewState';
+import {
+  readViewState,
+  resolveViewProvider,
+  sameView,
+  visibleProviders,
+  writeViewState,
+  type QuotaViewState,
+} from './model/viewState';
 import { formatPoolDate, formatPoolNumber, providerAccountCount } from './presentation';
 import styles from './QuotaPoolPage.module.scss';
 
@@ -85,8 +92,17 @@ export function QuotaPoolPage() {
   const showSkeleton = !data && state.loading && state.connected;
   const { order, setOrder } = usePoolOrder();
   const orderedPools = data ? orderPools(data.pools, order) : [];
+  const providerChoices = visibleProviders(data?.pools);
+  const activeProvider = data ? resolveViewProvider(provider, providerChoices) : provider;
+  useEffect(() => {
+    if (data && activeProvider !== provider) {
+      setViewState((current) =>
+        current.provider === provider ? { ...current, provider: activeProvider } : current
+      );
+    }
+  }, [data, activeProvider, provider]);
   const shownPools = orderedPools.filter(
-    (pool) => provider === 'all' || provider === pool.provider
+    (pool) => activeProvider === 'all' || activeProvider === pool.provider
   );
   const refreshFromHeader = useCallback(async () => {
     if (!(await refresh())) throw new Error(t('quota_pool.refresh_error'));
@@ -207,11 +223,11 @@ export function QuotaPoolPage() {
       {!chartUnavailable && (
         <div className={styles.controls}>
           <div className={styles.providerBar} role="group" aria-label={t('quota_pool.providers')}>
-            {(['all', 'claude', 'codex', 'antigravity'] as const).map((item) => (
+            {providerChoices.map((item) => (
               <button
                 type="button"
                 key={item}
-                aria-pressed={provider === item}
+                aria-pressed={activeProvider === item}
                 onClick={() => setView({ provider: item })}
                 className={item === 'all' ? undefined : styles[item]}
               >
@@ -510,7 +526,7 @@ export function QuotaPoolPage() {
           </div>
           {/* One placeholder per provider card, in the card's own order: headline and facts,
               chart, then the first account rows. */}
-          {(['claude', 'codex', 'antigravity'] as const).map((item) => (
+          {(['claude', 'codex'] as const).map((item) => (
             <div key={item} className={styles.loading} aria-hidden="true" inert>
               <div className={styles.loadingIdentity}>
                 <h2 className={styles.loadingTitle}>
@@ -554,7 +570,7 @@ export function QuotaPoolPage() {
         <CombinedPoolCard
           pools={shownPools}
           dashboard={data}
-          provider={provider}
+          provider={activeProvider}
           mode={mode}
           savedData={state.error || state.refreshError}
           onRefresh={() => void refresh()}
@@ -577,7 +593,7 @@ export function QuotaPoolPage() {
               reveal={query.reveal}
               savedData={state.error || state.refreshError}
               move={
-                provider === 'all' && shown.length > 1
+                activeProvider === 'all' && shown.length > 1
                   ? {
                       up:
                         index > 0 ? () => setOrder(movePool(shown, poolKey(pool), -1)) : undefined,

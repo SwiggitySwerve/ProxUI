@@ -5,7 +5,7 @@
  * history. A targeted re-read after a reset (any page) makes mounted rows read again.
  */
 import { useEffect, useState } from 'react';
-import type { PoolProviderId } from '@/domain/quotaPool/types';
+import type { ResetProviderId } from '@/domain/quotaPool/types';
 import { createQuotaPoolApi, type ResetEventView } from '@/services/api/quotaPool';
 import { onPoolAccountRefreshed } from './accountSync';
 
@@ -15,7 +15,7 @@ const listeners = new Set<() => void>();
 onPoolAccountRefreshed(() => listeners.forEach((listener) => listener()));
 
 export function loadResetEvents(
-  provider: PoolProviderId,
+  provider: ResetProviderId,
   api: Pick<
     ReturnType<typeof createQuotaPoolApi>,
     'resetEvents' | 'connection'
@@ -36,7 +36,7 @@ export function loadResetEvents(
 
 /** The newest recorded reset for one account (the pool row's stored id), or null. */
 export function useLastResetEvent(
-  provider: PoolProviderId,
+  provider: ResetProviderId,
   accountId: string
 ): ResetEventView | null {
   const [event, setEvent] = useState<ResetEventView | null>(null);

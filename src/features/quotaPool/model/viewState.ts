@@ -1,4 +1,4 @@
-import type { PoolDashboard, PoolProviderId } from '@/domain/quotaPool/types';
+import type { PoolDashboard, PoolProviderId, QuotaPool } from '@/domain/quotaPool/types';
 import type { ChartMode } from '../chartGeometry';
 
 /**
@@ -61,4 +61,20 @@ export function writeViewState(previous: URLSearchParams, view: QuotaViewState):
 
 export function sameView(a: QuotaViewState, b: QuotaViewState): boolean {
   return KEYS.every((key) => a[key] === b[key]);
+}
+
+/** Provider chips to show: Gemini is offered only when the installation has a Gemini pool. */
+export function visibleProviders(
+  pools: readonly Pick<QuotaPool, 'provider'>[] | undefined
+): readonly QuotaViewState['provider'][] {
+  const hasGemini = pools?.some((pool) => pool.provider === 'antigravity') ?? false;
+  return hasGemini ? ['all', 'claude', 'codex', 'antigravity'] : ['all', 'claude', 'codex'];
+}
+
+/** Fall back to `all` when a deep-linked provider is absent from the available choices. */
+export function resolveViewProvider(
+  provider: QuotaViewState['provider'],
+  available: readonly QuotaViewState['provider'][]
+): QuotaViewState['provider'] {
+  return available.includes(provider) ? provider : 'all';
 }

@@ -18,7 +18,7 @@ import type {
 } from '../../src/domain/quotaPool/types';
 import { buildClaudeQuotaWindows } from '../../src/domain/quotaWindows/claude';
 import { buildCodexQuotaWindows } from '../../src/domain/quotaWindows/codex';
-import { buildAntigravityQuotaWindows } from '../../src/domain/quotaWindows/antigravity';
+import { decodeAntigravityQuotaWindows } from '../../src/domain/quotaWindows/antigravity';
 import { laneOf } from '../../src/domain/quotaWindows/lanes';
 import {
   ANTIGRAVITY_CODE_ASSIST_URL,
@@ -194,11 +194,13 @@ function inventory(payload: unknown, provider: PoolProviderId, nowMs: number): I
   return accounts;
 }
 
-/** Antigravity's quota summary as windows; anything but a `groups` list is not a reading. */
+/** Antigravity's quota summary as windows; rejects malformed payloads via the shared decoder. */
 function antigravityWindows(body: unknown) {
   const payload = parseAntigravityPayload(body);
-  if (!payload || !Array.isArray(payload.groups)) throw new Error('Invalid quota response');
-  return buildAntigravityQuotaWindows(payload);
+  if (!payload) throw new Error('Invalid quota response');
+  const { windows, valid } = decodeAntigravityQuotaWindows(payload);
+  if (!valid) throw new Error('Invalid quota response');
+  return windows;
 }
 
 function usageWindows(provider: 'claude' | 'codex', body: unknown) {
@@ -251,6 +253,26 @@ function usageWindows(provider: 'claude' | 'codex', body: unknown) {
     : buildCodexQuotaWindows(parsed.payload, label);
 }
 
+/** ECMAScript Date range limit (±8.64e15 ms); values past it produce Invalid Date / RangeError. */
+const MAX_JS_DATE_MS = 8_640_000_000_000_000;
+
+function validResetAtMs(value: number | null | undefined): boolean {
+  return (
+    value === null ||
+    value === undefined ||
+    (Number.isSafeInteger(value) && Math.abs(value) <= MAX_JS_DATE_MS)
+  );
+}
+
+/** Extracts the payload body from a successful management `/requests/api-call` response. */
+function quotaResponseBody(response: unknown): string | Record<string, unknown> | null {
+  return isRecord(response) &&
+    response.status_code === 200 &&
+    (typeof response.body === 'string' || isRecord(response.body))
+    ? response.body
+    : null;
+}
+
 export function quotaSamples(
   provider: PoolProviderId,
   accountId: string,
@@ -261,13 +283,18 @@ export function quotaSamples(
     provider === 'antigravity' ? antigravityWindows(body) : usageWindows(provider, body);
   const samples: QuotaSample[] = [];
   for (const entry of windows) {
+    const resetAtMs = entry.resetAtMs ?? null;
+    if (!validResetAtMs(resetAtMs)) throw new Error('Invalid quota response');
     const window = laneOf(provider, entry.id);
     if (window !== 'five-hour' && window !== 'weekly') continue;
+    const periodHours = entry.periodHours ?? null;
     if (
+      samples.some((sample) => sample.window === window) ||
       entry.usedPercent === null ||
       !Number.isFinite(entry.usedPercent) ||
       entry.usedPercent < 0 ||
-      entry.usedPercent > 100
+      entry.usedPercent > 100 ||
+      (periodHours !== null && (!Number.isFinite(periodHours) || periodHours <= 0))
     ) {
       throw new Error('Invalid quota response');
     }
@@ -276,8 +303,8 @@ export function quotaSamples(
       window,
       observedAtMs,
       remainingPercent: 100 - entry.usedPercent,
-      resetAtMs: entry.resetAtMs ?? null,
-      periodHours: entry.periodHours ?? null,
+      resetAtMs,
+      periodHours,
     });
   }
   // Explicit missing observations supersede earlier balances without inventing zero usage.
@@ -315,7 +342,7 @@ export function quotaSamples(
  * Log detail for a failed poll: numeric status, retry-after seconds and header names only, so
  * upstream bodies, header values and identities never reach the log.
  */
-function failureDetail(accountId: string, response: unknown): string {
+function failureDetail(response: unknown): string {
   const status =
     isRecord(response) && typeof response.status_code === 'number'
       ? response.status_code
@@ -328,7 +355,7 @@ function failureDetail(accountId: string, response: unknown): string {
   const retry = Object.entries(headers).find(([name]) => name.toLowerCase() === 'retry-after')?.[1];
   const seconds =
     Array.isArray(retry) && /^\d{1,6}$/.test(String(retry[0])) ? String(retry[0]) : 'none';
-  return `${status} account=${accountId.slice(-8)} retry-after=${seconds} headers=${names.join(',') || 'none'}`;
+  return `${status} retry-after=${seconds} headers=${names.join(',') || 'none'}`;
 }
 
 /** Enumerates each instance once, then collects supported read-only quota observations. */
@@ -1071,38 +1098,40 @@ export class QuotaCollector {
     let usageBody: unknown;
     let upstream: unknown;
     try {
-      const claude = account.provider === 'claude';
-      const response =
-        account.provider === 'antigravity'
-          ? await this.readAntigravityQuota(source, key, signal, authIndex, projectId)
-          : await this.request(source, 'requests/api-call', key, signal, {
-              authIndex,
-              method: 'GET',
-              url: claude
-                ? ANTHROPIC_API_ORIGIN + ANTHROPIC_RESET_GRANT_STATUS_PATH
-                : CODEX_USAGE_URL,
-              header: claude ? CLAUDE_REQUEST_HEADERS : CODEX_REQUEST_HEADERS,
-            });
-      upstream = response;
-      if (
-        !isRecord(response) ||
-        response.status_code !== 200 ||
-        !(typeof response.body === 'string' || isRecord(response.body))
-      ) {
-        throw new Error('Quota request unavailable');
+      if (account.provider === 'antigravity') {
+        const result = await this.readAntigravityQuota(
+          account.id,
+          source,
+          key,
+          signal,
+          authIndex,
+          projectId
+        );
+        upstream = result.response;
+        if (!result.samples || !result.windows) throw new Error('Quota request unavailable');
+        ({ samples, windows } = result);
+        usageBody = isRecord(result.response) ? result.response.body : undefined;
+      } else {
+        const claude = account.provider === 'claude';
+        const response = await this.request(source, 'requests/api-call', key, signal, {
+          authIndex,
+          method: 'GET',
+          url: claude
+            ? ANTHROPIC_API_ORIGIN + ANTHROPIC_RESET_GRANT_STATUS_PATH
+            : CODEX_USAGE_URL,
+          header: claude ? CLAUDE_REQUEST_HEADERS : CODEX_REQUEST_HEADERS,
+        });
+        upstream = response;
+        const body = quotaResponseBody(response);
+        if (body === null) {
+          throw new Error('Quota request unavailable');
+        }
+        ({ samples, windows } = quotaSamples(account.provider, account.id, body, this.now()));
+        usageBody = body;
       }
-      ({ samples, windows } = quotaSamples(
-        account.provider,
-        account.id,
-        response.body,
-        this.now()
-      ));
-      usageBody = response.body;
     } catch {
       if (!signal.aborted && this.store.isLive(account.id)) {
-        console.error(
-          `Quota request failed: ${account.provider} ${failureDetail(account.id, upstream)}`
-        );
+        console.error(`Quota request failed: ${account.provider} ${failureDetail(upstream)}`);
         this.addIssue(source, account.provider, 'quota-unavailable');
         this.store.markAccountError(account.id, this.now());
       }
@@ -1153,29 +1182,51 @@ export class QuotaCollector {
 
   /**
    * Antigravity's quota summary for the credential's Cloud Code project, from the same endpoints,
-   * in the same order, as the hub-direct card (`ANTIGRAVITY_QUOTA_URLS`): the first 200 wins, and
-   * otherwise the last answer is the failure. No project id means nothing can be read.
+   * in the same order, as the hub-direct card (`ANTIGRAVITY_QUOTA_URLS`): each endpoint is
+   * validated in turn so a transport failure or malformed 200 continues to the next while
+   * cancellation stops immediately. No project id means nothing can be read.
    */
   private async readAntigravityQuota(
+    accountId: string,
     source: CollectionSource,
     key: string,
     signal: AbortSignal,
     authIndex: string,
     projectId: string | null
-  ): Promise<unknown> {
-    if (!projectId) throw new Error('Quota request unavailable');
-    let response: unknown = null;
+  ): Promise<{
+    response: unknown;
+    samples?: QuotaSample[];
+    windows?: AccountQuotaWindow[];
+  }> {
+    if (!projectId) return { response: null };
+    let lastResponse: unknown = null;
     for (const url of ANTIGRAVITY_QUOTA_URLS) {
-      response = await this.request(source, 'requests/api-call', key, signal, {
-        authIndex,
-        method: 'POST',
-        url,
-        header: ANTIGRAVITY_REQUEST_HEADERS,
-        data: JSON.stringify({ project: projectId }),
-      });
-      if (isRecord(response) && response.status_code === 200) break;
+      if (signal.aborted) throw new Error('Quota request aborted');
+      let response: unknown;
+      try {
+        response = await this.request(source, 'requests/api-call', key, signal, {
+          authIndex,
+          method: 'POST',
+          url,
+          header: ANTIGRAVITY_REQUEST_HEADERS,
+          data: JSON.stringify({ project: projectId }),
+        });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        lastResponse = null;
+        continue;
+      }
+      lastResponse = response;
+      const body = quotaResponseBody(response);
+      if (body === null) continue;
+      try {
+        const parsed = quotaSamples('antigravity', accountId, body, this.now());
+        return { response, ...parsed };
+      } catch {
+        continue;
+      }
     }
-    return response;
+    return { response: lastResponse };
   }
 
   private async readInventory(source: CollectionSource, signal: AbortSignal) {
