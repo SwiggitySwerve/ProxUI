@@ -4,7 +4,6 @@ import { QuotaCollector } from './quota/collector';
 import { ResetClaims } from './quota/claims';
 import { loadSourceManifest } from './providerSources/config';
 import { createManifestWatcher } from './providerSources/watch';
-import type { DeploymentSource } from '../src/domain/providerSources/types';
 import { LEGACY_SOURCE_MAPPING } from './quota/identity';
 import { createAnalyticsHandler } from './analytics/handler';
 import { startEventLoopLagProbe } from './eventLoopLag';
@@ -24,14 +23,10 @@ store.migrateLegacySources(
 // (prox-sources-apply) may gain hubs: those are handed to the collector, which only ever adds.
 // Removing or editing a source still takes a restart.
 const collector = new QuotaCollector(store, { sources: manifest.sources, revision });
-// applySources arrives with the open-provider quota work; until then a new hub waits for a restart.
-type HotAddSources = {
-  applySources?(sources: readonly DeploymentSource[], revision: string): void;
-};
 const manifestWatcher = process.env.PROX_SOURCE_MANIFEST
   ? setInterval(
       createManifestWatcher(manifestPath, { manifest, revision }, (next, nextRevision) =>
-        (collector as QuotaCollector & HotAddSources).applySources?.(next.sources, nextRevision)
+        collector.applySources(next.sources, nextRevision)
       ),
       30_000
     )

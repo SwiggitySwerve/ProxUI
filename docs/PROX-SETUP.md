@@ -442,9 +442,8 @@ Restart `prox` and `prox-history` once to pick up the mounts. Then
 start `prox-sources-apply.service` by hand to retry its admission.
 
 While running, prox-history checks the manifest's modification time every 30 seconds and
-hands a revision with new sources to the quota collector's `applySources`. That method
-ships with the open-provider quota work; until it is merged the call does nothing and a
-new hub's quota collection starts at the next prox-history restart. The watcher never
+hands a revision with new sources to the quota collector's `applySources`, which starts
+collecting the new hubs from the next read without disturbing existing ones. The watcher never
 removes or changes a source, and a manifest that fails validation is logged and ignored;
 removals and edits take a restart. prox-usage reads the manifest at start only. A signed-in browser
 re-reads `/prox/sources.json` every 60 seconds and adds or removes hubs when the revision
