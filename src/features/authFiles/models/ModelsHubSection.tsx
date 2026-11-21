@@ -17,6 +17,7 @@ import { AccessSaveBar } from './AccessSaveBar';
 import { AccessKey, ModelAccessMatrix } from './ModelAccessMatrix';
 import {
   browserStorage,
+  hiddenHubId,
   hiddenStorageKey,
   readHidden,
   withHidden,
@@ -123,17 +124,18 @@ export function ModelsHubSection({
   const [overflowing, setOverflowing] = useState(false);
 
   // Models hidden from the bands: this browser's view of this hub and provider, never access.
-  const hiddenKey = hiddenStorageKey(hubId, provider);
+  const hiddenKey = hiddenStorageKey(hiddenHubId(scope.source), provider);
   const [hidden, setHidden] = useState(() => readHidden(browserStorage(), hiddenKey));
   const [hiddenOpen, setHiddenOpen] = useState(false);
   const sectionRef = useRef<HTMLDivElement>(null);
-  // The "N hidden" button is for when the Hidden band is out of sight; it steps aside otherwise.
-  const [hiddenBandInView, setHiddenBandInView] = useState(false);
+  // The "N hidden" button is for when the Hidden band is out of sight; it steps aside otherwise,
+  // and when there is no band to go to.
+  const [hiddenBandInView, setHiddenBandInView] = useState(true);
   useEffect(() => {
     const check = () => {
       const band = sectionRef.current?.querySelector('[data-section="hidden"]');
       const box = band?.getBoundingClientRect();
-      setHiddenBandInView(Boolean(box && box.top < window.innerHeight && box.bottom > 0));
+      setHiddenBandInView(!box || (box.top < window.innerHeight && box.bottom > 0));
     };
     const frame = requestAnimationFrame(check);
     window.addEventListener('scroll', check, { capture: true, passive: true });
@@ -145,13 +147,12 @@ export function ModelsHubSection({
     };
   });
   const setModelsHidden = useCallback(
-    (models: string[], hide: boolean) =>
-      setHidden((prev) => {
-        const next = withHidden(prev, models, hide);
-        writeHidden(browserStorage(), hiddenKey, next);
-        return next;
-      }),
-    [hiddenKey]
+    (models: string[], hide: boolean) => {
+      const next = withHidden(hidden, models, hide);
+      setHidden(next);
+      writeHidden(browserStorage(), hiddenKey, next);
+    },
+    [hidden, hiddenKey]
   );
 
   // The top bar's refresh re-lists the credentials and re-reads this provider's model access.

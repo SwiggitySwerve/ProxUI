@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   arrangeRows,
+  hiddenHubId,
   hiddenStorageKey,
   hiddenSummary,
   readHidden,
@@ -28,6 +29,20 @@ describe('hidden models', () => {
   test('the key is per hub and provider', () => {
     expect(hiddenStorageKey('alpha', 'claude')).not.toBe(hiddenStorageKey('beta', 'claude'));
     expect(hiddenStorageKey('alpha', 'claude')).not.toBe(hiddenStorageKey('alpha', 'codex'));
+  });
+
+  test('two external hubs (both id "external") keep separate hidden models', () => {
+    const external = (apiBase: string) => ({
+      instanceId: 'external',
+      authScope: 'external',
+      apiBase,
+    });
+    expect(hiddenHubId(external('https://a.example/v0/management'))).not.toBe(
+      hiddenHubId(external('https://b.example/v0/management'))
+    );
+    expect(
+      hiddenHubId({ instanceId: 'claude-primary', authScope: 'deployment', apiBase: 'x' })
+    ).toBe('claude-primary');
   });
 
   test('hidden ids round-trip through storage; none hidden removes the key', () => {

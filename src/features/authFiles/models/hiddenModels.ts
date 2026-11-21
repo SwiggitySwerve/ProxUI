@@ -8,6 +8,10 @@
 export const hiddenStorageKey = (hub: string, provider: string) =>
   `prox:models:hidden:v1:${hub}:${provider}`;
 
+/** A hub's id for the key: every external hub shares the id `external`, so use its address. */
+export const hiddenHubId = (source: { instanceId: string; authScope: string; apiBase: string }) =>
+  source.authScope === 'external' ? source.apiBase : source.instanceId;
+
 /** The browser's localStorage, or null where reading it throws (blocked or sandboxed). */
 export function browserStorage(): Storage | null {
   try {

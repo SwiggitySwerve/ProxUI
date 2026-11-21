@@ -162,13 +162,17 @@ export function ModelAccessMatrix(props: Props) {
   const accountState = (account: AccountAccess) =>
     combined(rows.map((row) => cellOf(account, row)));
 
-  // A hidden row stays in its band while it has staged switches or a search finds it.
+  // A hidden row stays in its band while it has staged switches (on any account, shown or
+  // filtered out) or a search finds it.
   const { shown, collapsed } = arrangeRows(
     rows,
     props.hidden,
-    (row) => props.searching || Boolean(modelState(row)?.changed)
+    (row) =>
+      props.searching ||
+      Boolean(combined(inventory.accounts.map((account) => cellOf(account, row)))?.changed)
   );
-  const hiddenGroup = { rows: collapsed, ...hiddenSummary(collapsed, isLit) };
+  // Collapsed rows have nothing staged: "still on" is what the hub serves, as the bands are split.
+  const hiddenGroup = { rows: collapsed, ...hiddenSummary(collapsed, isServed) };
   /** Hidden but still in its band (staged, or found by a search): say so on the row. */
   const markHidden = (row: MatrixRow) => isHidden(row) && !collapsed.includes(row);
   const hiddenOpen = props.hiddenOpen;
@@ -262,7 +266,7 @@ export function ModelAccessMatrix(props: Props) {
           <span className={styles.hiddenStillOn}>
             {hiddenGroup.stillOn === 1
               ? t('model_access.hidden_still_on_one', {
-                  model: hiddenGroup.rows.find(isLit)?.model ?? '',
+                  model: hiddenGroup.rows.find(isServed)?.model ?? '',
                 })
               : t('model_access.hidden_still_on', { count: hiddenGroup.stillOn })}
           </span>
@@ -272,12 +276,7 @@ export function ModelAccessMatrix(props: Props) {
         <button
           type="button"
           className={styles.bandAction}
-          onClick={() =>
-            props.onHide(
-              hiddenGroup.rows.map((row) => row.model),
-              false
-            )
-          }
+          onClick={() => props.onHide([...props.hidden], false)}
           data-unhide-all
         >
           <IconEye size={14} />
