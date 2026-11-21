@@ -3176,5 +3176,27 @@
     "unreported_spent_limit": "Расход и лимит не сообщаются",
     "unreported_spent": "Расход не сообщается",
     "unreported_limit": "Лимит не сообщается"
+  },
+  "provider_catalog": {
+    "awaiting_auth": "Ожидает авторизации",
+    "awaiting_auth_desc": "Обнаружен на этом узле. Войдите или загрузите учётные данные, чтобы активировать его в Файлах авторизации и Управлении квотами.",
+    "connect_action": "Войти",
+    "upload_action": "Загрузить учётные данные",
+    "lifecycle_active": "Активен",
+    "lifecycle_disabled": "Отключён",
+    "lifecycle_needs_attention": "Требует внимания",
+    "unpooled_section_title": "Обнаруженные провайдеры (вне пула)",
+    "unpooled_section_help": "Авторизованные аккаунты с квотами отображаются здесь, пока вы не добавите их в общий пул.",
+    "awaiting_auth_section_title": "Ожидают авторизации",
+    "awaiting_auth_section_help": "Провайдеры, объявленные узлами, без учётных данных.",
+    "opt_in_pool": "Добавить в пул квот",
+    "opt_out_pool": "Убрать из пула",
+    "pool_profile_title": "Настройка пула квот",
+    "pool_profile_weekly": "Недельное окно",
+    "pool_profile_five_hour": "5-часовое окно",
+    "pool_profile_none": "Нет",
+    "pool_profile_units": "Базовые единицы плана (1 = 100 очков)",
+    "pool_profile_save": "Сохранить настройки пула",
+    "no_quota_reader": "Авторизован · нет считывателя квот"
   }
 }

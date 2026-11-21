@@ -1,4 +1,6 @@
-import type { PoolDashboard, PoolProviderId, QuotaPool } from '@/domain/quotaPool/types';
+import { isValidProviderId } from '@/domain/providerCatalog';
+import { poolProviderViewId } from '@/domain/quotaPool/providers';
+import type { PoolDashboard, QuotaPool } from '@/domain/quotaPool/types';
 import type { ChartMode } from '../chartGeometry';
 
 /**
@@ -6,7 +8,7 @@ import type { ChartMode } from '../chartGeometry';
  * stays out (it is relative to today, so a shared link would drift), and so does "Show emails".
  */
 export interface QuotaViewState {
-  provider: PoolProviderId | 'all';
+  provider: string;
   window: PoolDashboard['window'];
   mode: ChartMode;
   lookback: PoolDashboard['lookbackHours'];
@@ -21,8 +23,8 @@ export const DEFAULT_VIEW_STATE: QuotaViewState = {
   future: 1,
 };
 
-const ALLOWED: { [K in keyof QuotaViewState]: readonly QuotaViewState[K][] } = {
-  provider: ['all', 'claude', 'codex', 'antigravity'],
+type Filter = Exclude<keyof QuotaViewState, 'provider'>;
+const ALLOWED: { [K in Filter]: readonly QuotaViewState[K][] } = {
   window: ['weekly', 'five-hour'],
   mode: ['remaining', 'drain', 'burn'],
   lookback: [1, 3, 6],
@@ -33,15 +35,19 @@ const KEYS = Object.keys(DEFAULT_VIEW_STATE) as (keyof QuotaViewState)[];
 
 /** Each key is matched against its allowed values; anything else falls back to the default. */
 export function readViewState(params: URLSearchParams): QuotaViewState {
-  const pick = <K extends keyof QuotaViewState>(key: K): QuotaViewState[K] => {
+  const pick = <K extends Filter>(key: K): QuotaViewState[K] => {
     const raw = params.get(key);
     return (
       (ALLOWED[key] as readonly QuotaViewState[K][]).find((value) => String(value) === raw) ??
       DEFAULT_VIEW_STATE[key]
     );
   };
+  const provider = params.get('provider');
   return {
-    provider: pick('provider'),
+    provider:
+      isValidProviderId(provider) || provider === poolProviderViewId('all')
+        ? provider
+        : DEFAULT_VIEW_STATE.provider,
     window: pick('window'),
     mode: pick('mode'),
     lookback: pick('lookback'),
@@ -63,12 +69,15 @@ export function sameView(a: QuotaViewState, b: QuotaViewState): boolean {
   return KEYS.every((key) => a[key] === b[key]);
 }
 
-/** Provider chips to show: Gemini is offered only when the installation has a Gemini pool. */
+/** Keep the legacy chips first; append the providers with pools on any source. */
 export function visibleProviders(
   pools: readonly Pick<QuotaPool, 'provider'>[] | undefined
 ): readonly QuotaViewState['provider'][] {
-  const hasGemini = pools?.some((pool) => pool.provider === 'antigravity') ?? false;
-  return hasGemini ? ['all', 'claude', 'codex', 'antigravity'] : ['all', 'claude', 'codex'];
+  const discovered = (pools ?? [])
+    .map((pool) => pool.provider)
+    .filter(isValidProviderId)
+    .sort();
+  return [...new Set(['all', 'claude', 'codex', ...discovered.map(poolProviderViewId)])];
 }
 
 /** Fall back to `all` when a deep-linked provider is absent from the available choices. */

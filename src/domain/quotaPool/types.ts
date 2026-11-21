@@ -1,7 +1,10 @@
 import type { AccountBilling } from '../accountBilling';
+import type { NormalizedQuotaBucketScope, PoolProfile } from '../providerCatalog';
 /** Public contract for the server-owned quota history and forecast domain. */
 /** `antigravity` is the Gemini (Google AI) pool, read from an Antigravity hub. */
-export type PoolProviderId = 'claude' | 'codex' | 'antigravity';
+export type BuiltInPoolProviderId = 'claude' | 'codex' | 'antigravity';
+export type PoolProviderId = string;
+export type PoolProfileUpdate = Omit<PoolProfile, 'updatedAtMs'>;
 /** Providers whose accounts support server-managed reset claims and reset history. */
 export type ResetProviderId = 'claude' | 'codex';
 export type PoolWindow = 'weekly' | 'five-hour';
@@ -86,11 +89,16 @@ export interface AccountQuotaWindow {
   resetAtMs: number | null;
   /** Window length in hours; absent on readings that predate it. */
   periodHours?: number | null;
+  /** Normalized provider metadata. Older built-in responses omit these fields. */
+  label?: string;
+  scope?: NormalizedQuotaBucketScope;
+  selectable?: false;
 }
 export interface QuotaPool {
   instanceId?: string;
   sourceLabel?: string;
   provider: PoolProviderId;
+  displayName?: string;
   accountCount: number;
   eligibleCount: number;
   loadedCount: number;
@@ -126,12 +134,34 @@ export type PoolTrace = Pick<
   | 'resets'
   | 'poolEmptyAtMs'
 >;
-export type PoolLayer = PoolTrace & Pick<QuotaPool, 'provider' | 'instanceId' | 'sourceLabel'>;
+export type PoolLayer = PoolTrace &
+  Pick<QuotaPool, 'provider' | 'instanceId' | 'sourceLabel' | 'displayName'>;
 export interface CombinedPoolResult {
   /** Provider contributions on the same history/event timeline; contains no account metadata. */
   layers?: PoolLayer[];
   series: PoolTrace | null;
   unavailableReason: 'no-accounts' | 'ambiguous-sources' | null;
+}
+interface DiscoveredProvider {
+  instanceId: string;
+  sourceLabel: string;
+  provider: PoolProviderId;
+  displayName: string;
+}
+export interface AwaitingAuthProvider extends DiscoveredProvider {
+  quotaSupported: boolean;
+}
+export interface UnpooledProvider extends DiscoveredProvider {
+  accounts: readonly {
+    id: string;
+    label: string;
+    identifier: string;
+    status: 'ok' | 'stale' | 'error' | 'disabled' | 'no-reader';
+    observedAtMs: number | null;
+    planLabel: string | null;
+    planType?: string | null;
+    windows: readonly AccountQuotaWindow[];
+  }[];
 }
 export interface PoolDashboard {
   nowMs: number;
@@ -169,5 +199,8 @@ export interface PoolDashboard {
   unresolvedHistoryAccountCount?: number;
   pools: QuotaPool[];
   /** Optional during a UI/history-service rolling upgrade. */
-  combined?: Record<PoolProviderId | 'all', CombinedPoolResult>;
+  combined?: Partial<Record<string, CombinedPoolResult>>;
+  awaitingAuth?: readonly AwaitingAuthProvider[];
+  unpooled?: readonly UnpooledProvider[];
+  poolProfiles?: readonly PoolProfile[];
 }

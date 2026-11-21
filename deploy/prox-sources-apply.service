@@ -1,0 +1,16 @@
+# Template only: started by prox-sources.path once the operator enables it, or by hand.
+# Runs the bundle built from the deployed commit, never a source checkout.
+[Unit]
+Description=Probe ProxD hubs and publish Prox source routes
+After=prox.service
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
+# The baked manifest this deployment's images were built from; its sources always win.
+Environment=PROX_SOURCES_BASE_MANIFEST=%h/.local/share/prox/sources-apply/provider-sources.json
+ExecStart=/usr/bin/env bun %h/.local/share/prox/sources-apply/prox-sources-apply.js
+TimeoutStartSec=120
+NoNewPrivileges=yes
+# Nginx's worker reads the published routes and discovery; the script sets each file's mode.
+UMask=0022

@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNotificationStore } from '@/stores';
 import { createOAuthApi } from '@/services/api/oauth';
+import type { SourceSession } from '@/services/api/sourceSession';
 import { pluginsApi } from '@/services/api/plugins';
 import { useSelectedSourceSession } from '@/components/sources/SelectedSourceBoundary';
 import { credentialDestination } from '@/domain/providerSources/ownership';
 import { useProviderSources } from '@/stores/useProviderSources';
 import { getErrorMessage, isRecord } from '@/utils/helpers';
 import { notifyAuthFilesChanged } from '@/features/authFiles/authFilesEvents';
+import { invalidateProviderCatalog } from '@/features/authFiles/providerCatalogRuntime';
 import { createOAuthAttempts, type OAuthAttempt } from '../oauthAttempts';
 import { validateDevinCallback } from '../devinOAuth';
 import { resolveCallbackUrl } from '../callbackUrl';
@@ -87,15 +89,22 @@ export function useOAuthFlows({ providerCards, isFocused }: UseOAuthFlowsOptions
   const { t } = useTranslation();
   const session = useSelectedSourceSession();
   const registry = useProviderSources();
-  // A login belongs to its provider's instance, whichever source the page is showing.
+  // A login belongs to its provider's instance, whichever source the page is showing. It is
+  // resolved once, when the login starts.
   const destinationOf = (provider: string) => {
     const view = credentialDestination(registry.sources, session.owner.instanceId, provider);
     if (!view || view.source.instanceId === session.owner.instanceId) return session;
     return view.status === 'ready' ? view.session : null;
   };
-  const oauthApiOf = (provider: string) => {
-    const destination = destinationOf(provider);
-    if (!destination) throw new Error(t('auth_login.destination_unavailable'));
+  /**
+   * The hub session each login started on. Polling, a pasted callback, cancellation and the
+   * post-login refresh all go to that hub and session generation, never to whatever the
+   * ownership map says later: an OAuth state is only valid on the hub that issued it. A pinned
+   * session that has since been replaced fails closed rather than falling over to another hub.
+   */
+  const pinned = useRef(new Map<string, SourceSession>());
+  const pinnedApi = (destination: SourceSession) => {
+    if (destination.signal.aborted) throw new Error(t('auth_login.destination_unavailable'));
     return createOAuthApi(destination);
   };
   const { showNotification } = useNotificationStore();
@@ -117,6 +126,7 @@ export function useOAuthFlows({ providerCards, isFocused }: UseOAuthFlowsOptions
   useEffect(() => {
     const invalidate = () => {
       clearTimers();
+      pinned.current.clear();
       setStates({});
       setAddedCount(0);
     };
@@ -148,12 +158,17 @@ export function useOAuthFlows({ providerCards, isFocused }: UseOAuthFlowsOptions
 
   const resetProviderAttempt = (provider: string) => {
     attempts.current.get(provider)?.invalidate();
+    pinned.current.delete(provider);
     setStates((prev) => ({ ...prev, [provider]: {} }));
   };
 
-  const completeProviderAuth = (provider: string) => {
+  const completeProviderAuth = (provider: string, destination: SourceSession) => {
     const resetAttempt = attempts.current.begin(provider);
-    void notifyAuthFilesChanged((destinationOf(provider) ?? session).owner, { reason: 'add' });
+    // The hub that issued the login gained a credential: re-read its catalog (the provider
+    // leaves "waiting for auth") and the credential inventory, which syncs prox-history so
+    // Auth Files and Quota Management show the account at once.
+    void invalidateProviderCatalog(destination);
+    void notifyAuthFilesChanged(destination.owner, { reason: 'add' });
     recordCredentialAdded();
     updateProviderState(provider, {
       url: undefined,
@@ -175,12 +190,17 @@ export function useOAuthFlows({ providerCards, isFocused }: UseOAuthFlowsOptions
     }, SUCCESS_RESET_DELAY_MS);
   };
 
-  const startPolling = (provider: string, state: string, attempt: OAuthAttempt) => {
+  const startPolling = (
+    provider: string,
+    state: string,
+    attempt: OAuthAttempt,
+    destination: SourceSession
+  ) => {
     attempt.poll(
-      () => oauthApiOf(provider).getAuthStatus(state, attempt.signal),
+      () => pinnedApi(destination).getAuthStatus(state, attempt.signal),
       (res) => {
         if (res.status === 'ok') {
-          completeProviderAuth(provider);
+          completeProviderAuth(provider, destination);
           notify(provider, providerText(provider, 'oauth_status_success'), 'success');
         } else if (res.status === 'error') {
           if (provider === 'devin') {
@@ -218,7 +238,9 @@ export function useOAuthFlows({ providerCards, isFocused }: UseOAuthFlowsOptions
 
   const cancelAuth = async (provider: string) => {
     const state = states[provider]?.state;
-    if (provider !== 'devin' || !state || states[provider]?.cancelling) return;
+    // A login state exists only for a login started on a pinned hub.
+    const destination = pinned.current.get(provider);
+    if (provider !== 'devin' || !state || !destination || states[provider]?.cancelling) return;
     // Replace the attempt before DELETE so late polls/callback submissions cannot
     // overwrite the cancellation result or a subsequent login.
     const attempt = attempts.current.begin(provider);
@@ -232,7 +254,7 @@ export function useOAuthFlows({ providerCards, isFocused }: UseOAuthFlowsOptions
       callbackValidation: undefined,
     });
     try {
-      const result = await oauthApiOf(provider).cancelSession(state, attempt.signal);
+      const result = await pinnedApi(destination).cancelSession(state, attempt.signal);
       if (!attempt.isCurrent()) return;
       if (result.cancelled) {
         resetProviderAttempt(provider);
@@ -252,7 +274,7 @@ export function useOAuthFlows({ providerCards, isFocused }: UseOAuthFlowsOptions
       status: 'waiting',
       error: undefined,
     });
-    startPolling(provider, state, attempt);
+    startPolling(provider, state, attempt, destination);
   };
 
   const startAuth = async (provider: string) => {
@@ -275,8 +297,18 @@ export function useOAuthFlows({ providerCards, isFocused }: UseOAuthFlowsOptions
       callbackUrl: '',
       callbackSubmitting: false,
     });
+    // A new attempt never inherits the previous attempt's hub.
+    pinned.current.delete(provider);
     try {
-      const res = await oauthApiOf(provider).startAuth(provider, attempt.signal);
+      const destination = destinationOf(provider);
+      if (!destination) throw new Error(t('auth_login.destination_unavailable'));
+      pinned.current.set(provider, destination);
+      const card = providerCards.find((item) => item.id === provider);
+      // A plugin tile carries the catalog's own id; it is sent as is, never folded onto a built-in.
+      const res = await pinnedApi(destination).startAuth(provider, attempt.signal, {
+        webui: card?.kind === 'plugin' ? card.webui : undefined,
+        exact: card?.kind === 'plugin',
+      });
       if (!attempt.isCurrent()) return;
       if (!res.state) {
         const message = t('auth_login.missing_state');
@@ -297,7 +329,7 @@ export function useOAuthFlows({ providerCards, isFocused }: UseOAuthFlowsOptions
         status: 'waiting',
         polling: true,
       });
-      startPolling(provider, res.state, attempt);
+      startPolling(provider, res.state, attempt, destination);
     } catch (err: unknown) {
       if (!attempt.isCurrent()) return;
       const message = getErrorMessage(err);
@@ -321,7 +353,8 @@ export function useOAuthFlows({ providerCards, isFocused }: UseOAuthFlowsOptions
 
   const submitCallback = async (provider: string) => {
     const attempt = attempts.current.get(provider);
-    if (!attempt?.isCurrent()) return;
+    const destination = pinned.current.get(provider);
+    if (!attempt?.isCurrent() || !destination) return;
     if (
       provider === 'devin' &&
       (states[provider]?.cancelling || states[provider]?.status !== 'waiting')
@@ -360,7 +393,10 @@ export function useOAuthFlows({ providerCards, isFocused }: UseOAuthFlowsOptions
       callbackValidation: undefined,
     });
     try {
-      await oauthApiOf(provider).submitCallback(provider, redirectUrl, attempt.signal);
+      const card = providerCards.find((item) => item.id === provider);
+      await pinnedApi(destination).submitCallback(provider, redirectUrl, attempt.signal, {
+        exact: card?.kind === 'plugin',
+      });
       if (!attempt.isCurrent()) return;
       updateProviderState(provider, { callbackSubmitting: false, callbackStatus: 'success' });
       notify(provider, t('auth_login.oauth_callback_success'), 'success');
@@ -369,7 +405,7 @@ export function useOAuthFlows({ providerCards, isFocused }: UseOAuthFlowsOptions
       const loginState = states[provider]?.state;
       if (loginState && !attempt.isPolling()) {
         updateProviderState(provider, { status: 'waiting', error: undefined, polling: true });
-        startPolling(provider, loginState, attempt);
+        startPolling(provider, loginState, attempt, destination);
       }
     } catch (err: unknown) {
       if (!attempt.isCurrent()) return;

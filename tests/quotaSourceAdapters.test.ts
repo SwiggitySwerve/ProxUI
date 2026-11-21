@@ -2,7 +2,7 @@ import { testQuotaDependencies } from './helpers/quotaDependencies';
 import { createCodexQuotaConfig } from '@/features/quota/providers/codex/data';
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import type { AxiosAdapter, InternalAxiosRequestConfig } from 'axios';
+import { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from 'axios';
 import type { TFunction } from 'i18next';
 import { createQuotaAdapters, QUOTA_PRESENTATION } from '@/features/quota/providers';
 import { createAuthFilesApi } from '@/services/api/authFiles';
@@ -286,6 +286,12 @@ test('a reset answered after the connection changed, or asked for after it, spen
 test('plugin fallback list/cache and nested quota route cannot mix identical provider indices', async () => {
   forbidSingleton();
   const f = fixture(({ owner, path, payload }) => {
+    // An older hub without POST /quota/fetch: the router's own 404, no JSON error body.
+    if (path === '/quota/fetch') {
+      throw Object.assign(new AxiosError('Request failed with status code 404'), {
+        response: { status: 404, data: '404 page not found' },
+      });
+    }
     if (path === '/plugins')
       return {
         plugins: [

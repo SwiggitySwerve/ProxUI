@@ -74,6 +74,7 @@ export function usePoolDashboard(query: PoolQuery) {
     ...snapshot,
     reload: resource.reload,
     refresh: resource.refresh,
+    saveProfile: resource.saveProfile,
     connected: authenticated && connection === 'connected',
   };
 }

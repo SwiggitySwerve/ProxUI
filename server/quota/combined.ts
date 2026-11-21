@@ -104,6 +104,7 @@ export function combinedPools(
       ? {
           layers: eligible.map((pool, index) => ({
             provider: pool.provider,
+            ...(pool.displayName ? { displayName: pool.displayName } : {}),
             instanceId: pool.instanceId,
             sourceLabel: pool.sourceLabel,
             capacityPoints: pool.capacityPoints,

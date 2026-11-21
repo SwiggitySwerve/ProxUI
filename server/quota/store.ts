@@ -1,8 +1,14 @@
 import { Database } from 'bun:sqlite';
 import { chmodSync, closeSync, mkdirSync, openSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import {
+  isValidProviderId,
+  type PoolProfile,
+  type ProviderCatalogEntry,
+} from '../../src/domain/providerCatalog';
 import type {
   PoolProviderId,
+  PoolProfileUpdate,
   PoolWindow,
   ResetProviderId,
 } from '../../src/domain/quotaPool/types';
@@ -15,8 +21,10 @@ import {
   type ResetEvent,
   type ResetReading,
   type StoredAccount,
+  type StoredCatalogProvider,
 } from './types';
 import { legacyAccountId, sourceAccountId, type LegacySourceMapping } from './identity';
+import { parsePoolProfile, type PoolProfileKey } from './poolProfiles';
 
 type AccountRow = Omit<
   StoredAccount,
@@ -29,12 +37,14 @@ type AccountRow = Omit<
 
 const QUOTA_ACCOUNT_COLUMNS =
   'id, provider, name, email, disabled, retired, lastSeenAtMs, lastErrorAtMs, retiredAtMs';
+const OBSERVATION_COLUMNS =
+  'accountId, window, observedAtMs, remainingPercent, resetAtMs, periodHours';
 
 function quotaAccountsTableSql(tableName: string, ifNotExists = false): string {
   return `
       CREATE TABLE ${ifNotExists ? 'IF NOT EXISTS ' : ''}${tableName} (
         id TEXT PRIMARY KEY,
-        provider TEXT NOT NULL CHECK (provider IN ('claude', 'codex', 'antigravity')),
+        provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 64),
         name TEXT NOT NULL,
         email TEXT,
         disabled INTEGER NOT NULL CHECK (disabled IN (0, 1)),
@@ -98,6 +108,26 @@ export class QuotaStore {
         plan TEXT NOT NULL,
         observedAtMs INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS quota_provider_catalog (
+        instanceId TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        displayName TEXT NOT NULL,
+        lifecycle TEXT NOT NULL,
+        quotaSupported INTEGER NOT NULL CHECK (quotaSupported IN (0, 1)),
+        firstSeenAtMs INTEGER NOT NULL,
+        lastSeenAtMs INTEGER NOT NULL,
+        PRIMARY KEY (instanceId, provider)
+      );
+      CREATE TABLE IF NOT EXISTS quota_pool_profiles (
+        instanceId TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        weeklyWindowId TEXT,
+        fiveHourWindowId TEXT,
+        planUnitsJson TEXT NOT NULL,
+        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+        updatedAtMs INTEGER NOT NULL,
+        PRIMARY KEY (instanceId, provider)
+      );
       -- Reset claims are user-requested spends and stay as history: no foreign key, no 30-day
       -- pruning, and an account purge leaves them (they hold opaque ids and readings only).
       CREATE TABLE IF NOT EXISTS quota_reset_events (
@@ -132,6 +162,14 @@ export class QuotaStore {
         if (!columns.some((column) => column.name === 'retiredAtMs')) {
           this.db.exec('ALTER TABLE quota_accounts ADD COLUMN retiredAtMs INTEGER');
         }
+        if (
+          !this.db
+            .query<{ name: string }, []>('PRAGMA table_info(quota_samples)')
+            .all()
+            .some((column) => column.name === 'bucketId')
+        ) {
+          this.db.exec('ALTER TABLE quota_samples ADD COLUMN bucketId TEXT');
+        }
         // Accounts retired before this column existed scrub now and purge after the grace period.
         this.db
           .query(
@@ -142,6 +180,18 @@ export class QuotaStore {
       })
       .immediate();
     this.widenAccountProviders();
+    // Stored generic samples retain the provider's bucket identity so a profile edit cannot
+    // splice readings from two different buckets into one history or forecast.
+    this.db.exec(`
+      CREATE VIEW IF NOT EXISTS quota_current_samples AS
+      SELECT s.*
+      FROM quota_samples s
+      LEFT JOIN quota_accounts a ON a.id = s.accountId
+      LEFT JOIN quota_account_sources owner ON owner.accountId = s.accountId
+      LEFT JOIN quota_pool_profiles p ON p.instanceId = owner.instanceId AND p.provider = a.provider
+      WHERE s.bucketId IS NULL OR (p.enabled = 1 AND s.bucketId =
+        CASE s.window WHEN 'weekly' THEN p.weeklyWindowId ELSE p.fiveHourWindowId END)
+    `);
   }
 
   private needsProviderWidening(): boolean {
@@ -150,12 +200,12 @@ export class QuotaStore {
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'quota_accounts'"
       )
       .get();
-    return Boolean(table?.sql.includes("CHECK (provider IN ('claude', 'codex'))"));
+    return Boolean(table?.sql.match(/CHECK\s*\(\s*provider\s+IN\s*\(/i));
   }
 
   /**
-   * Databases created before Antigravity joined the pool limit `quota_accounts.provider` to
-   * claude/codex. SQLite cannot alter a CHECK, so the table is rebuilt once with every row, the
+   * Older databases enforce a fixed provider list. SQLite cannot alter a CHECK, so the
+   * table is rebuilt once with every row, the
    * way https://sqlite.org/lang_altertable.html#otheralter describes: foreign keys off, copy,
    * drop, rename, index, then a foreign key check before commit. Migration eligibility is
    * re-checked inside the immediate transaction so concurrent starts cannot rebuild twice. Reset
@@ -183,6 +233,117 @@ export class QuotaStore {
     } finally {
       this.db.exec('PRAGMA foreign_keys = ON');
     }
+  }
+
+  listProviderCatalog(instanceId?: string): StoredCatalogProvider[] {
+    return this.db
+      .query<
+        Omit<StoredCatalogProvider, 'quotaSupported'> & { quotaSupported: number },
+        [string | null]
+      >(
+        `SELECT * FROM quota_provider_catalog WHERE (?1 IS NULL OR instanceId = ?1)
+         ORDER BY instanceId, provider`
+      )
+      .all(instanceId ?? null)
+      .map((row) => ({ ...row, quotaSupported: row.quotaSupported === 1 }));
+  }
+
+  /** Only a validated snapshot replaces the previous snapshot for this instance. */
+  replaceProviderCatalog(
+    instanceId: string,
+    entries: readonly ProviderCatalogEntry[],
+    nowMs: number
+  ) {
+    if (entries.some((entry) => !isValidProviderId(entry.id)))
+      throw new Error('Invalid provider catalog');
+    this.db
+      .transaction(() => {
+        this.db
+          .query(
+            `DELETE FROM quota_provider_catalog WHERE instanceId = ?
+         AND provider NOT IN (SELECT value FROM json_each(?))`
+          )
+          .run(instanceId, JSON.stringify(entries.map((entry) => entry.id)));
+        const upsert = this.db.query(`
+        INSERT INTO quota_provider_catalog
+          (instanceId, provider, displayName, lifecycle, quotaSupported, firstSeenAtMs, lastSeenAtMs)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(instanceId, provider) DO UPDATE SET displayName = excluded.displayName,
+          lifecycle = excluded.lifecycle, quotaSupported = excluded.quotaSupported,
+          lastSeenAtMs = excluded.lastSeenAtMs
+      `);
+        for (const entry of entries) {
+          upsert.run(
+            instanceId,
+            entry.id,
+            entry.displayName,
+            entry.lifecycle,
+            Number(entry.quota.supported),
+            nowMs,
+            nowMs
+          );
+        }
+      })
+      .immediate();
+  }
+
+  private profiles(key?: PoolProfileKey): PoolProfile[] {
+    return this.db
+      .query<
+        Omit<PoolProfile, 'planUnits' | 'enabled'> & { planUnitsJson: string; enabled: number },
+        [string | null, string | null]
+      >(
+        `
+      SELECT * FROM quota_pool_profiles WHERE (?1 IS NULL OR (instanceId = ?1 AND provider = ?2))
+      ORDER BY instanceId, provider
+    `
+      )
+      .all(key?.instanceId ?? null, key?.provider ?? null)
+      .map(({ planUnitsJson, enabled, ...row }) => ({
+        ...row,
+        enabled: enabled === 1,
+        planUnits: JSON.parse(planUnitsJson) as PoolProfile['planUnits'],
+      }));
+  }
+
+  listPoolProfiles(): PoolProfile[] {
+    return this.profiles();
+  }
+
+  getPoolProfile(key: PoolProfileKey): PoolProfile | undefined {
+    return this.profiles(key)[0];
+  }
+
+  putPoolProfile(input: PoolProfileUpdate, nowMs: number): PoolProfile {
+    const profile = parsePoolProfile(input);
+    if (!profile) throw new Error('Invalid quota pool profile');
+    this.db
+      .query(
+        `
+      INSERT INTO quota_pool_profiles
+        (instanceId, provider, weeklyWindowId, fiveHourWindowId, planUnitsJson, enabled, updatedAtMs)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(instanceId, provider) DO UPDATE SET weeklyWindowId = excluded.weeklyWindowId,
+        fiveHourWindowId = excluded.fiveHourWindowId, planUnitsJson = excluded.planUnitsJson,
+        enabled = excluded.enabled, updatedAtMs = excluded.updatedAtMs
+    `
+      )
+      .run(
+        profile.instanceId,
+        profile.provider,
+        profile.weeklyWindowId,
+        profile.fiveHourWindowId,
+        JSON.stringify(profile.planUnits),
+        Number(profile.enabled),
+        nowMs
+      );
+    return { ...profile, updatedAtMs: nowMs };
+  }
+
+  deletePoolProfile(key: PoolProfileKey): void {
+    this.db
+      .query('DELETE FROM quota_pool_profiles WHERE instanceId = ? AND provider = ?')
+      .run(key.instanceId, key.provider);
   }
 
   listAccounts(): StoredAccount[] {
@@ -270,6 +431,7 @@ export class QuotaStore {
 
   /** Resolve a source-local occurrence, including explicitly attributed legacy IDs. */
   accountIdFor(instanceId: string, provider: PoolProviderId, authIndex: string): string {
+    if (!isValidProviderId(provider)) throw new Error('Invalid quota provider');
     const id = sourceAccountId(instanceId, legacyAccountId(provider, authIndex));
     return (
       this.db
@@ -285,7 +447,8 @@ export class QuotaStore {
       return this.db
         .query<QuotaSample, [number, number, PoolWindow]>(
           `
-        SELECT * FROM quota_samples WHERE observedAtMs BETWEEN ? AND ? AND window = ?
+        SELECT ${OBSERVATION_COLUMNS} FROM quota_current_samples
+        WHERE observedAtMs BETWEEN ? AND ? AND window = ?
         ORDER BY observedAtMs, accountId, window
       `
         )
@@ -294,7 +457,7 @@ export class QuotaStore {
     return this.db
       .query<QuotaSample, [number, number]>(
         `
-      SELECT * FROM quota_samples WHERE observedAtMs BETWEEN ? AND ?
+      SELECT ${OBSERVATION_COLUMNS} FROM quota_current_samples WHERE observedAtMs BETWEEN ? AND ?
       ORDER BY observedAtMs, accountId, window
     `
       )
@@ -306,10 +469,10 @@ export class QuotaStore {
     return this.db
       .query<QuotaSample, []>(
         `
-      SELECT s.* FROM quota_samples s
+      SELECT ${OBSERVATION_COLUMNS} FROM quota_current_samples s
       JOIN (
         SELECT accountId, window, MAX(observedAtMs) AS observedAtMs
-        FROM quota_samples GROUP BY accountId, window
+        FROM quota_current_samples GROUP BY accountId, window
       ) latest USING (accountId, window, observedAtMs)
       ORDER BY accountId, window
     `
@@ -317,14 +480,15 @@ export class QuotaStore {
       .all();
   }
 
-  /** Each account's earliest sample in any window: when it joined its pool's history. */
-  firstSampleTimes(): Map<string, number> {
+  /** A generic account joins the window at its first sample under the selected mapping. */
+  firstSampleTimes(window?: PoolWindow): Map<string, number> {
     return new Map(
       this.db
-        .query<{ accountId: string; atMs: number }, []>(
-          'SELECT accountId, MIN(observedAtMs) AS atMs FROM quota_samples GROUP BY accountId'
+        .query<{ accountId: string; atMs: number }, [PoolWindow | null]>(
+          `SELECT accountId, MIN(observedAtMs) AS atMs FROM quota_current_samples
+           WHERE ?1 IS NULL OR bucketId IS NULL OR window = ?1 GROUP BY accountId`
         )
-        .all()
+        .all(window ?? null)
         .map(({ accountId, atMs }) => [accountId, atMs])
     );
   }
@@ -332,7 +496,9 @@ export class QuotaStore {
   firstSampleAtMs(): number | null {
     return (
       this.db
-        .query<{ atMs: number | null }, []>('SELECT MIN(observedAtMs) AS atMs FROM quota_samples')
+        .query<{ atMs: number | null }, []>(
+          'SELECT MIN(observedAtMs) AS atMs FROM quota_current_samples'
+        )
         .get()?.atMs ?? null
     );
   }
@@ -352,6 +518,7 @@ export class QuotaStore {
     instanceId?: string,
     deletedNames?: ReadonlySet<string>
   ): InventoryChange {
+    if (!isValidProviderId(provider)) throw new Error('Invalid quota provider');
     const ids = new Set<string>();
     for (const account of accounts) {
       if (
@@ -488,13 +655,9 @@ export class QuotaStore {
     this.db.transaction(() => {
       const insert = this.db.query(`
         INSERT INTO quota_samples
-          (accountId, window, observedAtMs, remainingPercent, resetAtMs, periodHours)
-        VALUES (?, ?, ?, ?, ?, ?)
+          (accountId, window, observedAtMs, remainingPercent, resetAtMs, periodHours, bucketId)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(accountId, window, observedAtMs) DO NOTHING
-      `);
-      const clearError = this.db.query(`
-        UPDATE quota_accounts SET lastErrorAtMs = NULL
-        WHERE id = ? AND lastErrorAtMs <= ?
       `);
       for (const sample of samples) {
         if (
@@ -511,11 +674,36 @@ export class QuotaStore {
           sample.observedAtMs,
           sample.remainingPercent,
           sample.resetAtMs,
-          sample.periodHours
+          sample.periodHours,
+          sample.bucketId ?? null
         );
-        clearError.run(sample.accountId, sample.observedAtMs);
+        this.clearAccountError(sample.accountId, sample.observedAtMs);
       }
     })();
+  }
+
+  recordDiscoveredReading(
+    accountId: string,
+    observedAtMs: number,
+    plan: string | null,
+    samples: QuotaSample[]
+  ): void {
+    this.db.transaction(() => {
+      this.recordSamples(samples);
+      if (!samples.length) this.clearAccountError(accountId, observedAtMs);
+      if (plan !== null) this.recordPlan(accountId, plan, observedAtMs);
+      else this.db.query('DELETE FROM quota_account_plans WHERE accountId = ?').run(accountId);
+    })();
+  }
+
+  private clearAccountError(accountId: string, observedAtMs: number): void {
+    this.db
+      .query(
+        `
+      UPDATE quota_accounts SET lastErrorAtMs = NULL WHERE id = ? AND lastErrorAtMs <= ?
+    `
+      )
+      .run(accountId, observedAtMs);
   }
 
   recordPlan(accountId: string, plan: string, nowMs: number): void {

@@ -10,6 +10,8 @@ import { useThemeStore } from '@/stores';
 import iconVertex from '@/assets/icons/vertex.svg';
 import iconCodex from '@/assets/icons/codex.svg';
 import { KIMI_DISPLAY_NAME } from '@/features/providers/kimi';
+import { useProviderCatalog } from '@/features/authFiles/providerCatalogRuntime';
+import { usableCatalog } from '@/stores/useProviderCatalogStore';
 import { OAuthHeader } from './components/OAuthHeader';
 import { ProviderTile } from './components/ProviderTile';
 import { SponsorCard, type SponsorCardSite } from './components/SponsorCard';
@@ -23,6 +25,7 @@ import {
 } from './hooks/useOAuthFlows';
 import { useVertexImport } from './hooks/useVertexImport';
 import {
+  buildCatalogOAuthProviderCards,
   isSponsor,
   OAUTH_PROVIDERS,
   resolveThemedIcon,
@@ -55,10 +58,23 @@ export function OAuthPage() {
   const otherMethodsId = useId();
 
   const pluginProviders = usePluginOAuthProviders(apiBase);
-  const providerCards = useMemo<OAuthProviderCard[]>(
-    () => [...OAUTH_PROVIDERS, ...pluginProviders],
-    [pluginProviders]
-  );
+  // The hub's catalog decides the tiles when it has one; an older ProxD (404), a failed read or
+  // a read still in flight keeps the static built-ins plus enabled OAuth plugins.
+  const catalog = usableCatalog(useProviderCatalog(session));
+  const providerCards = useMemo<OAuthProviderCard[]>(() => {
+    if (!catalog || apiBase === undefined) return [...OAUTH_PROVIDERS, ...pluginProviders];
+    const accepted = catalog.acceptedProviders;
+    return buildCatalogOAuthProviderCards(
+      catalog,
+      apiBase,
+      (provider) =>
+        accepted === null ||
+        accepted.includes(provider) ||
+        // Another hub owns it: the login is routed there, not refused here.
+        credentialDestination(registry.sources, session.owner.instanceId, provider)?.source
+          .instanceId !== session.owner.instanceId
+    );
+  }, [apiBase, catalog, pluginProviders, registry.sources, session.owner.instanceId]);
 
   const focusedRef = useRef<string | null>(null);
   const [dialog, setDialog] = useState<DialogTarget | null>(null);
@@ -88,11 +104,13 @@ export function OAuthPage() {
         : t(card.label.key);
 
   const captionOf = (card: OAuthProviderCard) => {
-    if (card.kind === 'plugin') return t('auth_login.method_plugin');
-    const method = t(
-      card.flow === 'device' ? 'auth_login.method_device' : 'auth_login.method_browser'
-    );
-    return card.domain ? `${card.domain} · ${method}` : method;
+    const method = !card.flow
+      ? t('auth_login.method_plugin')
+      : t(card.flow === 'device' ? 'auth_login.method_device' : 'auth_login.method_browser');
+    const domain = card.kind === 'builtin' ? card.domain : undefined;
+    return [card.awaitingAuth ? t('provider_catalog.awaiting_auth') : null, domain, method]
+      .filter(Boolean)
+      .join(' · ');
   };
 
   const iconOf = (card: OAuthProviderCard) =>

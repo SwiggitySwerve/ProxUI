@@ -1,8 +1,5 @@
-import type {
-  PoolProviderId,
-  PoolWindow,
-  ResetProviderId,
-} from '../../src/domain/quotaPool/types';
+import type { ProviderLifecycleState } from '../../src/domain/providerCatalog';
+import type { PoolProviderId, PoolWindow, ResetProviderId } from '../../src/domain/quotaPool/types';
 
 export interface StoredAccount {
   id: string;
@@ -25,11 +22,17 @@ export interface StoredAccount {
   firstSampleAtMs?: number | null;
 }
 
-export const QUOTA_PROVIDERS: readonly PoolProviderId[] = Object.freeze([
-  'claude',
-  'codex',
-  'antigravity',
-]);
+export { BUILT_IN_POOL_PROVIDERS as QUOTA_PROVIDERS } from '../../src/domain/quotaPool/providers';
+
+export interface StoredCatalogProvider {
+  instanceId: string;
+  provider: PoolProviderId;
+  displayName: string;
+  lifecycle: ProviderLifecycleState;
+  quotaSupported: boolean;
+  firstSeenAtMs: number;
+  lastSeenAtMs: number;
+}
 
 /** Stored in place of a retired account's file name; its email is cleared. */
 export const RETIRED_ACCOUNT_NAME = 'retired';
@@ -57,6 +60,8 @@ export interface QuotaSample {
   remainingPercent: number | null;
   resetAtMs: number | null;
   periodHours: number | null;
+  /** Generic pool samples are tied to the bucket that produced them. */
+  bucketId?: string;
 }
 
 /** What the collector held for one account at a moment: every usage window plus reset counts. */

@@ -77,7 +77,8 @@ membership, ports, paths, aliases, and explicit authentication-sharing scopes.
 Run `bun run sources:generate` after editing it. `bun run sources:check` and the
 build reject stale generated Nginx routes or public discovery. The browser reads
 the sanitized `/prox/sources.json`; upstream origins and key-file references are
-excluded. History collection reads the same manifest once at process start.
+excluded. History collection reads the same manifest once at process start. Hubs
+can also be added without rebuilding the images; see "Runtime hub discovery" below.
 
 Each source's `providers` list says which instance takes new credentials of that
 type. Every proxy accepts every provider, so OAuth logins go to the declared owner
@@ -351,6 +352,119 @@ unit and enable link, then reloads systemd; missing timers are tolerated, manage
 failures stop deployment. The sole nightly timer remains disabled. `prox-usage-job@.service` and `prox-usage-parity.service` remain for
 manual use. The deployment script copies templates without enabling them; this
 change installs, enables and runs no live maintenance unit.
+
+## Runtime hub discovery (operator enablement only)
+
+Nothing in this section is active after a deploy. The images keep serving the baked
+`deploy/provider-sources.json`, its routes and its discovery until an operator installs
+the oneshot, runs it once and adds the two drop-ins below.
+
+`prox-sources-apply` is a host oneshot. It reads the baked manifest and ProxD's
+operator-owned `~/.config/cli-proxy/instances.json` (`{"instances": [{id, provider,
+base_url, management_path?, label?, auth_scope?}]}`; a bare array
+is accepted too) and writes three files into `~/.local/share/prox/sources/`:
+
+| File | Mode | Read by |
+| --- | --- | --- |
+| `effective-manifest.json` | 0600 | prox-history (`PROX_SOURCE_MANIFEST`) |
+| `provider-routes.conf` | 0644 | Nginx in the prox container |
+| `sources.json` | 0644 | the browser, as `/prox/sources.json` |
+
+Admission rules:
+
+- A baked source always wins. An entry that reuses a baked instance ID, public path or
+  claimed provider is rejected, never merged.
+- An entry is published at `/<id>-<digest>`, where the digest is the first 8 hex digits of
+  the SHA-256 of its `base_url`, and labelled with its `label`, or its ID. A hub re-added
+  at another address therefore gets a new route, and a browser session opened on the old
+  route can never reach the new upstream.
+- Only loopback hubs (`127.0.0.1`, `localhost`, `[::1]`) that accept the shared key are
+  admitted at run time. Each is probed with `~/.config/proxd/management-key` and joins the
+  scope of the baked sources that use that key. An entry with `management_key_file`, or a
+  remote `base_url`, is rejected: such a hub needs its own transport and origin decisions,
+  so add it to `deploy/provider-sources.json` instead.
+- Before admission the hub must answer `GET /v8/management/providers` with status 200 and
+  an `instance_id` equal to the entry's `id`. Redirects are refused; the request has a
+  5-second timeout and a 1 MiB body limit. A hub without the provider catalog (older than
+  ProxD's provider discovery) is not admitted.
+- A hub that reports `accepted_providers` owns exactly those providers; otherwise it owns
+  the entry's `provider`. If another source already owns one of them, the hub is rejected.
+- A hub that was admitted before stays when its probe fails or its entry becomes
+  unreadable. Every admitted hub keeps the providers it held ahead of any other hub, so a
+  hub that changes its claims cannot take another's. It leaves only when its entry is
+  removed, or when a different instance answers at its address.
+
+The files are staged in `.staging/`, checked with `nginx -t` in a throwaway container of
+`localhost/prox:dev`, and then renamed into place: routes first, then `nginx -t` and
+`nginx -s reload` in the running `prox` container. The run then waits (15 s at most) until
+the live Nginx on `127.0.0.1:18318` serves the new revision at `/prox/routes-revision`, and
+until each hub new in this run answers its own `instance_id` through its route; hubs kept
+from before are not asked, so one that is offline holds nothing back. Only then are the
+manifest and `sources.json` published, in that order. If any step fails the previous routes and manifest are put
+back and Nginx is reloaded again. An `instances.json` that is not valid JSON or not a list fails the
+run before anything is written.
+
+Install (not done by `scripts/deploy-homelab.sh`):
+
+```sh
+bun run build:sources-apply
+install -D -m 644 dist/sources-apply/prox-sources-apply.js ~/.local/share/prox/sources-apply/prox-sources-apply.js
+install -m 644 deploy/provider-sources.json ~/.local/share/prox/sources-apply/provider-sources.json
+install -D -m 644 deploy/prox-sources-apply.service ~/.config/systemd/user/prox-sources-apply.service
+install -D -m 644 deploy/prox-sources.path ~/.config/systemd/user/prox-sources.path
+systemctl --user daemon-reload
+# First run: publish the baked sources only. Nothing serves the directory yet, so this run
+# neither reloads Nginx nor admits a hub; it is refused once a manifest exists.
+# The same umask as the unit, so Nginx's worker can read the directory.
+(umask 022; bun ~/.local/share/prox/sources-apply/prox-sources-apply.js --seed \
+  --base ~/.local/share/prox/sources-apply/provider-sources.json)
+```
+
+Reinstall the bundle and `provider-sources.json` whenever the images are rebuilt, and run
+the service again, so the effective manifest follows the new baked one.
+
+Only after the seed run has succeeded, overlay the baked seed. All lines below are needed
+together: the generated routes repeat the baked ones, so Nginx refuses to start if the
+directory is mounted without masking the baked file. The directory is mounted as a directory
+because a single-file mount would keep the old file after a rename.
+
+```ini
+# prox.container, [Container] section
+Volume=/dev/null:/etc/nginx/provider-routes.conf:ro
+Volume=%h/.local/share/prox/sources:/etc/nginx/runtime:ro
+```
+
+```ini
+# prox-history.container, [Container] section
+Volume=%h/.local/share/prox/sources:/run/prox-sources:ro
+Environment=PROX_SOURCE_MANIFEST=/run/prox-sources/effective-manifest.json
+```
+
+Where these go depends on the Podman version. Podman 5 reads Quadlet drop-ins, so put each
+block in `~/.config/containers/systemd/<name>.container.d/runtime-sources.conf` under a
+`[Container]` header. Podman 4.9 (this homelab's version) ignores `.container.d`, so add the
+lines to the installed `~/.config/containers/systemd/prox.container` and
+`prox-history.container` themselves; `scripts/deploy-homelab.sh` reinstalls both files from
+`deploy/` on every deploy, so add them again after each deploy until the script carries them.
+
+Then run `systemctl --user daemon-reload` and restart `prox` and `prox-history` once to pick
+up the mounts. Then `systemctl --user start prox-sources-apply.service` admits the hubs
+`instances.json` lists (read its journal), and `systemctl --user enable --now
+prox-sources.path` applies every later change to
+`instances.json`. The path unit fires only on a change to that file: after a hub outage,
+start `prox-sources-apply.service` by hand to retry its admission.
+
+While running, prox-history checks the manifest's modification time every 30 seconds and
+hands a revision with new sources to the quota collector's `applySources`, which starts
+collecting the new hubs from the next read without disturbing existing ones. The watcher never
+removes or changes a source, and a manifest that fails validation is logged and ignored;
+removals and edits take a restart. prox-usage reads the manifest at start only. A signed-in browser
+re-reads `/prox/sources.json` every 60 seconds and adds or removes hubs when the revision
+changes, keeping the sessions of hubs whose route and scope did not change.
+
+To go back to the baked seed, disable `prox-sources.path`, remove the lines above (the
+drop-ins, or the lines added to the installed Quadlets), run `systemctl --user daemon-reload`
+and restart the two containers.
 
 ## Retiring CPA-Manager-Plus (Step G runbook)
 

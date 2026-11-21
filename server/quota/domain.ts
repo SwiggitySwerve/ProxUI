@@ -1,6 +1,9 @@
 import type { AccountBilling } from '../../src/domain/accountBilling';
 import { combinedPools } from './combined';
 import { maskIdentifier } from '../../src/domain/quotaPool/mask';
+import { poolProviderViewId } from '../../src/domain/quotaPool/providers';
+import { profileWindowId } from '../../src/domain/quotaWindows/normalized';
+import { discoveredProviders, type DiscoveryState } from './discoveredProviders';
 import { sumKnown, weeklyOnlyAccountIds } from './values';
 import type {
   AccountQuotaWindow,
@@ -46,6 +49,7 @@ export interface CollectionState {
   weeklyOnly?: ReadonlySet<string>;
   resets?: ReadonlyMap<string, AccountResets>;
   windows?: ReadonlyMap<string, readonly AccountQuotaWindow[]>;
+  discovery?: DiscoveryState;
 }
 type Rates = { burn: number | null; drain: number | null };
 
@@ -216,9 +220,15 @@ export function projectPool(inputs: ForecastInput[], nowMs: number, toMs: number
   return { points, resets, firstEmptyAtMs, poolEmptyAtMs };
 }
 
-function accountHistories(accounts: StoredAccount[], samples: QuotaSample[]) {
+type AccountWeight = (account: StoredAccount) => ReturnType<typeof planWeight>;
+
+function accountHistories(
+  accounts: StoredAccount[],
+  samples: QuotaSample[],
+  weightOf: AccountWeight
+) {
   // Percent of one account's window times its plan weight gives pool points.
-  const weight = new Map(accounts.map((a) => [a.id, planWeight(a.provider, a.plan).multiplier]));
+  const weight = new Map(accounts.map((a) => [a.id, weightOf(a).multiplier]));
   const scale = (id: string, value: number | null) =>
     value === null ? null : value * weight.get(id)!;
   const histories = new Map<string, QuotaSample[]>();
@@ -283,11 +293,13 @@ function recordedHistory(
 }
 
 /** Default account names, used unless emails are revealed. */
-const POOL_PROVIDER_LABELS: Record<PoolProviderId, string> = {
-  claude: 'Claude',
-  codex: 'Codex',
-  antigravity: 'Gemini',
-};
+const POOL_PROVIDER_LABELS = new Map<PoolProviderId, string>(
+  Object.entries({
+    claude: 'Claude',
+    codex: 'Codex',
+    antigravity: 'Gemini',
+  })
+);
 
 function buildPool(
   provider: PoolProviderId,
@@ -297,19 +309,22 @@ function buildPool(
   fromMs: number,
   toMs: number,
   inventoryFailed: boolean,
-  weeklyOnly: ReadonlySet<string>
+  weeklyOnly: ReadonlySet<string>,
+  weightOf: AccountWeight,
+  noMappedWindow: boolean,
+  displayName?: string
 ): QuotaPool {
   const { nowMs, lookbackHours, multiplier } = options;
   const accounts = source
     .filter((a) => a.provider === provider && !a.retired)
     .sort((a, b) => a.id.localeCompare(b.id));
-  const { scale, histories } = accountHistories(accounts, samples);
+  const { scale, histories } = accountHistories(accounts, samples, weightOf);
   // Ultra accounts answered without a five-hour window: Anthropic removed that limit for verified
   // Ultra accounts on 2026-10-30. A successful answer is proof; a failed poll writes no sample.
   // Codex accounts are decided by the provider's own answer, not the plan: its latest successful
   // reading had a weekly window and no five-hour one (`weeklyOnlyAccountIds`).
   const lacksFiveHourLimit = (account: StoredAccount) => {
-    const plan = planWeight(provider, account.plan);
+    const plan = weightOf(account);
     return (
       options.window === 'five-hour' &&
       ((provider === 'claude' && plan.known && plan.multiplier === 20) ||
@@ -323,24 +338,26 @@ function buildPool(
     const sample = currentSample(history, nowMs);
     const status: PoolAccount['status'] = account.disabled
       ? 'disabled'
-      : // One failed poll must not hide a sample that is still fresh.
-        account.lastErrorAtMs !== null &&
-          (!latest ||
-            (account.lastErrorAtMs >= latest.observedAtMs &&
-              nowMs - latest.observedAtMs > STALE_MS))
-        ? 'error'
-        : nowMs - account.lastSeenAtMs > STALE_MS ||
-            (latest && nowMs - latest.observedAtMs > STALE_MS)
-          ? 'stale'
-          : latest?.remainingPercent === null && lacksFiveHourLimit(account)
-            ? 'no-limit'
-            : latest?.remainingPercent === null
-              ? 'missing-window'
-              : latest && !sample
-                ? 'stale'
-                : !sample
-                  ? 'missing-window'
-                  : 'ok';
+      : noMappedWindow
+        ? 'no-limit'
+        : // One failed poll must not hide a sample that is still fresh.
+          account.lastErrorAtMs !== null &&
+            (!latest ||
+              (account.lastErrorAtMs >= latest.observedAtMs &&
+                nowMs - latest.observedAtMs > STALE_MS))
+          ? 'error'
+          : nowMs - account.lastSeenAtMs > STALE_MS ||
+              (latest && nowMs - latest.observedAtMs > STALE_MS)
+            ? 'stale'
+            : latest?.remainingPercent === null && lacksFiveHourLimit(account)
+              ? 'no-limit'
+              : latest?.remainingPercent === null
+                ? 'missing-window'
+                : latest && !sample
+                  ? 'stale'
+                  : !sample
+                    ? 'missing-window'
+                    : 'ok';
     const rates =
       status === 'ok' ? measuredRates(history, nowMs, lookbackHours) : { burn: null, drain: null };
     if (
@@ -362,11 +379,11 @@ function buildPool(
       sample && rates.burn !== null && rates.burn * multiplier > 0
         ? nowMs + (sample.remainingPercent / (rates.burn * multiplier)) * HOUR_MS
         : null;
-    const plan = planWeight(provider, account.plan);
+    const plan = weightOf(account);
     return {
       id: account.id,
       sourceAccountId: account.sourceAccountId ?? null,
-      label: `${POOL_PROVIDER_LABELS[provider]} ${index + 1}`,
+      label: `${displayName ?? POOL_PROVIDER_LABELS.get(provider) ?? provider} ${index + 1}`,
       plan: {
         label: plan.label,
         capacityPoints: POINTS_PER_UNIT * plan.multiplier,
@@ -422,19 +439,21 @@ function buildPool(
   const known = (values: (number | null)[]) => values.filter((v): v is number => v !== null);
   const sumAvailable = (values: (number | null)[]) =>
     known(values).length ? known(values).reduce((sum, v) => sum + v, 0) : null;
-  const forecastState: QuotaPool['forecastState'] = !eligible.length
-    ? inventoryFailed
-      ? 'partial'
-      : unlimited.size
-        ? 'no-limit'
-        : 'no-accounts'
-    : !complete
-      ? eligible.some((a) => a.status === 'stale')
-        ? 'stale'
-        : 'partial'
-      : forecastInputs.length !== active.length
-        ? 'collecting'
-        : 'ready';
+  const forecastState: QuotaPool['forecastState'] = noMappedWindow
+    ? 'no-limit'
+    : !eligible.length
+      ? inventoryFailed
+        ? 'partial'
+        : unlimited.size
+          ? 'no-limit'
+          : 'no-accounts'
+      : !complete
+        ? eligible.some((a) => a.status === 'stale')
+          ? 'stale'
+          : 'partial'
+        : forecastInputs.length !== active.length
+          ? 'collecting'
+          : 'ready';
   const projection =
     forecastState === 'ready'
       ? projectPool(forecastInputs, nowMs, Math.max(toMs, nowMs + 14 * DAY_MS))
@@ -449,6 +468,7 @@ function buildPool(
   );
   return {
     provider,
+    ...(displayName ? { displayName } : {}),
     accountCount: accounts.length,
     eligibleCount: eligible.length,
     loadedCount: loaded.length,
@@ -486,7 +506,15 @@ export function buildDashboard(
   const fromMs = Math.floor(options.nowMs / DAY_MS) * DAY_MS + (options.offsetDays - 3) * DAY_MS;
   const toMs = fromMs + 14 * DAY_MS;
   const filtered = samples.filter((s) => s.window === options.window);
-  const { sources, windows, resets, billing, weeklyOnly: suppliedWeeklyOnly, ...state } = collection;
+  const {
+    sources,
+    windows,
+    resets,
+    billing,
+    discovery,
+    weeklyOnly: suppliedWeeklyOnly,
+    ...state
+  } = collection;
   const scopes = new Map<string, QuotaSourceView>();
   for (const source of sources ?? []) scopes.set(source.instanceId, source);
   for (const entry of [...accounts, ...collection.issues]) {
@@ -498,40 +526,58 @@ export function buildDashboard(
     }
   }
   const scoped = sources !== undefined || scopes.size > 0;
+  const discovered =
+    discovery &&
+    discoveredProviders(accounts, scopes, discovery, windows, options.nowMs, options.reveal);
+  const weightOf: AccountWeight = (account) =>
+    planWeight(
+      account.provider,
+      account.plan,
+      discovered?.pooled.get(account.instanceId ?? '')?.get(account.provider)?.profile.planUnits,
+      discovery?.planLabels?.get(account.id)
+    );
   const accountPlans = new Map(accounts.map((account) => [account.id, account.plan]));
   // From every window's samples (not `filtered`): the weekly view flags these accounts too.
   const weeklyOnly = suppliedWeeklyOnly ?? weeklyOnlyAccountIds(samples, options.nowMs);
   // Pools only for the providers a source is collected for. Where that is unknown (legacy history,
   // an instance no longer configured): Claude and Codex, and Antigravity once it has accounts.
-  const scopeProviders = (scope?: QuotaSourceView) =>
-    scope?.providers ??
-    QUOTA_PROVIDERS.filter(
-      (provider) =>
-        provider !== 'antigravity' ||
-        accounts.some((a) => a.instanceId === scope?.instanceId && a.provider === provider)
-    );
+  const scopeProviders = (scope?: QuotaSourceView) => [
+    ...(scope?.providers ??
+      QUOTA_PROVIDERS.filter(
+        (provider) =>
+          provider !== 'antigravity' ||
+          accounts.some((a) => a.instanceId === scope?.instanceId && a.provider === provider)
+      )),
+    ...(discovered?.pooled.get(scope?.instanceId ?? '')?.keys() ?? []),
+  ];
   const allPools = (scoped ? [...scopes.values()] : [undefined]).flatMap((scope) => {
     const source = scope && { instanceId: scope.instanceId, sourceLabel: scope.sourceLabel };
-    return scopeProviders(scope).map((provider) => ({
-      ...buildPool(
-        provider,
-        accounts.filter((account) => account.instanceId === source?.instanceId),
-        filtered,
-        options,
-        fromMs,
-        toMs,
-        (sources !== undefined &&
-          !sources.some((entry) => entry.instanceId === source?.instanceId)) ||
-          collection.issues.some(
-            (issue) =>
-              issue.instanceId === source?.instanceId &&
-              issue.provider === provider &&
-              issue.code === 'inventory-unavailable'
-          ),
-        weeklyOnly
-      ),
-      ...source,
-    }));
+    return scopeProviders(scope).map((provider) => {
+      const generic = discovered?.pooled.get(scope?.instanceId ?? '')?.get(provider);
+      return {
+        ...buildPool(
+          provider,
+          accounts.filter((account) => account.instanceId === source?.instanceId),
+          filtered,
+          options,
+          fromMs,
+          toMs,
+          (sources !== undefined &&
+            !sources.some((entry) => entry.instanceId === source?.instanceId)) ||
+            collection.issues.some(
+              (issue) =>
+                issue.instanceId === source?.instanceId &&
+                issue.provider === provider &&
+                issue.code === 'inventory-unavailable'
+            ),
+          weeklyOnly,
+          weightOf,
+          generic !== undefined && profileWindowId(generic.profile, options.window) === null,
+          generic?.displayName
+        ),
+        ...source,
+      };
+    });
   });
   // A source containing one supported provider does not create an empty sibling-provider card.
   // Retain empty results when the entire source is empty, and preserve failure visibility.
@@ -584,7 +630,7 @@ export function buildDashboard(
       options,
       fromMs,
       toMs,
-      accountHistories(active, filtered),
+      accountHistories(active, filtered, weightOf),
       times
     );
   };
@@ -594,6 +640,16 @@ export function buildDashboard(
       (eligible) => history(eligible),
       (eligible, times) => eligible.map((pool) => history([pool], times))
     );
+  const combinedMembers = pools.filter(
+    (pool) =>
+      !discovered?.awaitingAuth.some(
+        (entry) => entry.instanceId === pool.instanceId && entry.provider === pool.provider
+      )
+  );
+  const providers = new Set<PoolProviderId>([
+    ...QUOTA_PROVIDERS,
+    ...combinedMembers.map((pool) => pool.provider),
+  ]);
   return {
     nowMs: options.nowMs,
     fromMs,
@@ -603,18 +659,23 @@ export function buildDashboard(
     multiplier: options.multiplier,
     ...state,
     pools,
+    ...(discovered && { awaitingAuth: discovered.awaitingAuth, unpooled: discovered.unpooled }),
+    ...(discovery && { poolProfiles: discovery.poolProfiles }),
     combined: {
-      all: combined(pools),
-      claude: combined(pools.filter((pool) => pool.provider === 'claude')),
-      codex: combined(pools.filter((pool) => pool.provider === 'codex')),
-      antigravity: combined(pools.filter((pool) => pool.provider === 'antigravity')),
+      all: combined(combinedMembers),
+      ...Object.fromEntries(
+        [...providers].map((provider) => [
+          poolProviderViewId(provider),
+          combined(combinedMembers.filter((pool) => pool.provider === provider)),
+        ])
+      ),
     },
     ...(scoped
       ? {
           unresolvedHistoryAccountCount: accounts.filter(
             (account) => account.instanceId === undefined
           ).length,
-          combinations: QUOTA_PROVIDERS.flatMap((provider) => {
+          combinations: [...providers].flatMap((provider) => {
             const local = pools.filter(
               (pool) =>
                 pool.provider === provider &&

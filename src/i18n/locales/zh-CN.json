@@ -3164,5 +3164,27 @@
     "unreported_spent_limit": "已用金额和限额未报告",
     "unreported_spent": "已用金额未报告",
     "unreported_limit": "限额未报告"
+  },
+  "provider_catalog": {
+    "awaiting_auth": "等待认证",
+    "awaiting_auth_desc": "已在此节点发现。请登录或上传凭证以在认证文件和配额管理中激活。",
+    "connect_action": "登录",
+    "upload_action": "上传凭证",
+    "lifecycle_active": "已激活",
+    "lifecycle_disabled": "已禁用",
+    "lifecycle_needs_attention": "需要注意",
+    "unpooled_section_title": "已发现的提供商（未入池）",
+    "unpooled_section_help": "已认证且有配额读数的账号会显示在此，启用后才会纳入配额池预测。",
+    "awaiting_auth_section_title": "等待认证",
+    "awaiting_auth_section_help": "节点已声明但尚未添加凭证的提供商。",
+    "opt_in_pool": "加入配额池",
+    "opt_out_pool": "移出配额池",
+    "pool_profile_title": "配置配额池",
+    "pool_profile_weekly": "周限额窗口",
+    "pool_profile_five_hour": "5 小时限额窗口",
+    "pool_profile_none": "无",
+    "pool_profile_units": "基础套餐倍率（1 倍 = 100 分）",
+    "pool_profile_save": "保存配额池配置",
+    "no_quota_reader": "已认证 · 无配额读取器"
   }
 }

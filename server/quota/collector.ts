@@ -9,10 +9,18 @@ import { readFile } from 'node:fs/promises';
 import type { DeploymentSource } from '../../src/domain/providerSources/types';
 import { loadSourceManifest } from '../providerSources/config';
 import { LEGACY_SOURCE_MAPPING, legacyAccountId } from './identity';
+import {
+  ownsWaitingProvider,
+  parseProviderCatalog,
+  type ProviderCatalog,
+} from '../../src/domain/providerCatalog';
+import { isBuiltInPoolProvider } from '../../src/domain/quotaPool/providers';
+import { discoveredPoolSamples } from './discoveredQuota';
 import type { TFunction } from 'i18next';
 import type {
   AccountQuotaWindow,
   AccountResets,
+  BuiltInPoolProviderId,
   PoolDashboard,
   PoolProviderId,
 } from '../../src/domain/quotaPool/types';
@@ -20,6 +28,7 @@ import { buildClaudeQuotaWindows } from '../../src/domain/quotaWindows/claude';
 import { buildCodexQuotaWindows } from '../../src/domain/quotaWindows/codex';
 import { decodeAntigravityQuotaWindows } from '../../src/domain/quotaWindows/antigravity';
 import { laneOf } from '../../src/domain/quotaWindows/lanes';
+import { decodeNormalizedQuota } from '../../src/domain/quotaWindows/normalized';
 import {
   ANTIGRAVITY_CODE_ASSIST_URL,
   ANTIGRAVITY_QUOTA_URLS,
@@ -71,6 +80,7 @@ const RESET_CREDITS_REFRESH_MS = 60 * 60 * 1000;
 const RESET_CREDITS_RETRY_MS = 15 * 60 * 1000;
 /** Inventory-only syncs start at least this far apart, so a burst cannot hammer CLI-Proxy. */
 const SYNC_FLOOR_MS = 1000;
+const CATALOG_TIMEOUT_MS = 3_000;
 /**
  * A read already in flight when the user deletes a credential can see the deletion and retire
  * (and scrub) the account before the explicit delete sync names it. The names of accounts retired
@@ -88,7 +98,7 @@ type CollectorOptions = CollectorDependencies &
   (
     | { sources: readonly DeploymentSource[]; revision: string }
     // Compatibility for existing injected tests only. Production always supplies the manifest.
-    | { keyFile: string; origins?: Record<PoolProviderId, string>; fetcher: typeof fetch }
+    | { keyFile: string; origins?: Record<string, string>; fetcher: typeof fetch }
   );
 
 interface CollectionSource {
@@ -96,7 +106,26 @@ interface CollectionSource {
   label: string;
   upstreamOrigin: string;
   managementKeyFile: string;
-  providers: readonly PoolProviderId[];
+  providers: readonly BuiltInPoolProviderId[];
+  /** The manifest's own provider list for this source, when it declares one. */
+  declaredProviders?: readonly string[];
+}
+
+/**
+ * The catalog entries Quota Management shows for one source: every provider with a credential,
+ * and a waiting provider where Auth Files shows it too (`ownsWaitingProvider`) and that can be
+ * signed in to, since its card offers Connect.
+ */
+export function sourceCatalogEntries(
+  catalog: ProviderCatalog,
+  declared: readonly string[],
+  claimedElsewhere: readonly string[]
+): ProviderCatalog['providers'] {
+  return catalog.providers.filter(
+    (entry) =>
+      entry.credentials.total > 0 ||
+      (entry.oauth !== null && ownsWaitingProvider(catalog, entry, declared, claimedElsewhere))
+  );
 }
 
 /** One live account of its validated source, as handed to `withManagedAccount`. */
@@ -116,6 +145,36 @@ interface InventoryAccount {
   chatgptAccountId: string | null;
   /** Antigravity's Cloud Code project, which its quota read names. */
   projectId: string | null;
+}
+
+interface InventoryGroup {
+  provider: PoolProviderId;
+  accounts: InventoryAccount[];
+  poll: boolean;
+}
+
+type DeleteScopes = ReadonlyMap<string | undefined, ReadonlySet<string>>;
+
+function deletionNames(scopes: DeleteScopes, instanceId: string | undefined) {
+  const common = scopes.get(undefined);
+  const scoped = scopes.get(instanceId);
+  return common && scoped && common !== scoped
+    ? new Set([...common, ...scoped])
+    : (scoped ?? common);
+}
+
+function collectionSource(source: DeploymentSource): CollectionSource {
+  const declared = source.providers;
+  const providers = QUOTA_PROVIDERS.filter((id) =>
+    id === 'antigravity'
+      ? declared?.includes(id) === true
+      : !declared || declared.some((provider) => provider === 'claude' || provider === 'codex')
+  );
+  return Object.freeze({
+    ...source,
+    providers: Object.freeze(providers),
+    ...(declared ? { declaredProviders: declared } : {}),
+  });
 }
 
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -160,6 +219,8 @@ function inventory(payload: unknown, provider: PoolProviderId, nowMs: number): I
     ) {
       throw new Error('Invalid quota inventory');
     }
+    // A credential is always its runtime provider, the id /credentials and quota fetch report and
+    // ProxD catalogues every credential under; its login entry never changes which account it is.
     if (kind !== provider) continue;
     if (
       !boundedString(file.auth_index, 256) ||
@@ -274,7 +335,7 @@ function quotaResponseBody(response: unknown): string | Record<string, unknown> 
 }
 
 export function quotaSamples(
-  provider: PoolProviderId,
+  provider: BuiltInPoolProviderId,
   accountId: string,
   body: unknown,
   observedAtMs: number
@@ -360,8 +421,8 @@ function failureDetail(response: unknown): string {
 
 /** Enumerates each instance once, then collects supported read-only quota observations. */
 export class QuotaCollector {
-  private readonly collectionSources: readonly CollectionSource[];
-  readonly revision: string | undefined;
+  private collectionSources: readonly CollectionSource[] = [];
+  private appliedRevision: string | undefined;
   private readonly fetcher: typeof fetch;
   private readonly now: () => number;
   private inFlight: Promise<void> | null = null;
@@ -387,6 +448,7 @@ export class QuotaCollector {
     { balance: string | null; unlimited: boolean }
   >();
   private readonly latestReadingAt = new Map<string, number>();
+  private readonly latestDiscoveredPlanLabels = new Map<string, string>();
   /** Reset claims in progress, so a full collection starts only after them like after a poll. */
   private readonly claimFlights = new Set<Promise<unknown>>();
   private readonly latestResets = new Map<string, AccountResets>();
@@ -400,15 +462,19 @@ export class QuotaCollector {
   /** Per source: the last inventory read started, and the newest one whose result was applied. */
   private readonly inventorySeq = new Map<string, number>();
   private readonly appliedInventorySeq = new Map<string, number>();
+  private readonly appliedCatalogSeq = new Map<string, number>();
   private readonly inventoryStates = new Map<string, InventorySourceState>();
   private syncedAtMs: number | null = null;
   private syncRunning: Promise<void> | null = null;
-  private syncQueued: { names: Set<string>; promise: Promise<InventoryChange> } | null = null;
+  private syncQueued: {
+    scopes: Map<string | undefined, Set<string>>;
+    promise: Promise<InventoryChange>;
+  } | null = null;
   private lastSyncStartedAtMs: number | null = null;
   private syncController = new AbortController();
   private readonly retiredNames = new Map<
     string,
-    { name: string; sourceId: string; atMs: number }
+    { name: string; provider: PoolProviderId; source: CollectionSource; atMs: number }
   >();
   /** In-flight polls per account, so removing an account can abort them. */
   private readonly pollControllers = new Map<string, Set<AbortController>>();
@@ -418,24 +484,12 @@ export class QuotaCollector {
     options: CollectorOptions
   ) {
     if ('sources' in options) {
-      this.revision = options.revision;
-      const seen = new Set<string>();
-      this.collectionSources = options.sources.flatMap((source) => {
-        if (!source.instanceId || seen.has(source.instanceId))
-          throw new Error('Duplicate quota source');
-        seen.add(source.instanceId);
-        // Claude and Codex are inventoried together on any source that declares either (or
-        // declares nothing); Antigravity only where declared. A source that claims none of them
-        // holds no pooled quota.
-        const declared = source.providers;
-        const providers = QUOTA_PROVIDERS.filter((id) =>
-          id === 'antigravity'
-            ? declared?.includes(id) === true
-            : !declared ||
-              declared.some((provider) => provider === 'claude' || provider === 'codex')
-        );
-        return providers.length ? [Object.freeze({ ...source, providers })] : [];
-      });
+      if (
+        options.sources.some((source) => !source.instanceId) ||
+        new Set(options.sources.map((source) => source.instanceId)).size !== options.sources.length
+      )
+        throw new Error('Duplicate quota source');
+      this.applySources(options.sources, options.revision);
     } else {
       if (!options.fetcher) throw new Error('Legacy quota injection requires a fetcher');
       const manifest = options.origins
@@ -462,6 +516,25 @@ export class QuotaCollector {
     this.nextRefresh = this.now();
   }
 
+  get revision(): string | undefined {
+    return this.appliedRevision;
+  }
+
+  /** Admit validated sources for the next read. Existing source bindings remain pinned. */
+  applySources(sources: readonly DeploymentSource[], revision: string): void {
+    const seen = new Set(this.collectionSources.map((source) => source.instanceId));
+    const additions: CollectionSource[] = [];
+    for (const source of sources) {
+      if (seen.has(source.instanceId)) continue;
+      seen.add(source.instanceId);
+      additions.push(collectionSource(source));
+    }
+    // Removals and edits wait for a restart, so a revision that adds nothing is not applied.
+    if (!additions.length) return;
+    this.collectionSources = [...this.collectionSources, ...additions];
+    this.appliedRevision = revision;
+  }
+
   get refreshing(): boolean {
     return this.inFlight !== null;
   }
@@ -480,6 +553,12 @@ export class QuotaCollector {
   /** In memory only: refilled by the next collection after a restart. */
   get windows(): ReadonlyMap<string, readonly AccountQuotaWindow[]> {
     return this.latestWindows;
+  }
+  get observedAt(): ReadonlyMap<string, number> {
+    return this.latestReadingAt;
+  }
+  get discoveredPlanLabels(): ReadonlyMap<string, string> {
+    return this.latestDiscoveredPlanLabels;
   }
   /** In memory only: refilled by the next successful reset reading. */
   get resets(): ReadonlyMap<string, AccountResets> {
@@ -525,12 +604,23 @@ export class QuotaCollector {
     return this.collectionSources.flatMap((source) =>
       source.instanceId === undefined
         ? []
-        : source.providers.map((provider) => ({
+        : this.inventoryProviders(source).map((provider) => ({
             instanceId: source.instanceId!,
             provider,
             state: this.inventoryStates.get(this.stateKey(source, provider)) ?? 'unavailable',
           }))
     );
+  }
+
+  private inventoryProviders(source: CollectionSource): readonly PoolProviderId[] {
+    if (!source.instanceId) return source.providers;
+    return [
+      ...source.providers,
+      ...this.store
+        .listProviderCatalog(source.instanceId)
+        .filter((entry) => !isBuiltInPoolProvider(entry.provider))
+        .map((entry) => entry.provider),
+    ];
   }
   /** When the last inventory read finished, whether or not it succeeded. */
   get inventorySyncedAtMs(): number | null {
@@ -545,26 +635,30 @@ export class QuotaCollector {
    * `deletedNames` are credential file names the user deleted; matching accounts that the fresh
    * inventory confirms are gone are purged immediately instead of after the grace period.
    */
-  syncInventory(options: { deletedNames?: readonly string[] } = {}): Promise<InventoryChange> {
+  syncInventory(
+    options: { deletedNames?: readonly string[]; instanceId?: string } = {}
+  ): Promise<InventoryChange> {
     const names = options.deletedNames ?? [];
-    if (!this.syncRunning) return this.startSync(new Set(names));
+    if (!this.syncRunning) return this.startSync(new Map([[options.instanceId, new Set(names)]]));
     if (!this.syncQueued) {
       const queued = {
-        names: new Set<string>(),
+        scopes: new Map<string | undefined, Set<string>>(),
         promise: undefined as unknown as Promise<InventoryChange>,
       };
       queued.promise = this.syncRunning.then(() => {
         this.syncQueued = null;
-        return this.startSync(queued.names);
+        return this.startSync(queued.scopes);
       });
       this.syncQueued = queued;
     }
-    for (const name of names) this.syncQueued.names.add(name);
+    const scoped = this.syncQueued.scopes.get(options.instanceId) ?? new Set<string>();
+    for (const name of names) scoped.add(name);
+    this.syncQueued.scopes.set(options.instanceId, scoped);
     return this.syncQueued.promise;
   }
 
-  private startSync(names: ReadonlySet<string>): Promise<InventoryChange> {
-    const run = this.runSync(names);
+  private startSync(scopes: DeleteScopes): Promise<InventoryChange> {
+    const run = this.runSync(scopes);
     const settled: Promise<void> = run
       .then(
         () => undefined,
@@ -577,7 +671,7 @@ export class QuotaCollector {
     return run;
   }
 
-  private async runSync(names: ReadonlySet<string>): Promise<InventoryChange> {
+  private async runSync(scopes: DeleteScopes): Promise<InventoryChange> {
     if (this.lastSyncStartedAtMs !== null) {
       const wait = this.lastSyncStartedAtMs + SYNC_FLOOR_MS - this.now();
       if (wait > 0) await this.sleep(wait);
@@ -591,15 +685,20 @@ export class QuotaCollector {
         const seq = this.startInventoryRead(source);
         let read: Awaited<ReturnType<QuotaCollector['readInventory']>>;
         try {
-          read = await this.readInventory(source, signal);
+          read = await this.readInventory(source, signal, { seq });
         } catch {
-          if (!signal.aborted) this.markInventoryUnavailable(source);
+          if (!signal.aborted) this.markInventoryUnavailable(source, seq);
           return;
         }
         if (signal.aborted) return;
-        const applied = this.applyInventory(source, read, seq, names);
+        const applied = this.applyInventory(
+          source,
+          read,
+          seq,
+          deletionNames(scopes, source.instanceId)
+        );
         if (!applied) return;
-        fresh.add(source.instanceId ?? source.label);
+        applied.confirmed.forEach((provider) => fresh.add(this.stateKey(source, provider)));
         change.added.push(...applied.change.added);
         change.removed.push(...applied.change.removed);
         change.purged.push(...applied.change.purged);
@@ -611,8 +710,8 @@ export class QuotaCollector {
     const late = [...this.retiredNames]
       .filter(([, remembered]) => {
         return (
-          fresh.has(remembered.sourceId) &&
-          names.has(remembered.name) &&
+          fresh.has(this.stateKey(remembered.source, remembered.provider)) &&
+          deletionNames(scopes, remembered.source.instanceId)?.has(remembered.name) &&
           nowMs - remembered.atMs <= RETIRED_NAME_MEMORY_MS
         );
       })
@@ -638,6 +737,7 @@ export class QuotaCollector {
       this.latestBalances.delete(id);
       this.latestCredits.delete(id);
       this.latestReadingAt.delete(id);
+      this.latestDiscoveredPlanLabels.delete(id);
       this.latestResets.delete(id);
       this.resetCreditAttempts.delete(id);
       this.latestResetCredits.delete(id);
@@ -726,7 +826,7 @@ export class QuotaCollector {
     const signal = new AbortController().signal;
     const flight = (async () => {
       await this.inFlight?.catch(() => {});
-      const found = await this.inventoryEntry(source, accountId, signal);
+      const found = await this.inventoryEntry(source, stored, signal);
       if (!found) return null;
       const { key, entry } = found;
       const post = (path: string, body: Record<string, unknown>, timeoutMs?: number) =>
@@ -759,13 +859,20 @@ export class QuotaCollector {
   }
 
   /** Reads the source's credential list and finds this account's enabled entry in it. */
-  private async inventoryEntry(source: CollectionSource, accountId: string, signal: AbortSignal) {
-    const { key, groups } = await this.readInventory(source, signal);
+  private async inventoryEntry(
+    source: CollectionSource,
+    account: StoredAccount,
+    signal: AbortSignal
+  ) {
+    const { key, groups } = await this.readInventory(source, signal, {
+      discover: !isBuiltInPoolProvider(account.provider),
+    });
     const entry = groups
+      .filter((group) => group.poll && group.provider === account.provider)
       .flatMap((group) => group.accounts)
       .find(
-        ({ account, authIndex }) =>
-          this.store.accountIdFor(source.instanceId!, account.provider, authIndex) === accountId
+        ({ authIndex }) =>
+          this.store.accountIdFor(source.instanceId!, account.provider, authIndex) === account.id
       );
     return entry && !entry.account.disabled ? { key, entry } : null;
   }
@@ -805,7 +912,7 @@ export class QuotaCollector {
       if (!current || current.disabled || current.retired) return false;
       this.accountAttempts.set(accountId, this.now());
       try {
-        const found = await this.inventoryEntry(source, accountId, signal);
+        const found = await this.inventoryEntry(source, current, signal);
         if (!found) return false;
         const { key, entry } = found;
         return await this.pollAccount(
@@ -863,7 +970,7 @@ export class QuotaCollector {
 
   /** Plan weight is best-effort: a failed lookup leaves the stored plan as it was. */
   private async recordPlan(
-    account: { id: string; provider: PoolProviderId },
+    account: { id: string; provider: BuiltInPoolProviderId },
     authIndex: string,
     source: CollectionSource,
     key: string,
@@ -1031,7 +1138,8 @@ export class QuotaCollector {
     key: string,
     signal: AbortSignal,
     body?: Record<string, unknown>,
-    timeoutMs: number = REQUEST_TIMEOUT_MS
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
+    allowNotFound = false
   ): Promise<unknown> {
     signal.throwIfAborted();
     const response = await this.fetcher(new URL(`/v8/management/${path}`, source.upstreamOrigin), {
@@ -1043,6 +1151,7 @@ export class QuotaCollector {
     });
     if (!response.ok || !response.body) {
       await response.body?.cancel();
+      if (allowNotFound && response.status === 404) return null;
       throw new Error('Quota request unavailable');
     }
     return readJson(response.body, MAX_RESPONSE_BYTES, 'Quota response too large');
@@ -1093,6 +1202,10 @@ export class QuotaCollector {
     chatgptAccountId: string | null,
     projectId: string | null
   ): Promise<boolean> {
+    const provider = account.provider;
+    if (!isBuiltInPoolProvider(provider)) {
+      return this.pollDiscoveredAccount(account, authIndex, source, key, signal);
+    }
     let samples: QuotaSample[];
     let windows: AccountQuotaWindow[];
     let usageBody: unknown;
@@ -1126,7 +1239,7 @@ export class QuotaCollector {
         if (body === null) {
           throw new Error('Quota request unavailable');
         }
-        ({ samples, windows } = quotaSamples(account.provider, account.id, body, this.now()));
+        ({ samples, windows } = quotaSamples(provider, account.id, body, this.now()));
         usageBody = body;
       }
     } catch {
@@ -1144,7 +1257,7 @@ export class QuotaCollector {
         this.store.recordSamples(samples);
         this.latestWindows.set(account.id, windows);
         this.latestReadingAt.set(account.id, this.now());
-        const resets = readAccountResets(account.provider, usageBody, this.now());
+        const resets = readAccountResets(provider, usageBody, this.now());
         if (resets) this.latestResets.set(account.id, resets);
         if (account.provider === 'claude') {
           const snapshot = normalizeClaudeUsageSnapshot(parseClaudeUsagePayload(usageBody));
@@ -1175,9 +1288,55 @@ export class QuotaCollector {
         );
         await this.recordCodexBilling(account.id, authIndex, chatgptAccountId, source, key, signal);
       }
-      await this.recordPlan(account, authIndex, source, key, signal, usageBody, storedPlans);
+      await this.recordPlan(
+        { id: account.id, provider },
+        authIndex,
+        source,
+        key,
+        signal,
+        usageBody,
+        storedPlans
+      );
     }
     return !signal.aborted && this.store.isLive(account.id);
+  }
+
+  private async pollDiscoveredAccount(
+    account: StoredAccount,
+    authIndex: string,
+    source: CollectionSource,
+    key: string,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    let reading: ReturnType<typeof decodeNormalizedQuota>;
+    try {
+      reading = decodeNormalizedQuota(
+        await this.request(source, 'quota/fetch', key, signal, { auth_index: authIndex })
+      );
+    } catch {
+      if (!signal.aborted && this.store.isLive(account.id)) {
+        this.addIssue(source, account.provider, 'quota-unavailable');
+        this.store.markAccountError(account.id, this.now());
+      }
+      return false;
+    }
+    if (signal.aborted || !this.store.isLive(account.id)) return false;
+    const observedAtMs = this.now();
+    const profile = this.store.getPoolProfile({
+      instanceId: source.instanceId!,
+      provider: account.provider,
+    });
+    this.store.recordDiscoveredReading(
+      account.id,
+      observedAtMs,
+      reading.plan,
+      discoveredPoolSamples(account.id, observedAtMs, reading.windows, profile)
+    );
+    this.latestWindows.set(account.id, reading.windows);
+    this.latestReadingAt.set(account.id, observedAtMs);
+    if (reading.planLabel) this.latestDiscoveredPlanLabels.set(account.id, reading.planLabel);
+    else this.latestDiscoveredPlanLabels.delete(account.id);
+    return true;
   }
 
   /**
@@ -1229,12 +1388,80 @@ export class QuotaCollector {
     return { response: lastResponse };
   }
 
-  private async readInventory(source: CollectionSource, signal: AbortSignal) {
+  private async readCatalog(
+    source: CollectionSource,
+    key: string,
+    signal: AbortSignal,
+    seq?: number
+  ) {
+    const instanceId = source.instanceId;
+    if (!instanceId) return null;
+    let catalog: ReturnType<typeof parseProviderCatalog>;
+    try {
+      catalog = parseProviderCatalog(
+        await this.request(source, 'providers', key, signal, undefined, CATALOG_TIMEOUT_MS, true)
+      );
+    } catch {
+      return null;
+    }
+    if (
+      signal.aborted ||
+      !catalog ||
+      (catalog.instanceId !== null && catalog.instanceId !== instanceId)
+    )
+      return null;
+    if (seq !== undefined) {
+      if (seq < (this.appliedCatalogSeq.get(instanceId) ?? 0)) return null;
+      const elsewhere = this.collectionSources.flatMap((other) =>
+        other.instanceId === instanceId ? [] : (other.declaredProviders ?? [])
+      );
+      this.store.replaceProviderCatalog(
+        instanceId,
+        sourceCatalogEntries(catalog, source.declaredProviders ?? [], elsewhere),
+        this.now()
+      );
+      this.appliedCatalogSeq.set(instanceId, seq);
+    }
+    return catalog;
+  }
+
+  private async readInventory(
+    source: CollectionSource,
+    signal: AbortSignal,
+    options: { seq?: number; discover?: boolean } = {}
+  ) {
     const key = (await readFile(source.managementKeyFile, 'utf8')).trim();
     if (!boundedString(key, 8192)) throw new Error('Invalid management key');
+    const catalog =
+      options.seq !== undefined || options.discover
+        ? await this.readCatalog(source, key, signal, options.seq)
+        : null;
+    const readers = new Map<string, boolean>(source.providers.map((provider) => [provider, true]));
+    if (catalog) {
+      // A provider omitted by a successful catalog may still have a credential to retire. Only
+      // an authoritative credential listing can do that, and the absent reader isn't polled.
+      if (options.seq !== undefined) {
+        for (const account of this.store.listAccounts()) {
+          if (
+            account.instanceId === source.instanceId &&
+            !account.retired &&
+            !isBuiltInPoolProvider(account.provider)
+          )
+            readers.set(account.provider, false);
+        }
+      }
+      for (const entry of catalog.providers) {
+        if (isBuiltInPoolProvider(entry.id)) continue;
+        // Not gated on lifecycle: a credential in quota cooldown is `needs_attention`, and its
+        // exhausted balance is exactly what to read. Disabled credentials are skipped one by one.
+        readers.set(entry.id, entry.quota.supported && entry.quota.reader !== 'none');
+      }
+    }
+    if (!readers.size) return { key, groups: [] };
     const payload = await this.request(source, 'credentials', key, signal);
-    const groups = source.providers.map((provider) => ({
+    const groups: InventoryGroup[] = [...readers].map(([provider, poll]) => ({
       provider,
+      poll,
       accounts: inventory(payload, provider, this.now()),
     }));
     return { key, groups };
@@ -1256,8 +1483,11 @@ export class QuotaCollector {
     return seq;
   }
 
-  private markInventoryUnavailable(source: CollectionSource): void {
-    for (const provider of source.providers) {
+  private markInventoryUnavailable(source: CollectionSource, seq: number): void {
+    const id = source.instanceId ?? source.label;
+    if (seq < (this.appliedInventorySeq.get(id) ?? 0)) return;
+    this.appliedInventorySeq.set(id, seq);
+    for (const provider of this.inventoryProviders(source)) {
       this.inventoryStates.set(this.stateKey(source, provider), 'unavailable');
       this.addIssue(source, provider, 'inventory-unavailable');
     }
@@ -1270,28 +1500,27 @@ export class QuotaCollector {
    */
   private applyInventory(
     source: CollectionSource,
-    {
-      key,
-      groups,
-    }: { key: string; groups: { provider: PoolProviderId; accounts: InventoryAccount[] }[] },
+    { key, groups }: { key: string; groups: InventoryGroup[] },
     seq: number,
     deletedNames?: ReadonlySet<string>
   ): {
     pending: (InventoryAccount & { source: CollectionSource; key: string })[];
     change: InventoryChange;
+    confirmed: PoolProviderId[];
   } | null {
     const id = source.instanceId ?? source.label;
     if (seq < (this.appliedInventorySeq.get(id) ?? 0)) return null;
     this.appliedInventorySeq.set(id, seq);
     const pending: (InventoryAccount & { source: CollectionSource; key: string })[] = [];
     const change: InventoryChange = { added: [], removed: [], purged: [] };
+    const confirmed: PoolProviderId[] = [];
     const namesBefore = new Map(
       this.store
         .listAccounts()
         .filter((stored) => !stored.retired && stored.instanceId === source.instanceId)
-        .map((stored) => [stored.id, stored.name])
+        .map((stored) => [stored.id, stored])
     );
-    for (const { provider, accounts } of groups) {
+    for (const { provider, accounts, poll } of groups) {
       try {
         for (const entry of accounts) {
           if (source.instanceId !== undefined) {
@@ -1313,6 +1542,7 @@ export class QuotaCollector {
         change.added.push(...changed.added);
         change.removed.push(...changed.removed);
         change.purged.push(...changed.purged);
+        confirmed.push(provider);
         this.inventoryStates.set(this.stateKey(source, provider), 'ok');
         this.currentIssues = this.currentIssues.filter(
           (issue) =>
@@ -1322,11 +1552,12 @@ export class QuotaCollector {
               issue.code === 'inventory-unavailable'
             )
         );
-        pending.push(
-          ...accounts
-            .filter(({ account }) => !account.disabled)
-            .map((entry) => ({ ...entry, source, key }))
-        );
+        if (poll)
+          pending.push(
+            ...accounts
+              .filter(({ account }) => !account.disabled)
+              .map((entry) => ({ ...entry, source, key }))
+          );
       } catch {
         this.inventoryStates.set(this.stateKey(source, provider), 'unavailable');
         this.addIssue(source, provider, 'inventory-unavailable');
@@ -1338,11 +1569,17 @@ export class QuotaCollector {
     }
     for (const accountId of change.added) this.retiredNames.delete(accountId);
     for (const accountId of change.removed) {
-      const name = namesBefore.get(accountId);
-      if (name !== undefined) this.retiredNames.set(accountId, { name, sourceId: id, atMs: nowMs });
+      const previous = namesBefore.get(accountId);
+      if (previous)
+        this.retiredNames.set(accountId, {
+          name: previous.name,
+          provider: previous.provider,
+          source,
+          atMs: nowMs,
+        });
     }
     this.forget([...change.removed, ...change.purged]);
-    return { pending, change };
+    return { pending, change, confirmed };
   }
 
   private async collect(signal: AbortSignal): Promise<void> {
@@ -1353,9 +1590,9 @@ export class QuotaCollector {
         const seq = this.startInventoryRead(source);
         let read: Awaited<ReturnType<QuotaCollector['readInventory']>>;
         try {
-          read = await this.readInventory(source, signal);
+          read = await this.readInventory(source, signal, { seq });
         } catch {
-          if (!signal.aborted) this.markInventoryUnavailable(source);
+          if (!signal.aborted) this.markInventoryUnavailable(source, seq);
           return [];
         } finally {
           this.syncedAtMs = this.now();

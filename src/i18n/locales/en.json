@@ -3166,5 +3166,27 @@
     "unreported_spent_limit": "Spent and limit not reported",
     "unreported_spent": "Spent not reported",
     "unreported_limit": "Limit not reported"
+  },
+  "provider_catalog": {
+    "awaiting_auth": "Waiting for auth",
+    "awaiting_auth_desc": "Discovered on this hub. Sign in or upload a credential to activate it across Auth Files and Quota Management.",
+    "connect_action": "Sign in",
+    "upload_action": "Upload credential",
+    "lifecycle_active": "Active",
+    "lifecycle_disabled": "Disabled",
+    "lifecycle_needs_attention": "Needs attention",
+    "unpooled_section_title": "Discovered providers (not pooled)",
+    "unpooled_section_help": "Authenticated accounts with quota readings appear here until you opt them into pooled forecasting.",
+    "awaiting_auth_section_title": "Waiting for auth",
+    "awaiting_auth_section_help": "Providers advertised by your hubs with no credentials yet.",
+    "opt_in_pool": "Add to quota pool",
+    "opt_out_pool": "Remove from pool",
+    "pool_profile_title": "Configure quota pool",
+    "pool_profile_weekly": "Weekly window",
+    "pool_profile_five_hour": "5-hour window",
+    "pool_profile_none": "None",
+    "pool_profile_units": "Base-plan units (1 unit = 100 pts)",
+    "pool_profile_save": "Save pool settings",
+    "no_quota_reader": "Authenticated · no quota reader"
   }
 }

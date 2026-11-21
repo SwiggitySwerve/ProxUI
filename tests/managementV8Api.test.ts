@@ -253,6 +253,27 @@ describe('v8 management API contracts', () => {
     );
   });
 
+  test('a catalog plugin id that looks like an alias is sent unchanged', async () => {
+    const get = mock('get');
+    const post = mock('post');
+    // Built-in callers keep the alias: the Meta tile is started as meta.
+    await oauthApi.startAuth('muse');
+    expect(get).toHaveBeenLastCalledWith('/oauth/auth-url', { params: { provider: 'meta' } });
+    await oauthApi.startAuth('muse', undefined, { exact: true });
+    expect(get).toHaveBeenLastCalledWith('/oauth/auth-url', { params: { provider: 'muse' } });
+    await oauthApi.submitCallback('muse', 'https://example.test/cb?code=1', undefined, {
+      exact: true,
+    });
+    expect(post).toHaveBeenLastCalledWith(
+      '/oauth/callback',
+      { provider: 'muse', redirect_url: 'https://example.test/cb?code=1' },
+      undefined
+    );
+    expect(() => oauthApi.startAuth('Bad Id', undefined, { exact: true })).toThrow(
+      'Invalid OAuth provider'
+    );
+  });
+
   test('plugin enabled is an instance config scalar, preserving sibling config', async () => {
     const get = mock('get', { enabled: false, custom: 'value' });
     const put = mock('put');
