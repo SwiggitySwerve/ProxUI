@@ -85,14 +85,6 @@ export function CombinedPoolCard({
             })
           : t('quota_pool.window_remaining', { window: windowLabel })}
       </p>
-      {/* Remaining adds its scale on a second line; rates keep their unit beside the number. */}
-      {mode === 'remaining' && total?.series && (
-        <span>
-          {t('quota_pool.of_capacity', {
-            capacity: formatPoolNumber(total.series.capacityPoints, i18n.language),
-          })}
-        </span>
-      )}
     </div>
   );
   return (
@@ -110,14 +102,13 @@ export function CombinedPoolCard({
           />
         </span>
       </div>
-      {/* Same headline block as a provider card, so an unavailable total keeps its caption. */}
+      {/* Unified label-above-value hero across Remaining and Rate views. */}
       <div
         className={styles.headline}
         data-unavailable={headline === null}
         data-rate={mode !== 'remaining'}
       >
-        {/* Rate views read label, then number; Remaining keeps its caption beside the number. */}
-        {mode !== 'remaining' && headlineContext}
+        {headlineContext}
         <strong>
           {/* Same as the provider cards: the value slot says the total is missing. */}
           {headline === null ? (
@@ -132,13 +123,22 @@ export function CombinedPoolCard({
           ) : (
             <>
               {formatPoolNumber(headline, i18n.language)}
-              {mode !== 'remaining' && <small> {t('quota_pool.points_hour')}</small>}
+              {mode !== 'remaining' ? (
+                <small> {t('quota_pool.points_hour')}</small>
+              ) : (
+                total?.series && (
+                  <small>
+                    {' '}
+                    {t('quota_pool.of_capacity', {
+                      capacity: formatPoolNumber(total.series.capacityPoints, i18n.language),
+                    })}
+                  </small>
+                )
+              )}
             </>
           )}
         </strong>
-        {mode === 'remaining' && headlineContext}
       </div>
-      {/* What the selected rate counts, from About these numbers, so the number isn't a guess. */}
       {mode !== 'remaining' && (
         <p className={styles.rateDefinition}>{t(`quota_pool.${mode}_definition`)}</p>
       )}

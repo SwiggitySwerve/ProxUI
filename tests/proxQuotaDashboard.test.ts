@@ -787,9 +787,9 @@ describe('stacked chart geometry', () => {
     expect(long).toContain('Lowest limit remaining first');
     // The sort pill carries a visible "Sort" prefix ahead of the select.
     expect(long).toMatch(/<label[^>]*><span[^>]*>Sort<\/span><select/);
-    // The low chip says what pressing it does and what its count counts ("Show N …").
+    // The low chip uses one stable noun phrase across off and on states ("Limit below 20% (N)").
     expect(long).toMatch(
-      /<button[^>]*aria-pressed="false"[^>]*>[\s\S]*?Show 1 with a limit below 20%/
+      /<button[^>]*aria-pressed="false"[^>]*>[\s\S]*?Limit below 20% \(1\)/
     );
     expect(long).toContain('data-large="true"');
     const short = render(3);
@@ -1353,7 +1353,8 @@ describe('pool presentation', () => {
       })
     );
     expect(markup).toMatch(
-      /<li data-limit-id="five-hour" data-missing="true"[^>]*><span>5-hour remaining<\/span><em>No 5-hour limit<\/em><\/li>/
+      // An aria-hidden spacer may follow the reason: wide tables use it to start the reason at the bars.
+      /<li data-limit-id="five-hour" data-missing="true"[^>]*><span>5-hour remaining<\/span><em>No 5-hour limit<\/em>(?:<strong aria-hidden="true">(?:(?!<\/li>).)*<\/strong>)?<\/li>/
     );
   });
   test('every forecast state gets one chip shape with its own icon, and Ready is neutral', async () => {

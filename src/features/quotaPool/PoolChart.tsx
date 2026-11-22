@@ -67,15 +67,18 @@ function PoolChartView({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const chartFrame = fitChartFrame(
+  const unit = t(`quota_pool.${mode === 'remaining' ? 'points' : 'points_hour'}`);
+  const numberChars = formatPoolNumber(
+    Math.max(0, stackedTotal?.capacityPoints ?? 0, ...pools.map((pool) => pool.capacityPoints)),
+    i18n.language
+  ).length;
+  const alignUnitEnd = width >= 600;
+  const baseFrame = fitChartFrame(
     width,
     savedData || pools.some((pool) => pool.forecastState !== 'ready') || mode !== 'remaining',
     // One reading draws a point, not a line, so it gets the compact height.
     minimized || Math.max(...pools.map((pool) => pool.recorded.length)) === 1,
-    formatPoolNumber(
-      Math.max(0, stackedTotal?.capacityPoints ?? 0, ...pools.map((pool) => pool.capacityPoints)),
-      i18n.language
-    ).length
+    alignUnitEnd ? Math.max(numberChars, Math.ceil(unit.length * 0.72)) : numberChars
   );
   // Phones still get a start, middle and end date plus one between, so a range reads at a glance.
   const tickCount = width < 480 ? 4 : width < 850 ? 5 : 8;
@@ -134,6 +137,118 @@ function PoolChartView({
     pools.filter((other) => other.provider === pool.provider).length > 1;
   const poolLabel = (pool: ChartPool) =>
     `${poolProviderLabel(t, pool.provider, pool.displayName)}${(pool.sourceLabel || pool.instanceId) && sharesProvider(pool) ? ` · ${pool.sourceLabel ?? pool.instanceId}` : ''}`;
+  const number = (value: number | null) => formatPoolNumber(value, i18n.language);
+  const date = (value: number) => formatPoolDate(value, i18n.language);
+  const visible = (at: number | null): at is number => at !== null && at >= fromMs && at <= toMs;
+  const projectX = (atMs: number) =>
+    baseFrame.left +
+    ((atMs - fromMs) / Math.max(1, toMs - fromMs)) * (baseFrame.right - baseFrame.left);
+  const snapshotText = t(`quota_pool.${savedData ? 'saved_snapshot' : 'snapshot'}`);
+  const snapshotX = visible(nowMs) ? projectX(nowMs) : null;
+  const snapW = snapshotText.length * 8.2 + 20;
+  // A scheduled reset just after Snapshot keeps its label centred over its own tick, so Snapshot's
+  // label moves to the left of its line instead of sitting under that reset label (G10b).
+  const resetJustAfter =
+    snapshotX !== null &&
+    (comparison || mode !== 'remaining' ? [] : pools).some((pool) =>
+      pool.resets.some((reset) => {
+        if (!visible(reset.atMs) || reset.gainPoints <= 0) return false;
+        const gap = projectX(reset.atMs) - snapshotX;
+        return gap >= 0 && gap < snapW / 2 + 40;
+      })
+    );
+  const snapshotAnchor =
+    snapshotX === null
+      ? 'middle'
+      : baseFrame.right - snapshotX < 60 ||
+          (resetJustAfter && snapshotX - baseFrame.left >= snapW)
+        ? 'end'
+        : snapshotX - baseFrame.left < 60
+          ? 'start'
+          : 'middle';
+  // Place scheduled reset labels on the primary annotation baseline when all clear Snapshot and
+  // siblings; if any collides, elevate all reset labels in that chart onto one uniform upper rail
+  // so reset amounts stay level with each other and well clear of Snapshot.
+  const snapLeft =
+    snapshotX === null
+      ? Infinity
+      : snapshotAnchor === 'start'
+        ? snapshotX - 8
+        : snapshotAnchor === 'end'
+          ? snapshotX - snapW
+          : snapshotX - snapW / 2;
+  const snapRight =
+    snapshotX === null
+      ? -Infinity
+      : snapshotAnchor === 'start'
+        ? snapshotX + snapW
+        : snapshotAnchor === 'end'
+          ? snapshotX + 8
+          : snapshotX + snapW / 2;
+  const axisUnitRight = alignUnitEnd ? baseFrame.left - 10 : unit.length * 7.5 + 12;
+  const rawResets = (comparison || mode !== 'remaining' ? [] : pools)
+    .flatMap((pool) => pool.resets)
+    .filter((reset) => visible(reset.atMs) && reset.gainPoints > 0)
+    .map((reset) => {
+      const rx = projectX(reset.atMs);
+      const text = `+${number(reset.gainPoints)}`;
+      const halfW = text.length * 4.5 + 7;
+      // The upper lane (lane 1) sits above Snapshot, so a label there stays centred on its tick.
+      const upperX = Math.max(halfW + 4, Math.min(baseFrame.width - halfW - 4, rx));
+      let labelX = upperX;
+      let left = labelX - halfW;
+      let right = labelX + halfW;
+      // When a reset marker falls right beside Snapshot (e.g. 5-hour deep-link), nudge its label
+      // horizontally clear of Snapshot on the same baseline instead of stacking directly on top.
+      if (snapshotX !== null && left < snapRight + 10 && right > snapLeft - 10) {
+        const shiftedX = snapRight + halfW + 8;
+        if (shiftedX + halfW <= baseFrame.width - 4 && shiftedX - rx <= 56) {
+          labelX = shiftedX;
+          left = labelX - halfW;
+          right = labelX + halfW;
+        }
+      }
+      const hitsSnapshot = snapshotX !== null && left < snapRight + 10 && right > snapLeft - 10;
+      const hitsUnit = left < axisUnitRight + 8;
+      const nearTick = Math.abs(labelX - rx) <= 56;
+      const crossesSnapshot = snapshotX !== null && rx > snapLeft - 4 && rx < snapRight + 4;
+      return { ...reset, rx, text, halfW, upperX, labelX, left, right, hitsSnapshot, hitsUnit, nearTick, crossesSnapshot };
+    });
+  let probeRight = -Infinity;
+  const needsUpperRail = rawResets.some((reset) => {
+    const collides = reset.hitsSnapshot || reset.hitsUnit || reset.left < probeRight + 14;
+    if (!collides) probeRight = reset.right;
+    return collides;
+  });
+  // Every scheduled reset keeps its tick (G10). Its label takes the chart's lane (the upper lane when
+  // any label would hit Snapshot), else the other lane, and is left off only when neither has room.
+  const placedRight = [-Infinity, -Infinity];
+  const resetMarkers = rawResets.map((reset) => {
+    const base: 0 | 1 = needsUpperRail ? 1 : 0;
+    for (const lane of [base, (1 - base) as 0 | 1]) {
+      // On the upper lane a label centres on its own tick (Snapshot is on the other lane).
+      const labelX = lane === 1 ? reset.upperX : reset.labelX;
+      const left = labelX - reset.halfW;
+      const right = labelX + reset.halfW;
+      const clear =
+        lane === 1 ? Math.abs(labelX - reset.rx) <= 56 : reset.nearTick && !reset.hitsSnapshot && !reset.hitsUnit;
+      if (clear && left >= placedRight[lane] + 14) {
+        placedRight[lane] = right;
+        return { ...reset, labelX, left, right, lane };
+      }
+    }
+    return { ...reset, lane: -1 as const };
+  });
+  const hasStaggeredReset = resetMarkers.some((reset) => reset.lane === 1);
+  const staggerPad = hasStaggeredReset ? 18 : 0;
+  const chartFrame = staggerPad
+    ? {
+        ...baseFrame,
+        height: baseFrame.height + staggerPad,
+        top: baseFrame.top + staggerPad,
+        bottom: baseFrame.bottom + staggerPad,
+      }
+    : baseFrame;
   const geometry = chartGeometry(
     stacked
       ? stacked.flatMap((layer) =>
@@ -158,22 +273,6 @@ function PoolChartView({
   );
   const selected = Math.max(0, Math.min(inspected ?? latestRecorded, samples.length - 1));
   const sample = samples[Math.min(selected, samples.length - 1)];
-  const unit = t(`quota_pool.${mode === 'remaining' ? 'points' : 'points_hour'}`);
-  const number = (value: number | null) => formatPoolNumber(value, i18n.language);
-  const date = (value: number) => formatPoolDate(value, i18n.language);
-  const visible = (at: number | null): at is number => at !== null && at >= fromMs && at <= toMs;
-  // Keep dense five-hour reset labels legible; every reset still has a tick and title.
-  let lastLabelX = -Infinity;
-  const resetMarkers = (comparison ? [] : pools)
-    .flatMap((pool) => pool.resets)
-    .filter((reset) => visible(reset.atMs) && reset.gainPoints > 0)
-    .map((reset) => {
-      const showLabel =
-        x(reset.atMs) - lastLabelX >= 100 &&
-        (!visible(nowMs) || Math.abs(x(reset.atMs) - x(nowMs)) >= 60);
-      if (showLabel) lastLabelX = x(reset.atMs);
-      return { ...reset, showLabel };
-    });
   const hasValues = samples.some(({ point }) => point[field] !== null);
   const hasProjection = samples.some(({ point, projected }) => projected && point[field] !== null);
   // On a combined chart, state every provider's value at the selected moment, not one of them.
@@ -306,7 +405,12 @@ function PoolChartView({
             />
           </clipPath>
         </defs>
-        <text className={styles.axisUnit} x={0} y={chartFrame.top - 14}>
+        <text
+          className={styles.axisUnit}
+          x={alignUnitEnd ? chartFrame.left - 10 : 0}
+          y={chartFrame.top - 16}
+          textAnchor={alignUnitEnd ? 'end' : 'start'}
+        >
           {unit}
         </text>
         {(min === max ? [min] : [min, (min + max) / 2, max]).map((value, index) => (
@@ -462,40 +566,54 @@ function PoolChartView({
                 )
             )}
         </g>
-        {visible(nowMs) && (
+        {snapshotX !== null && (
           <text
             className={styles.nowLabel}
-            x={x(nowMs)}
-            y={chartFrame.top - 12}
-            // Near an edge (rate views end at the snapshot) the label turns inward to stay inside.
-            textAnchor={
-              chartFrame.right - x(nowMs) < 60
-                ? 'end'
-                : x(nowMs) - chartFrame.left < 60
-                  ? 'start'
-                  : 'middle'
-            }
+            x={snapshotAnchor === 'end' ? snapshotX - 4 : snapshotX}
+            y={chartFrame.top - 10}
+            // Near an edge (rate views end at the snapshot) the label turns inward with a 4px inset.
+            textAnchor={snapshotAnchor}
           >
-            {t(`quota_pool.${savedData ? 'saved_snapshot' : 'snapshot'}`)}
+            {snapshotText}
           </text>
         )}
         {mode === 'remaining' &&
-          resetMarkers.map((reset, index) => (
-            <g key={`${reset.atMs}-${index}`} className={styles.resetMarker}>
-              <line
-                x1={x(reset.atMs)}
-                x2={x(reset.atMs)}
-                y1={chartFrame.top}
-                y2={chartFrame.top + 11}
-              />
-              {reset.showLabel && (
-                <text x={x(reset.atMs)} y={chartFrame.top - 18} textAnchor="middle">
-                  +{number(reset.gainPoints)}
-                </text>
-              )}
-              <title>{`${t('quota_pool.reset')}: ${date(reset.atMs)} · +${number(reset.gainPoints)} ${unit}`}</title>
-            </g>
-          ))}
+          resetMarkers.map((reset, index) => {
+            const rx = x(reset.atMs);
+            const labelY = reset.lane === 1 ? chartFrame.top - 34 : chartFrame.top - 10;
+            return (
+              <g key={`${reset.atMs}-${index}`} className={styles.resetMarker}>
+                <line
+                  className={styles.resetGuide}
+                  x1={rx}
+                  x2={rx}
+                  y1={chartFrame.top + 14}
+                  y2={chartFrame.bottom}
+                />
+                {reset.lane === 1 && !reset.crossesSnapshot && (
+                  <line
+                    className={styles.resetLeader}
+                    x1={rx}
+                    x2={rx}
+                    y1={chartFrame.top - 28}
+                    y2={chartFrame.top}
+                  />
+                )}
+                <line
+                  x1={rx}
+                  x2={rx}
+                  y1={reset.lane === 1 && reset.crossesSnapshot ? chartFrame.top - 3 : chartFrame.top}
+                  y2={chartFrame.top + 14}
+                />
+                {reset.lane >= 0 && (
+                  <text x={reset.labelX} y={labelY} textAnchor="middle">
+                    {reset.text}
+                  </text>
+                )}
+                <title>{`${t('quota_pool.reset')}: ${date(reset.atMs)} · ${reset.text} ${unit}`}</title>
+              </g>
+            );
+          })}
         {!hasValues && (
           <text
             x={(chartFrame.left + chartFrame.right) / 2}
@@ -528,7 +646,11 @@ function PoolChartView({
         <div className={styles.legend}>
           {comparison &&
             pools.map((pool, index) => (
-              <span key={index} {...poolProviderStyle(pool.provider)}>
+              <span
+                key={index}
+                {...poolProviderStyle(pool.provider)}
+                data-stacked-swatch={stackedTotal ? '' : undefined}
+              >
                 <i />
                 {poolLabel(pool)}
                 {pool.forecastState !== 'ready' &&
@@ -554,10 +676,35 @@ function PoolChartView({
           )}
         </div>
       </div>
-      <div className={styles.inspectionRow}>
-        <div className={styles.chartReadout} id={`${id}-readout`} aria-live="polite">
+      {/* At rest on healthy multi-sample cards whose latest reading matches the page timestamp,
+          Data collection already states that time once; keep the readout in the DOM for assistive
+          tech and reveal it visually when inspecting a point, collecting, or missing a reading. */}
+      <div
+        className={styles.inspectionRow}
+        data-redundant={
+          (inspected === null &&
+            valueOnCard &&
+            samples.length > 1 &&
+            sample?.point.atMs === nowMs) ||
+          undefined
+        }
+      >
+        <div
+          className={
+            inspected === null && valueOnCard && samples.length > 1 && sample?.point.atMs === nowMs
+              ? styles.srOnly
+              : styles.chartReadout
+          }
+          id={`${id}-readout`}
+          aria-live="polite"
+        >
           {description}
-          {samples.length === 1 && ` · ${t('quota_pool.single_sample')}`}
+          {samples.length === 1 && (
+            <>
+              {' · '}
+              <span className={styles.nowrap}>{t('quota_pool.single_sample')}</span>
+            </>
+          )}
         </div>
       </div>
     </div>
