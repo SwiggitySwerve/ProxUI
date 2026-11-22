@@ -5269,3 +5269,11 @@ $table-tiers: (
     white-space: nowrap;
   }
 }
+
+// From a 1000px header (a 1440px screen) the number card takes a little more, so the Now strip's
+// "Now · Weekly remaining 248.4 of 300 points" holds one line in rate views (G12b).
+@container poolHeader (min-width: 1000px) {
+  .pool .poolHeader > .statsBlock {
+    grid-template-columns: minmax(280px, 0.85fr) minmax(480px, 1.6fr);
+  }
+}
