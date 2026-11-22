@@ -108,6 +108,18 @@ export class QuotaStore {
         plan TEXT NOT NULL,
         observedAtMs INTEGER NOT NULL
       );
+      -- Each plan an account has had, from when it was first seen; samples are weighted by the
+      -- plan in force when they were recorded. A plan known before this table existed is in force
+      -- from the start (fromMs 0).
+      CREATE TABLE IF NOT EXISTS quota_plan_history (
+        accountId TEXT NOT NULL REFERENCES quota_accounts(id),
+        plan TEXT NOT NULL,
+        fromMs INTEGER NOT NULL,
+        PRIMARY KEY (accountId, fromMs)
+      );
+      INSERT INTO quota_plan_history (accountId, plan, fromMs)
+        SELECT p.accountId, p.plan, 0 FROM quota_account_plans p
+        WHERE NOT EXISTS (SELECT 1 FROM quota_plan_history h WHERE h.accountId = p.accountId);
       CREATE TABLE IF NOT EXISTS quota_provider_catalog (
         instanceId TEXT NOT NULL,
         provider TEXT NOT NULL,
@@ -347,6 +359,14 @@ export class QuotaStore {
   }
 
   listAccounts(): StoredAccount[] {
+    const planHistory = new Map<string, { plan: string; fromMs: number }[]>();
+    for (const { accountId, plan, fromMs } of this.db
+      .query<{ accountId: string; plan: string; fromMs: number }, []>(
+        'SELECT accountId, plan, fromMs FROM quota_plan_history ORDER BY accountId, fromMs'
+      )
+      .all()) {
+      planHistory.set(accountId, [...(planHistory.get(accountId) ?? []), { plan, fromMs }]);
+    }
     return this.db
       .query<
         AccountRow & {
@@ -372,6 +392,7 @@ export class QuotaStore {
         ...(instanceId === null ? {} : { instanceId }),
         ...(sourceAccountId === null ? {} : { sourceAccountId }),
         ...(plan === null || planObservedAtMs === null ? {} : { plan, planObservedAtMs }),
+        ...(planHistory.has(row.id) ? { planHistory: planHistory.get(row.id) } : {}),
         disabled: row.disabled === 1,
         retired: row.retired === 1,
       }));
@@ -619,7 +640,12 @@ export class QuotaStore {
 
   /** Remove accounts and everything referencing them. Children first: foreign keys are ON. */
   private purgeInTransaction(accountIds: readonly string[]): void {
-    for (const table of ['quota_samples', 'quota_account_plans', 'quota_account_sources']) {
+    for (const table of [
+      'quota_samples',
+      'quota_plan_history',
+      'quota_account_plans',
+      'quota_account_sources',
+    ]) {
       const remove = this.db.query(`DELETE FROM ${table} WHERE accountId = ?`);
       for (const id of accountIds) remove.run(id);
     }
@@ -692,7 +718,10 @@ export class QuotaStore {
       this.recordSamples(samples);
       if (!samples.length) this.clearAccountError(accountId, observedAtMs);
       if (plan !== null) this.recordPlan(accountId, plan, observedAtMs);
-      else this.db.query('DELETE FROM quota_account_plans WHERE accountId = ?').run(accountId);
+      else {
+        this.db.query('DELETE FROM quota_plan_history WHERE accountId = ?').run(accountId);
+        this.db.query('DELETE FROM quota_account_plans WHERE accountId = ?').run(accountId);
+      }
     })();
   }
 
@@ -706,13 +735,29 @@ export class QuotaStore {
       .run(accountId, observedAtMs);
   }
 
+  /** Records the current plan; a change also starts a history entry, so older samples keep theirs. */
   recordPlan(accountId: string, plan: string, nowMs: number): void {
-    this.db
-      .query(
-        `INSERT INTO quota_account_plans (accountId, plan, observedAtMs) VALUES (?, ?, ?)
+    this.db.transaction(() => {
+      const latest = this.db
+        .query<{ plan: string }, [string]>(
+          'SELECT plan FROM quota_plan_history WHERE accountId = ? ORDER BY fromMs DESC LIMIT 1'
+        )
+        .get(accountId);
+      if (latest?.plan !== plan) {
+        // An account's first plan is in force from the start: its first samples precede the read.
+        this.db
+          .query(
+            'INSERT OR REPLACE INTO quota_plan_history (accountId, plan, fromMs) VALUES (?, ?, ?)'
+          )
+          .run(accountId, plan, latest ? nowMs : 0);
+      }
+      this.db
+        .query(
+          `INSERT INTO quota_account_plans (accountId, plan, observedAtMs) VALUES (?, ?, ?)
          ON CONFLICT(accountId) DO UPDATE SET plan = excluded.plan, observedAtMs = excluded.observedAtMs`
-      )
-      .run(accountId, plan, nowMs);
+        )
+        .run(accountId, plan, nowMs);
+    })();
   }
 
   markAccountError(id: string, nowMs: number): void {

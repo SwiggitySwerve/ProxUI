@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildDashboard, projectPool } from '../server/quota/domain';
-import { planFromClaudeProfile, planFromCodexUsage, planWeight } from '../server/quota/plans';
+import {
+  planAt,
+  planFromClaudeProfile,
+  planFromCodexUsage,
+  planWeight,
+} from '../server/quota/plans';
 import { QuotaStore } from '../server/quota/store';
 import type { QuotaSample, StoredAccount } from '../server/quota/types';
 import { HOUR_MS } from '../server/quota/types';
@@ -154,6 +163,90 @@ describe('weighted pools', () => {
   });
 });
 
+describe('plan history', () => {
+  const MIN = 60_000;
+  // Ultra Lite until 12 minutes ago, then Ultra: the upgrade opened a fresh weekly window.
+  const gemini: StoredAccount = {
+    id: 'g',
+    provider: 'antigravity',
+    name: 'g.json',
+    email: null,
+    disabled: false,
+    retired: false,
+    lastSeenAtMs: now,
+    lastErrorAtMs: null,
+    plan: 'g1-ultra-tier',
+    planHistory: [
+      { plan: 'g1-ultra-lite-tier', fromMs: 0 },
+      { plan: 'g1-ultra-tier', fromMs: now - 12 * MIN },
+    ],
+  };
+  const reading = (
+    minutesAgo: number,
+    remainingPercent: number,
+    resetAtMs: number
+  ): QuotaSample => ({
+    accountId: 'g',
+    window: 'weekly',
+    observedAtMs: now - minutesAgo * MIN,
+    remainingPercent,
+    resetAtMs,
+    periodHours: 168,
+  });
+  const before = now + 24 * HOUR_MS;
+  const after = now + 7 * 24 * HOUR_MS;
+  const rows = [
+    reading(25, 80, before),
+    reading(20, 60, before),
+    reading(15, 40, before),
+    reading(10, 100, after),
+    reading(5, 98, after),
+    reading(0, 96, after),
+  ];
+
+  test('a plan applies from when it took effect; earlier plans before that', () => {
+    expect(planAt(gemini, now - 20 * MIN)).toBe('g1-ultra-lite-tier');
+    expect(planAt(gemini, now - 12 * MIN)).toBe('g1-ultra-tier');
+    expect(planAt({ plan: 'pro' }, now)).toBe('pro');
+  });
+
+  test('an upgrade leaves earlier readings on the old plan scale and burns no points', () => {
+    const pool = dashboard([gemini], rows).pools.find((p) => p.provider === 'antigravity')!;
+    expect(pool.capacityPoints).toBe(2000);
+    expect(pool.remainingPoints).toBe(1920);
+    const at = (minutesAgo: number) =>
+      pool.recorded.find((point) => point.atMs === now - minutesAgo * MIN)?.remainingPoints;
+    // Ultra Lite counts 5 base plans: 80% was 400 points, not 1600.
+    expect(at(25)).toBe(400);
+    expect(at(15)).toBe(200);
+    expect(at(10)).toBe(2000);
+    // 2 x 20% of 500 and 2 x 2% of 2000 over 20 minutes; the step across the upgrade is no burn.
+    expect(pool.burnPointsPerHour).toBeCloseTo(840, 6);
+  });
+
+  test('a downgrade mid-window is not consumption', () => {
+    const downgraded: StoredAccount = {
+      ...gemini,
+      plan: 'g1-ultra-lite-tier',
+      planHistory: [
+        { plan: 'g1-ultra-tier', fromMs: 0 },
+        { plan: 'g1-ultra-lite-tier', fromMs: now - 7 * MIN },
+      ],
+    };
+    const sameWindow = [
+      reading(15, 90, after),
+      reading(10, 88, after),
+      reading(5, 86, after),
+      reading(0, 84, after),
+    ];
+    const pool = dashboard([downgraded], sameWindow).pools.find(
+      (p) => p.provider === 'antigravity'
+    )!;
+    // 2% of 2000 per 5 minutes before, 2% of 500 after; the 10 -> 5 step crosses the change.
+    expect(pool.burnPointsPerHour).toBeCloseTo((40 + 10) * 6, 6);
+  });
+});
+
 describe('plan persistence', () => {
   const stores: QuotaStore[] = [];
   afterEach(() => stores.splice(0).forEach((s) => s.close()));
@@ -165,5 +258,37 @@ describe('plan persistence', () => {
     store.recordPlan('x', 'pro', now);
     store.recordPlan('x', 'promax', now + 1);
     expect(store.listAccounts()[0]).toMatchObject({ plan: 'promax', planObservedAtMs: now + 1 });
+  });
+  test('keeps each plan change with the time it was first seen', () => {
+    const store = new QuotaStore(':memory:');
+    stores.push(store);
+    store.recordInventory('codex', [account('x', 'codex')], now);
+    store.recordPlan('x', 'pro', now);
+    store.recordPlan('x', 'pro', now + 1);
+    store.recordPlan('x', 'promax', now + 2);
+    store.recordPlan('x', 'promax', now + 3);
+    // The first plan holds from the start: the account's first samples precede the plan read.
+    expect(store.listAccounts()[0].planHistory).toEqual([
+      { plan: 'pro', fromMs: 0 },
+      { plan: 'promax', fromMs: now + 2 },
+    ]);
+  });
+  test('a plan stored before the history existed holds from the start', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prox-plan-history-'));
+    try {
+      const path = join(dir, 'quota.sqlite');
+      const first = new QuotaStore(path);
+      first.recordInventory('codex', [account('x', 'codex')], now);
+      first.recordPlan('x', 'pro', now);
+      first.close();
+      const legacy = new Database(path);
+      legacy.exec('DELETE FROM quota_plan_history');
+      legacy.close();
+      const reopened = new QuotaStore(path);
+      stores.push(reopened);
+      expect(reopened.listAccounts()[0].planHistory).toEqual([{ plan: 'pro', fromMs: 0 }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
