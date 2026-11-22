@@ -76,8 +76,10 @@ credential UI. The store owns persistence; the collector uses only public APIs.
   An unknown plan counts as one unit and is shown as unknown. Points are not tokens.
 - Plans come from provider responses only: Codex's usage `plan_type`, Claude's
   OAuth profile tier and Antigravity's `loadCodeAssist` tier id (the paid tier
-  first), the last two read at most every six hours. A failed plan read changes
-  nothing else.
+  first). The last two are separate reads, asked at most every 30 minutes, and a
+  targeted refresh asks again when the last ask is at least 5 minutes old, so an
+  upgrade or downgrade reweights the pool without a restart. A failed plan read
+  changes nothing else.
 - An account with no five-hour limit is `no-limit` in the five-hour pool, not `missing-window`:
   outside its capacity and eligible count, and it never withholds the pool or combined five-hour
   total. Claude is decided by plan (Ultra answered with limits but no five-hour one). Codex is
@@ -237,4 +239,4 @@ while collection is running, without requesting additional collections.
   20 s per-account floor lets the next targeted read run, set only when that floor skipped this
   one, otherwise null. The page-wide refresh answers with the existing `nextRefreshAtMs` (the
   4 minute floor).
-- Billing readings and ChatGPT account IDs are memory-only. Never persist or log the provider account ID or send it to the browser. Codex subscription attempts and Claude profile attempts are gated per account for six hours, including failures and targeted refreshes. Claude reads once after restart even with a fresh stored plan. Billing failures preserve the previous reading.
+- Billing readings and ChatGPT account IDs are memory-only. Never persist or log the provider account ID or send it to the browser. Codex subscription attempts are gated per account for six hours, including failures and targeted refreshes. Claude profile attempts (which also carry the plan) are gated per account for 30 minutes, including failures; a targeted refresh re-reads after 5 minutes. Claude reads once after restart even with a fresh stored plan. Billing failures preserve the previous reading.

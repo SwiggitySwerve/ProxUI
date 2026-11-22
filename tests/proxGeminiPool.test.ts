@@ -9,7 +9,7 @@ import { QuotaCollector, quotaSamples } from '../server/quota/collector';
 import { buildDashboard, type DashboardOptions } from '../server/quota/domain';
 import { planWeight } from '../server/quota/plans';
 import { QuotaStore } from '../server/quota/store';
-import { DAY_MS, HOUR_MS } from '../server/quota/types';
+import { DAY_MS, HOUR_MS, MANUAL_REFRESH_INTERVAL_MS } from '../server/quota/types';
 import { validateSourceManifest } from '../src/domain/providerSources/manifest';
 import { laneOf, poolWindowId } from '../src/domain/quotaWindows/lanes';
 import {
@@ -169,11 +169,12 @@ function fixture() {
   ) satisfies typeof fetch;
   const store = new QuotaStore(':memory:');
   cleanups.push(() => store.close());
+  let clock = NOW;
   const collector = new QuotaCollector(store, {
     sources: manifest.sources,
     revision: 'synthetic-revision',
     fetcher,
-    now: () => NOW,
+    now: () => clock,
   });
   cleanups.push(() => collector.stop());
   const options: DashboardOptions = {
@@ -206,6 +207,7 @@ function fixture() {
     dashboard,
     setQuota: (value: unknown) => (quota = value),
     setTier: (value: string) => (tier = value),
+    advance: (ms: number) => (clock += ms),
   };
 }
 
@@ -264,6 +266,43 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     expect(JSON.stringify(weekly)).not.toContain(SENTINEL);
   });
 
+  test('an upgrade from Ultra Lite to Ultra is picked up 30 minutes after the last plan read, or at once on a targeted refresh', async () => {
+    const f = fixture();
+    const plan = () => f.store.listAccounts().find((a) => a.provider === 'antigravity')!.plan;
+    const tierReads = () =>
+      f.calls.filter((call) => call.body?.url === ANTIGRAVITY_CODE_ASSIST_URL).length;
+    await f.collector.refresh();
+    expect(plan()).toBe('g1-ultra-lite-tier');
+    expect(tierReads()).toBe(1);
+
+    // The subscription changes upstream. A scheduled collection inside the plan interval keeps
+    // the stored tier; the first one after it reads the new tier.
+    f.setTier('g1-ultra-tier');
+    f.advance(MANUAL_REFRESH_INTERVAL_MS);
+    await f.collector.refresh();
+    expect(tierReads()).toBe(1);
+    f.advance(30 * 60_000 - MANUAL_REFRESH_INTERVAL_MS);
+    await f.collector.refresh();
+    expect(tierReads()).toBe(2);
+    expect(plan()).toBe('g1-ultra-tier');
+
+    // A targeted refresh (the row's Refresh) re-reads the tier without waiting for the interval.
+    f.setTier('g1-ultra-lite-tier');
+    f.advance(5 * 60_000);
+    const account = f.store.listAccounts().find((a) => a.provider === 'antigravity')!;
+    expect(await f.collector.refreshAccount(account.id)).toBe(true);
+    expect(tierReads()).toBe(3);
+    expect(plan()).toBe('g1-ultra-lite-tier');
+
+    // A targeted refresh that fails before the plan read leaves the scheduled interval alone.
+    f.advance(5 * 60_000);
+    f.setQuota({});
+    expect(await f.collector.refreshAccount(account.id)).toBe(false);
+    f.setQuota(summary());
+    f.advance(MANUAL_REFRESH_INTERVAL_MS);
+    await f.collector.refresh();
+    expect(tierReads()).toBe(3);
+  });
   test('a reading without the Gemini group records explicit missing windows, not zero', () => {
     const { samples } = quotaSamples(
       'antigravity',
