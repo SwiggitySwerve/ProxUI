@@ -294,7 +294,7 @@ function SourceResetAction({
     return (
       <ResetFact
         {...fact}
-        reason={t(error ? 'quota_pool.reset_lookup_failed' : 'quota_pool.reset_loading')}
+        reason={t(error ? 'quota_pool.reset_lookup_failed' : 'quota_pool.reset_checking_credential')}
       />
     );
   return provider === 'claude' ? (
