@@ -300,14 +300,22 @@ test('exporter bearer boundary reports per-source subscription and nullable even
           state: 'subscribed',
           lastEventAtMs: 8000,
           subscribedAtMs: 7500,
+          subscribedBootId: 'boot-claude',
         },
-        { instance: 'codex-primary', state: 'backoff', lastEventAtMs: null, subscribedAtMs: null },
-        // A stale timestamp outside `subscribed` is never reported.
+        {
+          instance: 'codex-primary',
+          state: 'backoff',
+          lastEventAtMs: null,
+          subscribedAtMs: null,
+          subscribedBootId: null,
+        },
+        // A stale timestamp or boot id outside `subscribed` is never reported.
         {
           instance: 'gemini-primary',
           state: 'replaying',
           lastEventAtMs: null,
           subscribedAtMs: 9000,
+          subscribedBootId: 'boot-gemini',
         },
       ] as ReturnType<Parameters<typeof createUsageStatusHandler>[0]['sources']>,
     writer: () => ({
@@ -343,6 +351,7 @@ test('exporter bearer boundary reports per-source subscription and nullable even
         state: 'subscribed',
         subscribed: true,
         subscribed_at_seconds: 7.5,
+        subscribed_boot_id: 'boot-claude',
         last_event_age_seconds: 2,
       },
       {
@@ -350,6 +359,7 @@ test('exporter bearer boundary reports per-source subscription and nullable even
         state: 'backoff',
         subscribed: false,
         subscribed_at_seconds: null,
+        subscribed_boot_id: null,
         last_event_age_seconds: null,
       },
       {
@@ -357,6 +367,7 @@ test('exporter bearer boundary reports per-source subscription and nullable even
         state: 'replaying',
         subscribed: false,
         subscribed_at_seconds: null,
+        subscribed_boot_id: null,
         last_event_age_seconds: null,
       },
     ],
