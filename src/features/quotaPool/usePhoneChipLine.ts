@@ -20,7 +20,9 @@ function fitsOneLine(title: HTMLElement) {
   const heading = title.querySelector<HTMLElement>('h2');
   const count = title.querySelector<HTMLElement>(`.${styles.poolMeta} > :first-child`);
   const chip = title.querySelector<HTMLElement>(`.${styles.badge}`);
-  const line = title.parentElement;
+  // The card header: on phones the identity row has no box of its own (display: contents), and it
+  // spans the header anyway.
+  const line = title.closest<HTMLElement>(`.${styles.poolHeader}`);
   if (!mark || !heading || !count || !chip || !line) return true;
   const gap = parseFloat(getComputedStyle(title).columnGap) || 0;
   // The chip's padding is outside its contents.

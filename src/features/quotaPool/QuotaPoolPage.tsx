@@ -5,7 +5,6 @@ import {
   IconAlertTriangle,
   IconEye,
   IconClock,
-  IconRefreshCw,
   IconSlidersHorizontal,
   IconChevronDown,
   IconChevronLeft,
@@ -173,7 +172,8 @@ export function QuotaPoolPage() {
     node.focus();
   }, []);
   // The Options button spells out every current choice on one line at 390px ("Weekly · Remaining · 3h
-  // avg · Same as now"); a non-default Future is named with its prefix. Rate views omit Future.
+  // avg · Future: same"); Future is always named, so its value never reads as a setting of its own
+  // (G11). Rate views omit Future.
   const optionsSummary = [
     t(`quota_pool.${view.window === 'weekly' ? 'weekly' : 'five_hour'}`),
     t(`quota_pool.${mode}`),
@@ -181,7 +181,7 @@ export function QuotaPoolPage() {
     ...(mode === 'remaining'
       ? [
           view.future === 1
-            ? t('quota_pool.scenario.same')
+            ? t('quota_pool.options_future_same')
             : `${t('quota_pool.future_prefix')}: ${t(
                 `quota_pool.scenario.${view.future === 0.5 ? 'half' : view.future === 2 ? 'double' : 'idle'}`
               )}`,
@@ -413,10 +413,11 @@ export function QuotaPoolPage() {
                     ))}
                   </select>
                 </label>
-                {/* The scenario only shapes the Remaining forecast, so rate views don't offer it. */}
-                {mode === 'remaining' && (
-                  <label className={styles.selectLabel}>
-                    <span className={styles.selectPrefix}>{t('quota_pool.future_prefix')}</span>
+                {/* The scenario only shapes the Remaining forecast. Rate views keep the control in its
+                    place, off, and its one choice says why, so the row never changes shape (G11). */}
+                <label className={styles.selectLabel}>
+                  <span className={styles.selectPrefix}>{t('quota_pool.future_prefix')}</span>
+                  {mode === 'remaining' ? (
                     <select
                       value={query.multiplier}
                       onChange={(event) =>
@@ -431,8 +432,12 @@ export function QuotaPoolPage() {
                         </option>
                       ))}
                     </select>
-                  </label>
-                )}
+                  ) : (
+                    <select disabled value="off">
+                      <option value="off">{t('quota_pool.future_remaining_only')}</option>
+                    </select>
+                  )}
+                </label>
               </div>
             </div>
           </fieldset>
@@ -733,12 +738,9 @@ function RefreshCountdown({
   if (dueAtMs === null) return null;
   return (
     <span className={styles.countdown} data-refreshing={refreshing} role="status">
-      {/* A clock for the countdown; a spinning refresh icon while a collection is running. */}
-      {refreshing ? (
-        <IconRefreshCw size={16} aria-hidden="true" />
-      ) : (
-        <IconClock size={16} aria-hidden="true" />
-      )}
+      {/* A clock for the countdown. While a collection runs the header's refresh button spins, so
+          this stays plain status text: one progress indicator on the page (G11). */}
+      {!refreshing && <IconClock size={16} aria-hidden="true" />}
       {refreshing
         ? t('quota_pool.refreshing')
         : t(`quota_pool.${retrying ? 'auto_retry_in' : 'auto_refresh_in'}`, {

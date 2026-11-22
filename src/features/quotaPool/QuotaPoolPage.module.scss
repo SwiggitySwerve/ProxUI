@@ -2477,6 +2477,17 @@ $table-tiers: (
     justify-content: flex-start;
     margin-left: 0;
   }
+  // The actions follow the headline and facts, right above the chart, so a card's title and its number
+  // read together (G11). The identity row lends its children to the header for that.
+  .pool > .poolHeader > .poolIdentity {
+    display: contents;
+    > .poolTitle {
+      flex: 1 0 100%;
+    }
+    > .reorder {
+      order: 1;
+    }
+  }
 }
 
 // Facts, narrow cards first: label left, value right, full width under the headline.
@@ -4646,9 +4657,6 @@ $table-tiers: (
 
 // In-page refresh-error warning banner spans the full card column width (640px cap stays on
 // standalone empty and initial-error cards only).
-.errorNotice:not([data-alone]) {
-  max-width: none;
-}
 
 // Full-width desktop roster toolbar: Search flexes to meet the table's right edge while keeping
 // Search, Sort, and the filter chip cleanly grouped (wrapping flush-left at 1000px).

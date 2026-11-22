@@ -166,15 +166,20 @@ function ResetFact({
         label={t('quota_pool.reset_held_label')}
         state="known"
         value={
-          <>
-            {t(status.valueKey, { count: resets.available })}
-            {kinds && (
-              <span className={styles.resetKindTotals}>
-                {' · '}
-                <ResetKindCounts kinds={kinds} />
-              </span>
-            )}
-          </>
+          // One kind reads as its count alone ("1 Fable"), never "1 · 1 Fable" (G11).
+          kinds?.length === 1 ? (
+            <ResetKindCounts kinds={kinds} />
+          ) : (
+            <>
+              {t(status.valueKey, { count: resets.available })}
+              {kinds && (
+                <span className={styles.resetKindTotals}>
+                  {' · '}
+                  <ResetKindCounts kinds={kinds} />
+                </span>
+              )}
+            </>
+          )
         }
       />
       {/* Its own fact, so the dates read as values instead of wrapping inside the status. */}

@@ -189,18 +189,19 @@ def fixture(state):
                 expiries = [NOW + (4 + 3 * k) * DAY for k in range(len(kinds))]
                 accounts[0]["resets"].update(available=4, usable=2, kinds=kinds, expiries=expiries,
                                              nextExpiryAtMs=expiries[0])
-                # A pair whose Vietnamese line ("1 5 giờ · 1 toàn bộ") passes 18 characters yet fits the column,
-                # so the fit is measured, not counted.
-                pair = ["session", "full"]
-                accounts[2]["resets"].update(available=2, usable=1, kinds=pair, expiries=expiries[:2],
+                # One kind ("2 full held") fits the column, so its line names it; the four-kind line counts.
+                accounts[2]["resets"].update(available=2, usable=1, kinds=["full", "full"], expiries=expiries[:2],
                                              nextExpiryAtMs=expiries[0])
             # The pool holds what its Ultra accounts hold: 72% of one 2,000-point account across four.
             f = 1440 / remaining
             pool.update(capacityPoints=8000, remainingPoints=1440,
                         nextResetGainPoints=round(pool["nextResetGainPoints"] * f),
                         resets=[dict(r, gainPoints=round(r["gainPoints"] * f)) for r in pool["resets"]])
+            # Rounded as the server's are, so the latest reading equals the 1,440 headline exactly (a float
+            # left at 1440.0000001 kept a "Latest reading · … · 1,440 points" line that no live card shows).
             for series in ("recorded", "projected"):
-                pool[series] = [dict(item, remainingPoints=item["remainingPoints"] * f) for item in pool[series]]
+                pool[series] = [dict(item, remainingPoints=None if item["remainingPoints"] is None else round(item["remainingPoints"] * f, 1))
+                                for item in pool[series]]
         if state == "long-name":
             # A name beyond 28ch, beside a (usable) reset chip: it wraps in its Account cell, minimized or not.
             accounts[0]["identifier"] = "a.deliberately.long.credential.name.for.a.shared.workstation@example-corporate.test"
@@ -960,8 +961,8 @@ async def check_phone_header(page, state, width):
     """I4 (H1, page-wide since wave 3): at 390 the page makes one choice. If every provider card's title, count
     and chip fit on one line, every card keeps them inline (tops within 4px) and a card's top to the top of its
     headline block (label included) is at most 112px. Otherwise every card's chip sits on its own second line
-    under the title and count (148px). The action pills sit on their own row between the two, and the headline
-    starts below them."""
+    under the title and count (148px). The action pills sit on their own row after the headline and facts, right
+    above the chart (G11)."""
     if width != 390:
         return []
     return await page.evaluate("(cardless) => {" + C1_PRELUDE + r"""
@@ -994,8 +995,11 @@ async def check_phone_header(page, state, width):
         if (d > limit) fails.push({card, why: `headline block starts ${d.toFixed(0)}px below the card top (limit ${limit}, ${allFit ? 'every card inline' : 'chips on a second line'})`});
         const pills = actions(a);
         if (!pills.length) fails.push({card, why: 'card has no visible action pills'});
-        const bottom = Math.max(...pills.map(p => p.getBoundingClientRect().bottom));
-        if (top(headline) < bottom) fails.push({card, why: 'headline block starts above the action pills end'});
+        // G11: the pills follow the headline and facts and end before the chart starts.
+        const facts = a.querySelector('[class*="__statsBlock___"]') || headline, plot = a.querySelector('[id$="-plot"]');
+        const pillTop = Math.min(...pills.map(top)), pillBottom = Math.max(...pills.map(p => p.getBoundingClientRect().bottom));
+        if (pillTop < facts.getBoundingClientRect().bottom - 0.5) fails.push({card, why: 'the action pills start above the end of the headline and facts'});
+        if (plot && plot.getBoundingClientRect().height > 0 && pillBottom > top(plot) + 0.5) fails.push({card, why: 'the action pills run into the chart'});
         // Pills only on row 2: they start below the identity row, and every pill shares one row.
         const identityBottom = Math.max(title.getBoundingClientRect().bottom, ink(count).bottom, chip.getBoundingClientRect().bottom);
         for (const p of pills) if (p.getBoundingClientRect().top < identityBottom - 1) fails.push({card, why: 'an action pill shares a row with the title, count or chip'});
@@ -1710,10 +1714,10 @@ async def check_options_summary(page, name, state, width):
     if not await toggle.is_visible():
         return [dict(why="Options button not visible")]
     rate_view = state in ("drain", "burn")
-    # Remaining names its Future assumption ("Same as now" by default); rate views hide Future, so they omit it.
+    # Remaining names its Future assumption ("Future: same" by default, G11); rate views turn Future off, so they omit it.
     expected = ["5-hour" if state == "no-limit" else "Weekly", "Drain rate" if state == "drain" else "Burn rate" if state == "burn" else "Remaining", "3h avg"]
     if not rate_view:
-        expected.append("Same as now")
+        expected.append("Future: same")
     failures = []
     text = await toggle.inner_text()
     failures += [dict(why=f"summary lacks {item!r}", text=text) for item in expected if item not in text]
@@ -1983,25 +1987,19 @@ def a_expected_facts(state, provider):
     """The summary pairs a provider card must show today (English), derived from the fixture, not from the page."""
     pool = next(p for p in fixture(state)["pools"] if p["provider"] == provider)
     five_hour = state == "no-limit"
-    holders = [a for a in pool["accounts"] if a["resets"] and a["resets"]["available"] > 0]
     available = sum(a["resets"]["available"] for a in pool["accounts"] if a["resets"])
     usable = sum(a["resets"]["usable"] for a in pool["accounts"] if a["resets"])
     stale = sum(a["status"] == "stale" for a in pool["accounts"])
     no_limit = sum(bool(a.get("noFiveHourLimit")) for a in pool["accounts"]) if five_hour else 0
     facts = []
-    # Pool-level reset totals appear unless one account holds them all and its row is on the first page (name
-    # order, R_PAGE rows), where its own cell or chip already states the count.
-    order = sorted(pool["accounts"], key=lambda a: (a.get("identifier") or a["label"]).casefold())
-    lone_shown = len(holders) == 1 and order.index(holders[0]) < R_PAGE
-    if available and not lone_shown:
-        facts.append(("Manual resets", str(available)))
-        if usable:
-            facts.append(("Usable resets", str(usable)))
+    # The pool's resets are one fact in every card that holds any (G11).
+    if available:
+        facts.append(("Manual resets", f"{usable} usable of {available} held"))
     if pool["loadedCount"] != pool["accountCount"] or pool["eligibleCount"] != pool["accountCount"]:
         if stale:
             facts += [("Current", str(pool["loadedCount"])), ("Stale", str(stale))]
         elif no_limit:
-            facts.append(("With a 5-hour limit", f"{pool['eligibleCount']} of {pool['accountCount']}"))
+            # Each account without a 5-hour limit says so in its row; only missing readings are a pool fact (G11).
             if pool["loadedCount"] < pool["eligibleCount"]:
                 facts.append(("Reporting", f"{pool['loadedCount']} of {pool['eligibleCount']}"))
         else:
@@ -2076,7 +2074,7 @@ async def a_summary_pass(page, state, lng, out):
 
 async def check_summary_facts(page, context, url, route_api, name, state):
     """A3: every summary item is a label/value pair in one shared wrapping group; values keep the Manual resets style;
-    the facts are today's (Manual resets, Usable resets, Reporting, Current, Stale, With a 5-hour limit) with the
+    the facts are today's (Manual resets "N usable of M held", Reporting, Current, Stale) with the
     fixture's numbers; a pair never breaks inside or overflows its container; items that fit one line share a top;
     at 640px and below the pairs form an even grid (equal columns, no row with a single pair beside fuller rows)."""
     if name not in A_SUMMARY_CASES:
@@ -2945,11 +2943,11 @@ async def check_reset_dialog_facts(dialog):
     if not facts or any(f is None for f in facts):
         return [dict(why="the dialog has no label-above-value facts to measure")]
     labels = [f["label"] for f in facts]
-    # "Expires" (the soonest held expiry) follows Resets to use whenever the account's resets have a known
+    # "Reset expires" (the soonest held expiry, G11) follows Resets to use whenever the account's resets have a known
     # future expiry; it names a date and time in UTC.
-    if labels not in (["Account", "Resets to use", "Limits to reset"], ["Account", "Resets to use", "Expires", "Limits to reset"]):
-        fails.append(dict(why="the dialog facts are not Account, Resets to use, [Expires,] Limits to reset", labels=labels))
-    expiry = next((f["value"] for f in facts if f and f["label"] == "Expires"), None)
+    if labels not in (["Account", "Resets to use", "Limits to reset"], ["Account", "Resets to use", "Reset expires", "Limits to reset"]):
+        fails.append(dict(why="the dialog facts are not Account, Resets to use, [Reset expires,] Limits to reset", labels=labels))
+    expiry = next((f["value"] for f in facts if f and f["label"] == "Reset expires"), None)
     if expiry is not None and not re.search(r"\d{1,2}:\d{2}\s*[AP]M\s*UTC", expiry.replace("\u00a0", " ")):
         fails.append(dict(why="Expires is not a date and time", value=expiry))
     for fact in facts:
@@ -3125,8 +3123,8 @@ async def check_banner_layout(page):
       const button = banner.querySelector('button');
       if (!button) return [{why: 'banner has no Try again button'}];
       const b = banner.getBoundingClientRect(), k = button.getBoundingClientRect(), p = page.getBoundingClientRect(), s = getComputedStyle(banner), fails = [];
-      if (banner.hasAttribute('data-alone') && b.width > 640.5) fails.push({why: 'standalone card wider than 640px', width: b.width});
-      if (!banner.hasAttribute('data-alone') && Math.abs(b.right - p.right) > 2) fails.push({why: 'in-page banner does not align to card right edge', right: b.right, content: p.right});
+      // K13: the banner and the standalone card share the 640px cap (the empty and error cards' width).
+      if (b.width > 640.5) fails.push({why: 'banner wider than 640px', width: b.width});
       if (Math.abs(b.left - p.left) > 1) fails.push({why: 'banner is not left-aligned with the content', left: b.left, content: p.left});
       const below = b.bottom - k.bottom - parseFloat(s.borderBottomWidth), top = parseFloat(s.paddingTop);
       if (below < top - 0.5) fails.push({why: 'Try again has less room below than the banner pads above', below, top});
@@ -3978,7 +3976,7 @@ G2_CELL_JS = """() => {
     const summary = cell.parentElement, c = r(cell), next = [...summary.querySelectorAll(':scope > ul > li')].filter(e => e.checkVisibility({checkVisibilityCSS: true}))[0];
     const nameCell = summary.querySelector('[class*="__accountName___"]'), text = nameCell.querySelector('[class*="__accountText___"]');
     let right = -Infinity; const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
-    for (let n = w.nextNode(); n; n = w.nextNode()) { if (n.parentElement.closest('[aria-hidden="true"]') || !n.parentElement.checkVisibility({checkVisibilityCSS: true})) continue;
+    for (let n = w.nextNode(); n; n = w.nextNode()) { if (n.parentElement.closest('[aria-hidden="true"], [class*="__srOnly___"], [class*="__visuallyHidden___"]') || !n.parentElement.checkVisibility({checkVisibilityCSS: true})) continue;
       const g = document.createRange(); g.selectNodeContents(n); for (const b of g.getClientRects()) if (b.width > 0) right = Math.max(right, b.right); }
     // The cell's own screen-reader label (the column header is hidden from assistive technology) and the held line's
     // hidden measuring copy are not part of its text.
@@ -4115,14 +4113,14 @@ G9_HELD_JS = r"""() => {
   }
   return out;
 }"""
-# What the four-kind account (ops…) and the 5-hour + full account (ada…) must show: the four kinds never fit; the
-# pair fits in English and Vietnamese (19 characters, under 120px) but not in Russian.
-G9_HELD_WANT = {"en": ("count", "named"), "vi": ("count", "named"), "ru": ("count", "count")}
+# What the four-kind account (ops…) and the one-kind account (ada…, "2 full held") must show: the four kinds never
+# fit the 120px column with "held" on the line; one kind fits in every language checked.
+G9_HELD_WANT = {"en": ("count", "named"), "vi": ("count", "named"), "ru": ("count", "named")}
 # A lone reset holder past the first page, holding every kind, in phone widths and a long language.
 G9_SUMMARY_CASES = ("real-narrow",)
 G9_SUMMARY_JS = r"""() => {
-  const out = [], facts = [...document.querySelectorAll('article [class*="__summaryFact___"]')].filter(f => f.querySelector('[class*="__resetKindTotals___"]'));
-  if (!facts.length) return [{why: 'no reset summary with kinds to measure'}];
+  const out = [], facts = [...document.querySelectorAll('article [class*="__summaryFact___"]')];
+  if (!facts.length) return [{why: 'no reset summary to measure'}];
   for (const f of facts) {
     const card = f.closest('article'), edge = card.getBoundingClientRect().right - parseFloat(getComputedStyle(card).paddingRight);
     if (f.getBoundingClientRect().right > edge + 0.5) out.push({why: 'the reset summary runs past its card', over: +(f.getBoundingClientRect().right - edge).toFixed(1)});
@@ -4149,7 +4147,7 @@ async def check_row_geometry(page, width, browser=None, url=None, name=None):
                 got = [next((v for k, v in held.items() if k.startswith(p)), None) for p in ("ops", "ada")]
                 want = [w if w == "named" else "count" for w in (four, pair)]
                 if [g if g in (None, "named") else "count" for g in got] != want:
-                    out.append(dict(page=tag, why="held lines (four kinds, 5-hour + full) are not named/counted as measured", want=want, got=got))
+                    out.append(dict(page=tag, why="held lines (four kinds, one kind) are not named/counted as measured", want=want, got=got))
             finally:
                 await context.close()
     if browser and name in G9_SUMMARY_CASES:

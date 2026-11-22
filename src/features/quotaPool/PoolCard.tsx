@@ -33,7 +33,7 @@ import type { AccountResets } from '@/domain/quotaPool/types';
 import { laneOf, poolWindowId } from '@/domain/quotaWindows/lanes';
 import { profileWindowId } from '@/domain/quotaWindows/normalized';
 import { isBuiltInPoolProvider } from '@/domain/quotaPool/providers';
-import { heldResetKinds, sumResetKinds, wasSpent, type ResetKindCount } from './resetAccounts';
+import { heldResetKinds, wasSpent, type ResetKindCount } from './resetAccounts';
 import { PoolAccountResets, ResetKindCounts } from './PoolAccountResets';
 import { PoolChart } from './PoolChart';
 import { PoolGraph } from './PoolGraph';
@@ -60,10 +60,24 @@ const CHIP_ICONS: Record<PoolChipIcon, typeof IconCheck> = {
   info: IconInfo,
 };
 
+/** What is held, by kind, in the language's own word order: "1 weekly · 2 Fable held" (G11). */
+function HeldKinds({ kinds }: { kinds: ResetKindCount[] }) {
+  const { t } = useTranslation();
+  const [before, after] = t('quota_pool.reset_kinds_held', { kinds: '\u0000' }).split('\u0000');
+  return (
+    <>
+      {before}
+      <ResetKindCounts kinds={kinds} />
+      {after}
+    </>
+  );
+}
+
 /**
  * The stacked rows' reset chip, in the wide cell's order: "Manual resets · 3 usable" over what is held
- * ("1 weekly · 2 Fable", or "2 held" when the kinds are unknown). It always breaks after the usable
- * count, so no row strands a lone kind or a dangling separator (G10).
+ * ("1 weekly · 2 Fable held", or "2 held" when the kinds are unknown), so the held line always says
+ * "held" (G11). It always breaks after the usable count, so no row strands a lone kind or a dangling
+ * separator (G10).
  */
 function ResetChip({ resets, now }: { resets: AccountResets; now: number }) {
   const { t } = useTranslation();
@@ -75,7 +89,7 @@ function ResetChip({ resets, now }: { resets: AccountResets; now: number }) {
       </span>
       <span className={styles.resetChipPart}>
         {kinds ? (
-          <ResetKindCounts kinds={kinds} />
+          <HeldKinds kinds={kinds} />
         ) : (
           t('quota_pool.reset_held_part', { count: resets.available })
         )}
@@ -142,14 +156,14 @@ function HeldLine({ kinds, available }: { kinds: ResetKindCount[] | null; availa
     <>
       <small ref={lineRef}>
         {kinds && fits ? (
-          <ResetKindCounts kinds={kinds} />
+          <HeldKinds kinds={kinds} />
         ) : (
           t('quota_pool.reset_held_part', { count: available })
         )}
       </small>
       {kinds && (
         <span ref={probeRef} className={styles.heldProbe} aria-hidden="true">
-          <ResetKindCounts kinds={kinds} />
+          <HeldKinds kinds={kinds} />
         </span>
       )}
     </>
@@ -358,6 +372,9 @@ export function PoolCard({
   const countedLimitId = isBuiltInPoolProvider(pool.provider)
     ? poolWindowId(pool.provider, dashboard.window)
     : profile && profileWindowId(profile, dashboard.window);
+  // The counted limit leads, as it does in the stacked rows, so every width reads the limits in one
+  // order (G11); the rest keep the provider's order.
+  limitColumns.sort((a, b) => Number(b.id === countedLimitId) - Number(a.id === countedLimitId));
   const balanceHasColumn = limitColumns.some((column) => column.id === countedLimitId);
   // A wide column that shows a Low mark on any row reserves a status slot after its bar, so the
   // values and bars of the whole column start and end at one x. Unavailable cells span their own
@@ -439,16 +456,6 @@ export function PoolCard({
       ? pool.accounts.filter((account) => account.noFiveHourLimit).length
       : 0;
   const now = useNow();
-  // Accounts whose resets count toward the totals: not spent from this tab since the reading.
-  const resetAccounts = pool.accounts.filter(
-    (account) =>
-      account.resets &&
-      account.resets.available > 0 &&
-      !wasSpent(account.id, account.resets.observedAtMs)
-  );
-  const resetKindTotals = sumResetKinds(
-    resetAccounts.map((account) => heldResetKinds(account.resets!, now))
-  );
   const resetTotals = pool.accounts.reduce(
     (sum, account) =>
       account.resets && wasSpent(account.id, account.resets.observedAtMs)
@@ -459,12 +466,12 @@ export function PoolCard({
           },
     { available: 0, usable: 0 }
   );
-  // A lone holder's row already states its resets, but only while that row is on this page.
-  const showResetSummary =
-    resetTotals.available > 0 &&
-    !(resetAccounts.length === 1 && pageAccounts.some((account) => account.id === resetAccounts[0].id));
   const coverageMissing =
     pool.loadedCount !== pool.accountCount || pool.eligibleCount !== pool.accountCount;
+  // Accounts without a 5-hour limit are not missing: with all the rest reporting there is no coverage fact.
+  const showCoverage =
+    coverageMissing &&
+    !(staleAccounts.length === 0 && noLimitCount > 0 && pool.loadedCount >= pool.eligibleCount);
   const chip = poolChip(pool.forecastState, savedData);
   const ChipIcon = CHIP_ICONS[chip.icon];
   const headlineContext = (
@@ -630,7 +637,10 @@ export function PoolCard({
             </div>
           )}
           <div className={styles.statsGroup}>
-            <p className={styles.statsHeading}>{t('quota_pool.remaining_forecast')}</p>
+            {/* The 5-hour view names its window once, over every forecast fact (G11); weekly is the default. */}
+            <p className={styles.statsHeading}>
+              {t(`quota_pool.remaining_forecast${dashboard.window === 'five-hour' ? '_five_hour' : ''}`)}
+            </p>
             <dl className={styles.stats}>
               {/* A withheld forecast is explained by the notice; its empty facts aren't repeated. */}
               {!(forecastWithheld && pool.poolEmptyAtMs === null) && (
@@ -705,24 +715,17 @@ export function PoolCard({
                 </span>
               )}
             </span>
-            {/* Pool-level reset totals, unless one shown row already states them. Coverage facts
-                always show when partial. */}
-            {(showResetSummary || coverageMissing) && (
+            {/* The pool's resets as one fact in every card that holds any ("8 usable of 8 held"; the rows
+                give the kinds), so cards never differ in whether it shows (G11). Coverage facts always
+                show when partial. */}
+            {(resetTotals.available > 0 || showCoverage) && (
               <span className={styles.accountSummary}>
-                {showResetSummary && (
+                {resetTotals.available > 0 && (
                   <SummaryFact label={t('quota_pool.resets')}>
-                    {resetTotals.available}
-                    {resetKindTotals && (
-                      <span className={styles.resetKindTotals}>
-                        {' · '}
-                        <ResetKindCounts kinds={resetKindTotals} />
-                      </span>
-                    )}
-                  </SummaryFact>
-                )}
-                {showResetSummary && resetTotals.usable > 0 && (
-                  <SummaryFact label={t('quota_pool.reset_usable_summary')}>
-                    {resetTotals.usable}
+                    {t('quota_pool.reset_summary_value', {
+                      usable: resetTotals.usable,
+                      held: resetTotals.available,
+                    })}
                   </SummaryFact>
                 )}
                 {/* The card header already counts the accounts; say coverage only when some are missing.
@@ -737,22 +740,16 @@ export function PoolCard({
                     </SummaryFact>
                   </>
                 ) : coverageMissing && noLimitCount > 0 ? (
-                  <>
-                    <SummaryFact label={t('quota_pool.summary_five_hour_limit')}>
+                  // Each account without a 5-hour limit says so in its row, so only a missing reading
+                  // among the rest is a pool fact (G11).
+                  pool.loadedCount < pool.eligibleCount && (
+                    <SummaryFact label={t('quota_pool.summary_reporting')}>
                       {t('quota_pool.summary_x_of_y', {
-                        x: pool.eligibleCount,
-                        y: pool.accountCount,
+                        x: pool.loadedCount,
+                        y: pool.eligibleCount,
                       })}
                     </SummaryFact>
-                    {pool.loadedCount < pool.eligibleCount && (
-                      <SummaryFact label={t('quota_pool.summary_reporting')}>
-                        {t('quota_pool.summary_x_of_y', {
-                          x: pool.loadedCount,
-                          y: pool.eligibleCount,
-                        })}
-                      </SummaryFact>
-                    )}
-                  </>
+                  )
                 ) : (
                   coverageMissing && (
                     <SummaryFact label={t('quota_pool.summary_reporting')}>
@@ -903,7 +900,7 @@ export function PoolCard({
               <span className={styles.resetHead}>
                 {t('quota_pool.resets')}
                 {pageAccounts.some((account) => !account.resets) && (
-                  <small>– {t('quota_pool.not_reported')}</small>
+                  <small>{t('quota_pool.reset_dash_key')}</small>
                 )}
               </span>
               {limitColumns.map((limit) =>
