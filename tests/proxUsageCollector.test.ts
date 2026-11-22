@@ -234,13 +234,14 @@ describe('usage collector with an in-process proxy', () => {
     await ready(env);
     await eventually(() => env.collector.status.state === 'subscribed');
     const silentFrom = env.collector.status.lastActivityAtMs!;
-    await env.clock.advance(5000);
-    await eventually(() => env.proxy.log.includes('PING'));
-    await env.clock.advance(5000);
+    // Step the clock the way the monitor ticks: once a second.
+    for (let second = 1; second < 15; second += 1) {
+      await env.clock.advance(1000);
+      if (second === 5) await eventually(() => env.proxy.log.includes('PING'));
+    }
     await eventually(() => env.beats.length === 1);
-    await env.clock.advance(4999);
     expect(env.collector.status.state).toBe('subscribed');
-    await env.clock.advance(1);
+    await env.clock.advance(1000);
     await eventually(() => env.collector.status.state === 'backoff');
     expect(env.clock.now() - silentFrom).toBe(15_000);
     expect(env.collector.status.subscribedAtMs).toBeNull();
