@@ -22,6 +22,8 @@ export interface SourceStatus {
   lastEventAtMs: number | null;
   /** When the current subscription reached `subscribed`; null in every other state. */
   subscribedAtMs: number | null;
+  /** The hub boot the current subscription's replay finished against; null outside `subscribed`. */
+  subscribedBootId: string | null;
   lastActivityAtMs: number | null;
   drainRequests: number;
   drained: number;
@@ -64,6 +66,7 @@ export class UsageCollector {
       state: 'stopped',
       lastEventAtMs: null,
       subscribedAtMs: null,
+      subscribedBootId: null,
       lastActivityAtMs: null,
       drainRequests: 0,
       drained: 0,
@@ -181,7 +184,8 @@ export class UsageCollector {
     if (this.writer.backlog > WRITER_HIGH_WATER) this.overflow();
   }
 
-  private async replay(): Promise<void> {
+  /** Returns the hub boot id the replay finished against. */
+  private async replay(): Promise<string> {
     const instance = this.source.instanceId;
     const resume = await this.writer.resume(instance);
     let cursor = resume.cursor;
@@ -277,7 +281,7 @@ export class UsageCollector {
         await this.writer.replay(instance, [], completedCursor, undefined, true);
         this.replaying = false;
         this.outageAt = null;
-        return;
+        return cursor.bootId;
       }
     }
     throw new Error('Usage replay interrupted');
@@ -330,9 +334,10 @@ export class UsageCollector {
           this.status.state = 'replaying';
           // Replay and labels share one HTTP authentication circuit.
           await this.labels.refresh(true);
-          await this.replay();
+          const bootId = await this.replay();
           this.status.state = 'subscribed';
           this.status.subscribedAtMs = this.clock.now();
+          this.status.subscribedBootId = bootId;
           this.dropReason = 'subscription-dropped';
           await this.connection.closed;
         } catch (error) {
@@ -341,6 +346,7 @@ export class UsageCollector {
           // The session is over: stop reporting it as subscribed before the cleanup awaits.
           if (this.status.state === 'subscribed') this.status.state = 'backoff';
           this.status.subscribedAtMs = null;
+          this.status.subscribedBootId = null;
           this.session.abort();
           this.connection?.close();
           socketLifetime.abort();
@@ -380,11 +386,13 @@ export class UsageCollector {
       await this.clock.sleep(1000, signal);
       if (signal.aborted) break;
       const now = this.clock.now();
-      if (now - (this.status.lastActivityAtMs ?? now) >= 40_000) {
+      // The hub sends nothing unprompted, so on an idle hub only the pong to each 5 s PING
+      // proves the socket is alive. Silence for three ping intervals closes a half-open socket.
+      if (now - (this.status.lastActivityAtMs ?? now) >= 15_000) {
         connection.close();
         break;
       }
-      if (now - pingAt >= 30_000) {
+      if (now - pingAt >= 5_000) {
         connection.ping();
         pingAt = now;
       }

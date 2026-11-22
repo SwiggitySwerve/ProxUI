@@ -141,6 +141,9 @@ Regression coverage lives in `tests/proxUsageNormalize.test.ts` and
   at most 1000 records. `replay.ts` validates the numbered envelope. Both RESP and
   HTTP authentication failures block that source's management requests for at
   least 60 seconds. A 400 or malformed page backs off without popping or advancing.
+- The hub sends nothing unprompted on a subscribed socket and answers each `PING` at
+  once. The collector pings every 5 seconds and closes the socket after 15 seconds with
+  no bytes received, so a half-open socket leaves `subscribed` within about 15 seconds.
 - Per-source `(boot_id, queue_seq)` lives in `meta` under `cursor:<instance>`;
   `cursor-at:<instance>` records its commit time for coverage when no heartbeat
   exists yet. Each cursor update commits in the event transaction, including
@@ -986,7 +989,9 @@ start is `null`, never a healthy zero age. `subscribed_at_seconds` is the epoch
 second the current subscription reached `subscribed` (after AUTH, SUBSCRIBE and
 replay), `null` in every other state; the collector leaves `subscribed` as soon as
 the socket session ends, before its cleanup awaits, so a reconnect always reports a
-new, later value.
+new, later value. `subscribed_boot_id` is the hub's `boot_id` from the replay page that
+subscription finished against, `null` in every other state, so a reconnect to a
+restarted hub reports the new process's id.
 
 `GET /v1/status` carries `eventLoop` (`maxLagMs`, `stallsOver1s`, `lastStallAtMs`) and
 `/v1/exporter` carries `event_loop` (`max_lag_seconds`, `stalls_total`,
