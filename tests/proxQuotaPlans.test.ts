@@ -224,6 +224,26 @@ describe('plan history', () => {
     expect(pool.burnPointsPerHour).toBeCloseTo(840, 6);
   });
 
+  test('a reading carried to a later chart time keeps the plan it was read under', () => {
+    // A Claude reading after the upgrade adds a shared chart time; Gemini's 15-minutes-ago
+    // Ultra Lite reading is still its current one there and stays at the Ultra Lite scale.
+    const claude = { ...account('c', 'claude'), plan: 'default_claude_max_20x' };
+    const claudeRows: QuotaSample[] = [25, 11].map((minutesAgo) => ({
+      accountId: 'c',
+      window: 'weekly',
+      observedAtMs: now - minutesAgo * MIN,
+      remainingPercent: 50,
+      resetAtMs: after,
+      periodHours: 168,
+    }));
+    const geminiRows = rows.filter((row) => row.observedAtMs <= now - 15 * MIN);
+    const all = dashboard([gemini, claude], [...geminiRows, ...claudeRows]).combined?.all;
+    const at = (minutesAgo: number) =>
+      all?.series?.recorded.find((point) => point.atMs === now - minutesAgo * MIN)?.remainingPoints;
+    // 40% of Ultra Lite (200) plus 50% of Claude Ultra (1000), not 40% of Ultra (800) + 1000.
+    expect(at(11)).toBe(1200);
+  });
+
   test('a downgrade mid-window is not consumption', () => {
     const downgraded: StoredAccount = {
       ...gemini,

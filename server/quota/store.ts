@@ -112,7 +112,8 @@ export class QuotaStore {
       -- plan in force when they were recorded. A plan known before this table existed is in force
       -- from the start (fromMs 0).
       CREATE TABLE IF NOT EXISTS quota_plan_history (
-        accountId TEXT NOT NULL REFERENCES quota_accounts(id),
+        -- CASCADE: a build from before this table purges accounts without knowing it.
+        accountId TEXT NOT NULL REFERENCES quota_accounts(id) ON DELETE CASCADE,
         plan TEXT NOT NULL,
         fromMs INTEGER NOT NULL,
         PRIMARY KEY (accountId, fromMs)
@@ -640,12 +641,7 @@ export class QuotaStore {
 
   /** Remove accounts and everything referencing them. Children first: foreign keys are ON. */
   private purgeInTransaction(accountIds: readonly string[]): void {
-    for (const table of [
-      'quota_samples',
-      'quota_plan_history',
-      'quota_account_plans',
-      'quota_account_sources',
-    ]) {
+    for (const table of ['quota_samples', 'quota_account_plans', 'quota_account_sources']) {
       const remove = this.db.query(`DELETE FROM ${table} WHERE accountId = ?`);
       for (const id of accountIds) remove.run(id);
     }
@@ -735,8 +731,12 @@ export class QuotaStore {
       .run(accountId, observedAtMs);
   }
 
-  /** Records the current plan; a change also starts a history entry, so older samples keep theirs. */
-  recordPlan(accountId: string, plan: string, nowMs: number): void {
+  /**
+   * Records the current plan, read at `nowMs`. A change also starts a history entry at `fromMs`,
+   * the time of the reading it was read with, so that reading counts at the new plan and older
+   * ones keep theirs.
+   */
+  recordPlan(accountId: string, plan: string, nowMs: number, fromMs = nowMs): void {
     this.db.transaction(() => {
       const latest = this.db
         .query<{ plan: string }, [string]>(
@@ -749,7 +749,7 @@ export class QuotaStore {
           .query(
             'INSERT OR REPLACE INTO quota_plan_history (accountId, plan, fromMs) VALUES (?, ?, ?)'
           )
-          .run(accountId, plan, latest ? nowMs : 0);
+          .run(accountId, plan, latest ? fromMs : 0);
       }
       this.db
         .query(

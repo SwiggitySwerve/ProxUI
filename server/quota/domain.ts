@@ -66,14 +66,14 @@ function latestIndex(samples: QuotaSample[], atMs: number): number {
 
 /**
  * Only measured intervals count. Gaps and resets never become fabricated consumption. With
- * `weightAt`, each interval is weighted by the plan in force at its end, in points, and an interval
- * across a plan change is skipped: the step is the new plan's scale, not consumption.
+ * `weights` (each sample's plan weight, by index), rates are in points, and an interval across a
+ * plan change is skipped: the step is the new plan's scale, not consumption.
  */
 export function measuredRates(
   samples: QuotaSample[],
   atMs: number,
   hours: number,
-  weightAt?: (atMs: number) => number
+  weights?: readonly number[]
 ): Rates {
   const end = latestIndex(samples, atMs);
   if (
@@ -94,8 +94,8 @@ export function measuredRates(
     if (current.remainingPercent === null || previous.remainingPercent === null) continue;
     const elapsed = current.observedAtMs - previous.observedAtMs;
     if (elapsed <= 0 || elapsed > STALE_MS) continue;
-    const weight = weightAt?.(current.observedAtMs) ?? 1;
-    if (weightAt && weightAt(previous.observedAtMs) !== weight) continue;
+    const weight = weights?.[i] ?? 1;
+    if (weights && weights[i - 1] !== weight) continue;
     const delta = (previous.remainingPercent - current.remainingPercent) * weight;
     net += delta;
     netSpan += elapsed;
@@ -141,26 +141,40 @@ const SAME_CYCLE_MS = 60_000;
  * reported can still be missed. Only a gap the account later reports after is filled; an explicit
  * missing observation, no reading yet, or the stretch after its last reading stays unknown.
  */
-function recordedPercent(samples: QuotaSample[], atMs: number): number | null {
-  const current = currentSample(samples, atMs);
-  if (current) return current.remainingPercent;
+/**
+ * The recorded balance in points: each reading counts at the weight of the plan in force when it
+ * was taken (`weights`, by sample index), also when it is held or carried to a later time, and no
+ * line is drawn between readings under different plans.
+ */
+function recordedPoints(
+  samples: QuotaSample[],
+  weights: readonly number[],
+  atMs: number
+): number | null {
   const index = latestIndex(samples, atMs);
+  const current = currentSample(samples, atMs);
+  if (current) return current.remainingPercent * weights[index];
   const before = samples[index];
   const after = samples[index + 1];
   // Only a gap the account later reports after is filled; past its last reading it stays unknown.
   if (!before || !after || before.remainingPercent === null) return null;
-  if (before.resetAtMs !== null && before.resetAtMs <= atMs) return 100;
+  const weight = weights[index];
+  if (before.resetAtMs !== null && before.resetAtMs <= atMs) return 100 * weight;
   if (
     after.remainingPercent !== null &&
+    weights[index + 1] === weight &&
     before.resetAtMs !== null &&
     after.resetAtMs !== null &&
     Math.abs(before.resetAtMs - after.resetAtMs) <= SAME_CYCLE_MS &&
     after.remainingPercent <= before.remainingPercent
   ) {
     const share = (atMs - before.observedAtMs) / (after.observedAtMs - before.observedAtMs);
-    return before.remainingPercent + (after.remainingPercent - before.remainingPercent) * share;
+    return (
+      (before.remainingPercent + (after.remainingPercent - before.remainingPercent) * share) *
+      weight
+    );
   }
-  return before.remainingPercent;
+  return before.remainingPercent * weight;
 }
 
 interface ForecastInput {
@@ -240,20 +254,30 @@ function accountHistories(
   weightOf: AccountWeight,
   lookbackHours: number
 ) {
-  // Percent of one account's window times the plan weight in force at that time gives pool points,
-  // so a plan change rescales readings from then on, never the ones before it.
+  // Percent of one account's window times the plan weight in force when it was read gives pool
+  // points, so a plan change rescales readings from then on, never the ones before it.
   const byId = new Map(accounts.map((a) => [a.id, a]));
-  const weightAt = (id: string) => (atMs: number) => weightOf(byId.get(id)!, atMs).multiplier;
   const scale = (id: string, value: number | null, atMs: number) =>
-    value === null ? null : value * weightAt(id)(atMs);
+    value === null ? null : value * weightOf(byId.get(id)!, atMs).multiplier;
   const histories = new Map<string, QuotaSample[]>();
   for (const a of accounts) histories.set(a.id, []);
   for (const sample of samples) histories.get(sample.accountId)?.push(sample);
-  for (const history of histories.values()) history.sort((a, b) => a.observedAtMs - b.observedAtMs);
+  // Each sample's weight, resolved once, by index into its sorted history.
+  const weights = new Map<string, number[]>();
+  for (const [id, history] of histories) {
+    history.sort((a, b) => a.observedAtMs - b.observedAtMs);
+    weights.set(
+      id,
+      history.map((sample) => weightOf(byId.get(id)!, sample.observedAtMs).multiplier)
+    );
+  }
+  /** The recorded balance at `atMs`, in points. */
+  const recorded = (id: string, atMs: number) =>
+    recordedPoints(histories.get(id)!, weights.get(id)!, atMs);
   /** Burn and drain in points per hour, measured up to `atMs`. */
   const rates = (id: string, atMs: number) =>
-    measuredRates(histories.get(id)!, atMs, lookbackHours, weightAt(id));
-  return { scale, rates, histories };
+    measuredRates(histories.get(id)!, atMs, lookbackHours, weights.get(id));
+  return { scale, recorded, rates, histories };
 }
 
 function recordedHistory(
@@ -262,7 +286,7 @@ function recordedHistory(
   options: DashboardOptions,
   fromMs: number,
   toMs: number,
-  { scale, rates, histories }: ReturnType<typeof accountHistories>,
+  { recorded, rates }: ReturnType<typeof accountHistories>,
   sharedTimes?: readonly number[]
 ): PoolPoint[] {
   const { nowMs } = options;
@@ -294,9 +318,7 @@ function recordedHistory(
       (a) =>
         a.firstSampleAtMs === undefined || (a.firstSampleAtMs !== null && a.firstSampleAtMs <= time)
     );
-    const snapshots = members.map((a) =>
-      scale(a.id, recordedPercent(histories.get(a.id)!, time), time)
-    );
+    const snapshots = members.map((a) => recorded(a.id, time));
     const historicalRates = members.map((a) => rates(a.id, time));
     return {
       atMs: at,
@@ -333,11 +355,8 @@ function buildPool(
   const accounts = source
     .filter((a) => a.provider === provider && !a.retired)
     .sort((a, b) => a.id.localeCompare(b.id));
-  const {
-    scale,
-    rates: pointRates,
-    histories,
-  } = accountHistories(accounts, samples, weightOf, lookbackHours);
+  const pointHistories = accountHistories(accounts, samples, weightOf, lookbackHours);
+  const { scale, rates: pointRates, histories } = pointHistories;
   // Ultra accounts answered without a five-hour window: Anthropic removed that limit for verified
   // Ultra accounts on 2026-10-30. A successful answer is proof; a failed poll writes no sample.
   // Codex accounts are decided by the provider's own answer, not the plan: its latest successful
@@ -475,11 +494,7 @@ function buildPool(
     forecastState === 'ready'
       ? projectPool(forecastInputs, nowMs, Math.max(toMs, nowMs + 14 * DAY_MS))
       : { points: [], resets: [], firstEmptyAtMs: null, poolEmptyAtMs: null };
-  const recorded = recordedHistory(active, samples, options, fromMs, toMs, {
-    scale,
-    rates: pointRates,
-    histories,
-  });
+  const recorded = recordedHistory(active, samples, options, fromMs, toMs, pointHistories);
   const nextResetAtMs = loaded.reduce<number | null>(
     (earliest, a) =>
       a.resetAtMs !== null && a.resetAtMs > nowMs

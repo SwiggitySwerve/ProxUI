@@ -141,6 +141,7 @@ function fixture() {
   const calls: { instanceId: string; body?: Record<string, unknown> }[] = [];
   let quota: unknown = summary();
   let tier = 'g1-ultra-lite-tier';
+  let tierReadMs = 0;
   const fetcher = Object.assign(
     async (input: string | URL | Request, init: RequestInit = {}) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
@@ -150,11 +151,13 @@ function fixture() {
       if (!body) return Response.json(inventories.get(instanceId));
       if (body.url === ANTIGRAVITY_QUOTA_URLS[0])
         return Response.json({ status_code: 200, body: JSON.stringify(quota) });
-      if (body.url === ANTIGRAVITY_CODE_ASSIST_URL)
+      if (body.url === ANTIGRAVITY_CODE_ASSIST_URL) {
+        clock += tierReadMs;
         return Response.json({
           status_code: 200,
           body: { paidTier: { id: tier, name: 'Google AI Ultra' } },
         });
+      }
       if (body.url === `${CLAUDE_USAGE_URL}?cedar_ember=1&skip_spend=1`)
         return Response.json({
           status_code: 200,
@@ -208,6 +211,7 @@ function fixture() {
     setQuota: (value: unknown) => (quota = value),
     setTier: (value: string) => (tier = value),
     advance: (ms: number) => (clock += ms),
+    setTierReadMs: (ms: number) => (tierReadMs = ms),
   };
 }
 
@@ -303,6 +307,27 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     await f.collector.refresh();
     expect(tierReads()).toBe(3);
   });
+  test('a plan change starts at the reading its poll took, not at the later tier read', async () => {
+    const f = fixture();
+    await f.collector.refresh();
+    f.setTier('g1-ultra-tier');
+    f.setTierReadMs(250);
+    f.advance(30 * 60_000);
+    await f.collector.refresh();
+    const account = f.store.listAccounts().find((a) => a.provider === 'antigravity')!;
+    const readingAtMs = Math.max(
+      ...f.store
+        .listSamples(0, Number.MAX_SAFE_INTEGER)
+        .filter((sample) => sample.accountId === account.id)
+        .map((sample) => sample.observedAtMs)
+    );
+    expect(account.planHistory).toEqual([
+      { plan: 'g1-ultra-lite-tier', fromMs: 0 },
+      { plan: 'g1-ultra-tier', fromMs: readingAtMs },
+    ]);
+    expect(account.planObservedAtMs).toBe(readingAtMs + 250);
+  });
+
   test('a reading without the Gemini group records explicit missing windows, not zero', () => {
     const { samples } = quotaSamples(
       'antigravity',

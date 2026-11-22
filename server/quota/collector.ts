@@ -988,7 +988,8 @@ export class QuotaCollector {
     signal: AbortSignal,
     usageBody: unknown,
     storedPlans: Map<string, number | null>,
-    planIntervalMs: number
+    planIntervalMs: number,
+    readingAtMs: number | undefined
   ): Promise<void> {
     let plan: string | null = null;
     if (account.provider === 'codex') {
@@ -1033,7 +1034,8 @@ export class QuotaCollector {
     }
     if (!plan || signal.aborted || !this.store.isLive(account.id)) return;
     try {
-      this.store.recordPlan(account.id, plan, this.now());
+      // A change starts at this poll's reading, which the plan read confirms.
+      this.store.recordPlan(account.id, plan, this.now(), readingAtMs ?? this.now());
     } catch {
       // The plan only weights points; keep the samples and try again next collection.
     }
@@ -1311,7 +1313,8 @@ export class QuotaCollector {
         signal,
         usageBody,
         storedPlans,
-        planIntervalMs
+        planIntervalMs,
+        samples[0]?.observedAtMs
       );
     }
     return !signal.aborted && this.store.isLive(account.id);
