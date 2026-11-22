@@ -142,6 +142,8 @@ function fixture() {
   let quota: unknown = summary();
   let tier = 'g1-ultra-lite-tier';
   let tierReadMs = 0;
+  let fallbackQuota: unknown = null;
+  let quotaReadMs = 0;
   const fetcher = Object.assign(
     async (input: string | URL | Request, init: RequestInit = {}) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
@@ -149,8 +151,14 @@ function fixture() {
       const body = init.body ? JSON.parse(String(init.body)) : undefined;
       calls.push({ instanceId, body });
       if (!body) return Response.json(inventories.get(instanceId));
-      if (body.url === ANTIGRAVITY_QUOTA_URLS[0])
+      if (body.url === ANTIGRAVITY_QUOTA_URLS[0]) {
+        clock += quotaReadMs;
         return Response.json({ status_code: 200, body: JSON.stringify(quota) });
+      }
+      if (body.url === ANTIGRAVITY_QUOTA_URLS[1] && fallbackQuota !== null) {
+        clock += quotaReadMs;
+        return Response.json({ status_code: 200, body: JSON.stringify(fallbackQuota) });
+      }
       if (body.url === ANTIGRAVITY_CODE_ASSIST_URL) {
         clock += tierReadMs;
         return Response.json({
@@ -212,6 +220,8 @@ function fixture() {
     setTier: (value: string) => (tier = value),
     advance: (ms: number) => (clock += ms),
     setTierReadMs: (ms: number) => (tierReadMs = ms),
+    setFallbackQuota: (value: unknown) => (fallbackQuota = value),
+    setQuotaReadMs: (ms: number) => (quotaReadMs = ms),
   };
 }
 
@@ -326,6 +336,28 @@ describe('Gemini (Antigravity) in the quota pool', () => {
       { plan: 'g1-ultra-tier', fromMs: readingAtMs },
     ]);
     expect(account.planObservedAtMs).toBe(readingAtMs + 250);
+  });
+
+  test('a plan change starts at the earliest reading of a poll that asked two endpoints', async () => {
+    const f = fixture();
+    await f.collector.refresh();
+    const pollStart = NOW + 30 * 60_000;
+    f.advance(30 * 60_000);
+    f.setTier('g1-ultra-tier');
+    // The first endpoint has only the five-hour window; the weekly one comes from the next, later.
+    const groups = summary(0.7, 0.6).groups;
+    f.setQuota({ groups: [{ ...groups[0], buckets: groups[0].buckets.slice(1) }] });
+    f.setFallbackQuota(summary(0.2, 0.6));
+    f.setQuotaReadMs(400);
+    await f.collector.refresh();
+    const account = f.store.listAccounts().find((a) => a.provider === 'antigravity')!;
+    const poll = f.store
+      .listSamples(pollStart, Number.MAX_SAFE_INTEGER)
+      .filter((sample) => sample.accountId === account.id);
+    expect(new Set(poll.map((sample) => sample.observedAtMs)).size).toBe(2);
+    const fromMs = account.planHistory!.at(-1)!.fromMs;
+    expect(account.planHistory!.at(-1)!.plan).toBe('g1-ultra-tier');
+    expect(fromMs).toBe(Math.min(...poll.map((sample) => sample.observedAtMs)));
   });
 
   test('a reading without the Gemini group records explicit missing windows, not zero', () => {

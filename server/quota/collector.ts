@@ -1314,7 +1314,8 @@ export class QuotaCollector {
         usageBody,
         storedPlans,
         planIntervalMs,
-        samples[0]?.observedAtMs
+        // Antigravity may fill one window from a later endpoint: the poll began at the earliest.
+        samples.length ? Math.min(...samples.map((sample) => sample.observedAtMs)) : undefined
       );
     }
     return !signal.aborted && this.store.isLive(account.id);
