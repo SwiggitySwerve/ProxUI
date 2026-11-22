@@ -1142,8 +1142,6 @@ export function PoolCard({
                   {/* The page lays out its own sections as three cards: Usage (with the burn rate
                       in its title strip), Billing and Manual resets, the one accent card (G12). */}
                   <div className={styles.factsLayout}>
-                    {/* One reset section per open row; the keys let it move without remounting. */}
-                    {stackedFacts && resetSection(account)}
                     {/* Usage carries the burn rate in its title strip, as its lead figure (G12). */}
                     <FactSection
                       key="usage"
@@ -1206,6 +1204,9 @@ export function PoolCard({
                             })}
                       />
                     </FactSection>
+                    {/* Phones: Usage (which leads with the burn rate) first, then Manual resets, then
+                        Billing. One reset section per open row; the keys let it move without remounting. */}
+                    {stackedFacts && resetSection(account)}
                     <FactSection key="billing" title={t('quota_pool.facts_billing')}>
                       <BillingFacts
                         billing={account.billing ?? null}
