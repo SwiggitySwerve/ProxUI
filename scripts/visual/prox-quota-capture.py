@@ -886,7 +886,8 @@ const name = e => (e.getAttribute('aria-label') || '').trim();
 
 async def check_fact_wrap(page, state, width):
     """I1: at 390/820/1100/1280/1440/1920 no Now/Forecast fact label, value or caption wraps, clips or shrinks; on a phone
-    a Forecast cell's label may take two lines (G12b), the gap to its value is held by the phone Forecast check."""
+    a Forecast cell's label may take two lines (G12b), the gap to its value is held by the phone Forecast check; the Now
+    strip's label and value may take two lines in their own columns (G12b)."""
     if width not in C1_FACT_WIDTHS:
         return []
     return await page.evaluate("(cardless) => {" + C1_PRELUDE + r"""
@@ -903,7 +904,10 @@ async def check_fact_wrap(page, state, width):
         if (!shown(e) || !e.checkVisibility({checkOpacity: true})) why.push('hidden');
         // G12b: a phone Forecast cell's label (display grid, label | value) may wrap onto a second line rather than touch
         // its value; that label alone, and never beyond two lines. Every value and caption still holds one line.
-        const phoneLabel = e.tagName === 'DT' && !!e.closest('[data-group="forecast"]') && innerWidth <= 640, lines = phoneLabel ? 2 : 1;
+        // The Now strip (G12b) is one grid row: its label and its value ("1,440" over "of 8,000 points") may each take two
+        // lines in their own column; the number and its unit caption still never break.
+        const phoneLabel = e.tagName === 'DT' && !!e.closest('[data-group="forecast"]') && innerWidth <= 640;
+        const nowFact = !!e.closest('[data-group="now"]') && e.tagName !== 'SMALL', lines = phoneLabel || nowFact ? 2 : 1;
         if (r.height > line * (lines + 0.5)) why.push(`taller than ${lines + 0.5} lines (${r.height.toFixed(1)} vs ${line.toFixed(1)})`);
         if (tops.length > lines) why.push(`wraps onto ${tops.length} lines`);
         if (s.textOverflow === 'ellipsis') why.push('ellipsis');
