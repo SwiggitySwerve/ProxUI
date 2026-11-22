@@ -4113,9 +4113,10 @@ G9_HELD_JS = r"""() => {
   }
   return out;
 }"""
-# What the four-kind account (ops…) and the one-kind account (ada…, "2 full held") must show: the four kinds never
-# fit the 120px column with "held" on the line; one kind fits in every language checked.
-G9_HELD_WANT = {"en": ("count", "named"), "vi": ("count", "named"), "ru": ("count", "named")}
+# What the four-kind account (ops…) and the one-kind account (ada…) must show, as measured in the 120px column: the
+# four kinds never fit with "held" on the line; "2 full held" fits in English, while Vietnamese ("2 toàn bộ đang
+# giữ") and Russian ("в запасе полные: 2") are wider and fall back to the count.
+G9_HELD_WANT = {"en": ("count", "named"), "vi": ("count", "count"), "ru": ("count", "count")}
 # A lone reset holder past the first page, holding every kind, in phone widths and a long language.
 G9_SUMMARY_CASES = ("real-narrow",)
 G9_SUMMARY_JS = r"""() => {
