@@ -145,6 +145,46 @@ describe('usage collector with an in-process proxy', () => {
     expect(env.collector.status.subscribedAtMs!).toBeGreaterThan(first!);
   });
 
+  test('subscribedBootId names the hub boot replay finished against, and follows a restart', async () => {
+    const env = await setup();
+    await ready(env);
+    await eventually(() => env.collector.status.state === 'subscribed');
+    const first = env.proxy.bootId;
+    expect(env.collector.status.subscribedBootId).toBe(first);
+    const seen: { state: string; subscribedBootId: string | null }[] = [];
+    env.writer.recovery = async () => {
+      const { state, subscribedBootId } = env.collector.status;
+      seen.push({ state, subscribedBootId });
+    };
+    env.proxy.restart();
+    await eventually(() => env.collector.status.retryAtMs !== null);
+    expect(seen[0]).toEqual({ state: 'backoff', subscribedBootId: null });
+    await env.clock.advance(1000);
+    await eventually(() => env.collector.status.state === 'subscribed');
+    expect(env.gaps).toMatchObject([{ reason: 'proxy-restart' }]);
+    expect(env.proxy.bootId).not.toBe(first);
+    expect(env.collector.status.subscribedBootId).toBe(env.proxy.bootId);
+  });
+
+  test('an idle hub that answers pings stays subscribed', async () => {
+    const env = await setup();
+    await ready(env);
+    await eventually(() => env.collector.status.state === 'subscribed');
+    const since = env.collector.status.subscribedAtMs;
+    const pings = () => env.proxy.log.filter((x) => x === 'PING').length;
+    // Two idle minutes: no usage events, so only the pong to each 5 s PING shows the hub alive.
+    for (let second = 1; second <= 120; second += 1) {
+      await env.clock.advance(1000);
+      if (second % 5 === 0) {
+        await eventually(() => pings() === second / 5, `PING ${second / 5}`);
+        await eventually(() => env.collector.status.lastActivityAtMs === env.clock.now(), 'pong');
+      }
+    }
+    expect(env.collector.status.state).toBe('subscribed');
+    expect(env.collector.status.subscribedAtMs).toBe(since);
+    expect(env.collector.status.reconnects).toBe(0);
+  });
+
   test('drops a subscription above 50,000 queued payloads and pauses for replay', async () => {
     const env = await setup();
     await ready(env);
@@ -184,22 +224,27 @@ describe('usage collector with an in-process proxy', () => {
     await eventually(() => env.collector.status.drainRequests > 0);
   });
 
-  test('pings at 30s, detects 40s silence and persists a 10s heartbeat', async () => {
+  test('pings at 5s, closes a silent socket at 15s and persists a 10s heartbeat', async () => {
     const env = await setup();
-    env.proxy.pong = false;
+    env.proxy.pong = false; // Half-open: the socket stays up but nothing comes back.
     env.writer.heartbeat = async (_instance, at) => {
       env.beats.push(at);
       await new Promise<void>(() => {}); // Disk is stalled; keepalive must stay independent.
     };
     await ready(env);
-    await env.clock.advance(10_000);
-    await eventually(() => env.beats.length === 1);
-    await env.clock.advance(20_000);
+    await eventually(() => env.collector.status.state === 'subscribed');
+    const silentFrom = env.collector.status.lastActivityAtMs!;
+    await env.clock.advance(5000);
     await eventually(() => env.proxy.log.includes('PING'));
-    await env.clock.advance(9999);
+    await env.clock.advance(5000);
+    await eventually(() => env.beats.length === 1);
+    await env.clock.advance(4999);
     expect(env.collector.status.state).toBe('subscribed');
-    await env.clock.advance(1001);
+    await env.clock.advance(1);
     await eventually(() => env.collector.status.state === 'backoff');
+    expect(env.clock.now() - silentFrom).toBe(15_000);
+    expect(env.collector.status.subscribedAtMs).toBeNull();
+    expect(env.collector.status.subscribedBootId).toBeNull();
     expect(env.gaps).toHaveLength(0);
   });
 
