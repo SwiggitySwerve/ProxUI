@@ -214,12 +214,15 @@ function PoolChartView({
       const crossesSnapshot = snapshotX !== null && rx > snapLeft - 4 && rx < snapRight + 4;
       return { ...reset, rx, text, halfW, upperX, labelX, left, right, hitsSnapshot, hitsUnit, nearTick, crossesSnapshot };
     });
+  let needsUpperRail = false;
   let probeRight = -Infinity;
-  const needsUpperRail = rawResets.some((reset) => {
-    const collides = reset.hitsSnapshot || reset.hitsUnit || reset.left < probeRight + 14;
-    if (!collides) probeRight = reset.right;
-    return collides;
-  });
+  for (const reset of rawResets) {
+    if (reset.hitsSnapshot || reset.hitsUnit || reset.left < probeRight + 14) {
+      needsUpperRail = true;
+      break;
+    }
+    probeRight = reset.right;
+  }
   // Every scheduled reset keeps its tick (G10). Its label takes the chart's lane (the upper lane when
   // any label would hit Snapshot), else the other lane, and is left off only when neither has room.
   const placedRight = [-Infinity, -Infinity];
