@@ -5206,3 +5206,19 @@ $table-tiers: (
     column-gap: 6px;
   }
 }
+// Phones: a compact Forecast card (tighter cells and gaps), so the chart and the roster follow sooner.
+@container poolHeader (max-width: 600px) {
+  .pool .poolHeader > .statsBlock {
+    gap: 8px;
+  }
+  .pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] {
+    gap: 8px;
+    padding: 10px 12px 12px;
+    .stats {
+      gap: 4px;
+      > div {
+        padding: 7px 10px;
+      }
+    }
+  }
+}
