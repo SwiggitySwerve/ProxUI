@@ -2184,52 +2184,129 @@ $table-tiers: (
   padding: 12px 10px 16px 38px;
 }
 
-/* G9 */
-// An opened row's facts. The burn rate leads as the row's one large figure; Usage and Billing are
-// label/value lists, and Manual resets stays the one accent block. The sections are the page's own
-// grid items, so the shared FactPanel grid never applies here. Tiers, by the drawer's width:
-// - under 360px (phones): stacked, label above value;
-// - 360px and up: stacked label/value lists (Manual resets right after the figure at 900px and
-//   below, where PoolCard puts it first in the DOM);
-// - wide screens, 600px drawers: the figure over Usage over Billing, Manual resets on the right;
-// - 860px: the figure gets its own first column, set off by a hairline;
-// - 1160px: Usage and Billing side by side.
+/* G12 */
+// An opened row's facts are section tiles in one recessed tray (the user's pick, Neon's option 2):
+// the burn rate figure, Usage, Billing and Manual resets, each a tile that fills its share of the
+// row. Every tile centres its content on both axes, labels right-aligned against values so a list
+// meets at its centre line, so nothing hangs on a tile's edge or leaves an empty run beside it.
+// Tiles share one row from a 1080px drawer, a 2 × 2 grid from 640px, and stack below that (Manual
+// resets right after the figure on phones, where PoolCard puts it first in the DOM).
+.pool {
+  --tray-bg: #080808;
+  --tray-border: rgba(255, 255, 255, 0.08);
+  --tile-bg: #121212;
+  --tile-border: rgba(255, 255, 255, 0.06);
+}
 .accountFacts {
   container: drawer-facts / inline-size;
 }
 .factsLayout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 20px 32px;
-  align-items: start;
+  align-items: stretch;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid var(--tray-border);
+  border-radius: 14px;
+  background: var(--tray-bg);
+  > .burnLead,
   > section,
   > section[data-tone='accent'] {
     grid-column: auto;
-    display: block;
+    grid-row: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 0;
+    margin: 0;
+    padding: 14px 16px;
+    border: 1px solid var(--tile-border);
+    border-radius: 9px;
+    background: var(--tile-bg);
+    text-align: center;
   }
-  > section dl {
-    grid-column: auto;
+  // Manual resets keeps the one accent: the provider tint on its tile.
+  > section[data-tone='accent'] {
+    border-color: color-mix(in srgb, var(--pool-accent) 30%, transparent);
+    background:
+      radial-gradient(
+        120% 90% at 50% 0%,
+        color-mix(in srgb, var(--pool-accent) 10%, transparent),
+        transparent 72%
+      ),
+      var(--tile-bg);
+  }
+  // A tile's title (and Use reset beside it) centres over its body; the body takes the rest of the
+  // tile and sits in its middle.
+  > section > header,
+  > section[data-action] > header {
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    margin: 0 0 10px;
+  }
+  > section > header h4 {
+    color: var(--text-primary);
+  }
+  > section > p {
+    margin: 0 0 10px;
+    text-align: center;
+  }
+  // Facts read label over value (the page's fact pattern), centred, so a tile is only as wide as its
+  // longest value and every tile fits one drawer row.
+  > section > dl {
+    width: 100%;
     grid-template-columns: minmax(0, 1fr);
-    gap: 12px 24px;
+    justify-items: center;
+    gap: 0;
+    text-align: center;
+  }
+  > section > dl > div {
+    display: contents;
+  }
+  > section > dl > div > dt {
+    padding-top: 10px;
+  }
+  > section > dl > div > dt:first-child {
+    padding-top: 0;
+  }
+  > section > dl > div > dd {
+    margin: 2px 0 0;
+    text-align: center;
+  }
+  // A value never breaks; its caption (an estimate's basis, a reason) wraps under it instead.
+  > section > dl > div > dd:not([class*='detail']) span {
+    white-space: nowrap;
+  }
+  > section[data-tone='accent'] > dl > div > dd span {
+    white-space: normal;
   }
 }
+// The burn rate: label over the figure, centred in its tile.
 .burnLead {
-  margin: 0;
+  justify-content: center;
+  > div {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
   dt {
-    color: var(--text-secondary);
+    color: var(--text-primary);
     font-size: 13px;
     line-height: 18px;
+    font-weight: 600;
   }
   dd {
-    margin: 2px 0 0;
+    margin: 0;
     color: var(--text-secondary);
     font-size: 14px;
     line-height: 20px;
   }
   strong {
     color: var(--text-primary);
-    font-size: 28px;
-    line-height: 34px;
+    font-size: 30px;
+    line-height: 36px;
     font-weight: 600;
     letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
@@ -2242,111 +2319,23 @@ $table-tiers: (
   }
 }
 .burnLeadReason {
+  max-width: 220px;
   font-size: 13px;
   line-height: 18px;
 }
-// Label/value lists: each fact's label sits in a label track and its value (with any caption under
-// it) in a value track, so values line up. Manual resets is the narrowest list, so its values (a
-// kind and a date) may wrap in place; the other values never break.
-@mixin fact-lists {
-  > section dl {
-    align-items: baseline;
-    gap: 6px 16px;
-  }
-  // A value never breaks (min-content is its width); a caption under it wraps instead of widening it.
-  > section:not([data-tone='accent']) dl {
-    grid-template-columns: minmax(min-content, max-content) minmax(min-content, 1fr);
-  }
-  > section[data-tone='accent'] dl {
-    grid-template-columns: minmax(min-content, max-content) minmax(0, 1fr);
-  }
-  > section[data-tone='accent'] dd span {
-    white-space: normal;
-  }
-  > section dl > div {
-    display: contents;
-  }
-  > section dl > div > dt {
-    grid-column: 1;
-  }
-  > section dl > div > dd {
-    grid-column: 2;
-    margin: 0;
-  }
-}
-// The page grid owns the list tracks: Usage and Billing each span a label track and a value track
-// through subgrid, so their values line up in one column wherever the lists stack.
-@container drawer-facts (min-width: 360px) {
+@container drawer-facts (min-width: 560px) {
   .factsLayout {
-    @include fact-lists;
-    // A trailing filler track takes the spare width: with a flexible value track instead, Chrome
-    // leaves the label track at its min-content and wraps labels that fit.
-    grid-template-columns: minmax(min-content, max-content) minmax(min-content, max-content) 1fr;
-    > section,
-    > section[data-tone='accent'] {
-      grid-column: 1 / -1;
-    }
-    > section:not([data-tone='accent']) {
-      display: grid;
-      grid-template-columns: subgrid;
-      > header {
-        grid-column: 1 / -1;
-      }
-    }
-    > section:not([data-tone='accent']) dl {
-      grid-column: 1 / -1;
-      grid-template-columns: subgrid;
-    }
-  }
-  .burnLead {
-    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
-// Side-by-side tiers. The lists auto-place after the figure; Manual resets is pinned to the last
-// track across every row, and the trailing 1fr row takes any extra height it has, so Billing stays
-// right under Usage.
-@media (min-width: 901px) {
-  @container drawer-facts (min-width: 600px) {
-    .factsLayout {
-      grid-template-columns:
-        minmax(min-content, max-content) minmax(min-content, 1fr)
-        clamp(240px, 38cqi, 320px);
-      grid-template-rows: auto auto auto 1fr;
-      row-gap: 16px;
-      > section:not([data-tone='accent']) {
-        grid-column: span 2;
-      }
-      > section[data-tone='accent'] {
-        grid-column: -2;
-        grid-row: 1 / -1;
-      }
-    }
-    .burnLead {
-      grid-column: 1 / span 2;
-    }
+@container drawer-facts (min-width: 900px) {
+  .factsLayout {
+    grid-template-columns: minmax(140px, 0.7fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.8fr);
   }
-  @container drawer-facts (min-width: 860px) {
-    .factsLayout {
-      grid-template-columns:
-        max-content minmax(min-content, max-content) minmax(min-content, 1fr)
-        clamp(320px, 36cqi, 440px);
-      grid-template-rows: auto auto 1fr;
-    }
-    .burnLead {
-      grid-column: 1;
-      grid-row: 1 / -1;
-      align-self: stretch;
-      padding-right: 32px;
-      border-right: 1px solid var(--hairline);
-    }
-  }
-  @container drawer-facts (min-width: 1160px) {
-    .factsLayout {
-      grid-template-columns:
-        max-content minmax(min-content, max-content) minmax(min-content, 1fr)
-        minmax(min-content, max-content) minmax(min-content, 1fr) clamp(320px, 32cqi, 440px);
-      grid-template-rows: auto;
-    }
+  // Each expiry stays one line (badge, date, time left) where the tile has the room.
+  .resetExpiries[data-kinds] li {
+    flex-wrap: nowrap;
+    white-space: nowrap;
   }
 }
 
@@ -3666,13 +3655,15 @@ $table-tiers: (
   flex-wrap: wrap;
   column-gap: 8px;
 }
-// With kinds, each reset reads as its kind badge over its date, at every width, so lines stay
-// aligned and a date never breaks beside a badge.
+// With kinds, each reset reads on one line: its kind badge, its date and the time left (G12), so a
+// tile of three resets is three lines, not six; a narrow tile wraps between the parts.
 .resetExpiries[data-kinds] {
-  gap: 8px;
+  gap: 6px;
   li {
-    flex-direction: column;
-    align-items: flex-start;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: baseline;
     row-gap: 2px;
   }
 }
@@ -4138,7 +4129,7 @@ $table-tiers: (
 // consecutive opened accounts clearly.
 @include block-rows {
   .accountFacts {
-    padding: 12px 10px 16px 38px;
+    padding: 8px 0 12px;
   }
   .account[open] + .account {
     margin-top: 8px;
@@ -4740,4 +4731,108 @@ $table-tiers: (
   margin-top: 24px;
   padding-top: 20px;
   border-top: 1px solid var(--hairline-soft);
+}
+
+/* G12 */
+// Section tiles: every tile header has one height (the Use reset button's), so titles and the rows
+// under them line up across neighbouring tiles.
+.pool .factsLayout > section > header {
+  min-height: 32px;
+  align-items: center;
+}
+@media (pointer: coarse) {
+  .pool .factsLayout > section > header {
+    min-height: 44px;
+  }
+}
+// The provider header: the remaining number stays unboxed as the card's anchor; Now and Forecast are
+// tiles in one recessed tray beside it, sharing row lines, so "Burn rate (3h)" sits level with
+// "Pool empty" and each value level with its neighbours'. Everything centres in its tile.
+.pool .poolHeader > .statsBlock {
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid var(--tray-border);
+  border-radius: 14px;
+  background: var(--tray-bg);
+  > .statsGroup,
+  > .statsGroup:last-child {
+    min-width: 0;
+    padding: 12px 16px;
+    border: 1px solid var(--tile-border);
+    border-radius: 9px;
+    background: var(--tile-bg);
+    text-align: center;
+  }
+  .statsHeading {
+    margin: 0 0 10px !important;
+    color: var(--text-primary);
+    text-align: center;
+  }
+  .stats {
+    justify-content: center;
+    justify-items: center;
+    > div {
+      text-align: center;
+    }
+    dd,
+    small {
+      text-align: center;
+    }
+  }
+}
+@container poolHeader (min-width: 672px) {
+  .pool .poolHeader {
+    align-items: center;
+  }
+  .pool .poolHeader > .statsBlock {
+    display: grid;
+    flex: 1 1 520px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(4, auto);
+    row-gap: 0;
+    column-gap: 6px;
+    &[data-split] {
+      grid-template-columns: minmax(max-content, 0.34fr) minmax(0, 1fr);
+    }
+    > .statsGroup,
+    > .statsGroup:last-child {
+      grid-row: 1 / -1;
+      display: grid;
+      grid-template-rows: subgrid;
+      row-gap: 0;
+    }
+    .statsHeading {
+      grid-row: 1;
+    }
+    .stats {
+      grid-row: 2 / -1;
+      display: grid;
+      grid-template-rows: subgrid;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(max-content, 1fr);
+      row-gap: 0;
+      column-gap: 24px;
+      > div {
+        grid-row: 1 / -1;
+        display: grid;
+        grid-template-columns: max-content;
+        grid-template-rows: subgrid;
+        row-gap: 0;
+        justify-items: center;
+      }
+      dt {
+        grid-row: 1;
+        margin: 0 0 4px;
+      }
+      dd {
+        grid-row: 2;
+      }
+      > div > small {
+        grid-row: 3;
+        grid-column: 1;
+        margin-top: 2px;
+        text-align: center;
+      }
+    }
+  }
 }
