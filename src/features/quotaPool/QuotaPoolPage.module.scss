@@ -4923,9 +4923,10 @@ $table-tiers: (
     }
   }
 }
-@container poolHeader (min-width: 960px) {
+// From a 900px header (a 1280px screen) the two cards share a row and Forecast's three cells one row (P1.2).
+@container poolHeader (min-width: 900px) {
   .pool .poolHeader > .statsBlock {
-    grid-template-columns: minmax(300px, 0.9fr) minmax(480px, 1.5fr);
+    grid-template-columns: minmax(260px, 0.75fr) minmax(480px, 1.6fr);
     &:not(:has(.leadCard + .statsGroup)) {
       grid-template-columns: minmax(300px, 0.9fr) minmax(480px, 1.5fr);
     }
@@ -5097,9 +5098,9 @@ $table-tiers: (
   border: 0;
   background: none;
 }
-// 740–959px headers (a 1100px screen): the number card and Forecast share one row, so Now sits next
+// 740–899px headers (a 1100px screen): the number card and Forecast share one row, so Now sits next
 // to its figure; Forecast reads label-left, value-right rows in its narrower card.
-@container poolHeader (min-width: 740px) and (max-width: 959px) {
+@container poolHeader (min-width: 740px) and (max-width: 899px) {
   .pool .poolHeader > .statsBlock {
     grid-template-columns: minmax(250px, 0.8fr) minmax(0, 1.2fr);
   }
