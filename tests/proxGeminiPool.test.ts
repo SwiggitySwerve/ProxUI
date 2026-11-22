@@ -319,6 +319,64 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     await f.collector.refresh();
     expect(tierReads()).toBe(3);
   });
+  test('fresh windows before the old ones reset read the plan in that poll', async () => {
+    const f = fixture();
+    const tierReads = () =>
+      f.calls.filter((call) => call.body?.url === ANTIGRAVITY_CODE_ASSIST_URL).length;
+    f.setQuota(summary(0.3, 0.002));
+    await f.collector.refresh();
+    expect(tierReads()).toBe(1);
+    // Five minutes later the upgrade has opened fresh Gemini windows, long before the old resets.
+    f.advance(5 * 60_000);
+    f.setTier('g1-ultra-tier');
+    const fresh = summary(1, 1);
+    for (const bucket of fresh.groups[0].buckets) {
+      const length = bucket.window === '5h' ? 5 * HOUR_MS : 7 * DAY_MS;
+      bucket.resetTime = new Date(NOW + 5 * 60_000 + length).toISOString();
+    }
+    f.setQuota(fresh);
+    await f.collector.refresh();
+    expect(tierReads()).toBe(2);
+    const account = f.store.listAccounts().find((a) => a.provider === 'antigravity')!;
+    expect(account.planHistory).toEqual([
+      { plan: 'g1-ultra-lite-tier', fromMs: 0 },
+      { plan: 'g1-ultra-tier', fromMs: NOW + 5 * 60_000 },
+    ]);
+    // Ordinary use afterwards does not ask again inside the plan interval.
+    f.advance(5 * 60_000);
+    f.setQuota(fresh);
+    await f.collector.refresh();
+    expect(tierReads()).toBe(2);
+  });
+
+  test('a plan change signal waits for the plan floor, and the change starts at its reading', async () => {
+    const f = fixture();
+    const tierReads = () =>
+      f.calls.filter((call) => call.body?.url === ANTIGRAVITY_CODE_ASSIST_URL).length;
+    f.setQuota(summary(0.3, 0.002));
+    await f.collector.refresh();
+    // Four minutes later (inside the five-minute floor) the upgrade has opened fresh windows.
+    f.advance(4 * 60_000);
+    f.setTier('g1-ultra-tier');
+    const fresh = summary(1, 1);
+    for (const bucket of fresh.groups[0].buckets) {
+      const length = bucket.window === '5h' ? 5 * HOUR_MS : 7 * DAY_MS;
+      bucket.resetTime = new Date(NOW + 4 * 60_000 + length).toISOString();
+    }
+    f.setQuota(fresh);
+    await f.collector.refresh();
+    expect(tierReads()).toBe(1);
+    // The next poll shows nothing new, but the held signal reads the plan once the floor allows.
+    f.advance(4 * 60_000);
+    await f.collector.refresh();
+    expect(tierReads()).toBe(2);
+    const account = f.store.listAccounts().find((a) => a.provider === 'antigravity')!;
+    expect(account.planHistory?.at(-1)).toEqual({
+      plan: 'g1-ultra-tier',
+      fromMs: NOW + 4 * 60_000,
+    });
+  });
+
   test('a plan change starts at the reading its poll took, not at the later tier read', async () => {
     const f = fixture();
     await f.collector.refresh();

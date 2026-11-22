@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { buildDashboard, projectPool } from '../server/quota/domain';
 import {
   planAt,
+  planChangeSuspected,
   planFromClaudeProfile,
   planFromCodexUsage,
   planWeight,
@@ -280,6 +281,37 @@ describe('plan history', () => {
     )!;
     // 2% of 2000 per 5 minutes before, 2% of 500 after; the 10 -> 5 step crosses the change.
     expect(pool.burnPointsPerHour).toBeCloseTo((40 + 10) * 6, 6);
+  });
+});
+
+describe('plan change signal', () => {
+  const window = (remainingPercent: number, resetAtMs: number) => ({
+    window: 'five-hour' as const,
+    remainingPercent,
+    resetAtMs,
+  });
+  const later = now + 3 * HOUR_MS;
+  test('a window in use that restarts before its reset suggests a plan change', () => {
+    expect(planChangeSuspected([window(0.2, later)], [window(100, now + 5 * HOUR_MS)], now)).toBe(
+      true
+    );
+  });
+  test('a rise of 20 points within one cycle suggests a plan change; usage, however heavy, does not', () => {
+    expect(planChangeSuspected([window(40, later)], [window(85, later + 30_000)], now)).toBe(true);
+    expect(planChangeSuspected([window(40, later)], [window(50, later)], now)).toBe(false);
+    // 25 points of use between two polls is a drop, never a signal.
+    expect(planChangeSuspected([window(90, later)], [window(65, later)], now)).toBe(false);
+  });
+  test('scheduled resets, idle windows and first readings do not', () => {
+    // The window reset on time.
+    expect(
+      planChangeSuspected([window(10, now - 1000)], [window(100, now + 5 * HOUR_MS)], now)
+    ).toBe(false);
+    // An unused window slides its reset every poll.
+    expect(planChangeSuspected([window(100, later)], [window(100, later + 300_000)], now)).toBe(
+      false
+    );
+    expect(planChangeSuspected(undefined, [window(50, later)], now)).toBe(false);
   });
 });
 

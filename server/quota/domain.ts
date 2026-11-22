@@ -4,7 +4,7 @@ import { maskIdentifier } from '../../src/domain/quotaPool/mask';
 import { poolProviderViewId } from '../../src/domain/quotaPool/providers';
 import { profileWindowId } from '../../src/domain/quotaWindows/normalized';
 import { discoveredProviders, type DiscoveryState } from './discoveredProviders';
-import { sumKnown, weeklyOnlyAccountIds } from './values';
+import { sameResetCycle, sumKnown, weeklyOnlyAccountIds } from './values';
 import type {
   AccountQuotaWindow,
   AccountResets,
@@ -103,7 +103,7 @@ export function measuredRates(
     const sameCycle =
       previous.resetAtMs !== null &&
       current.resetAtMs !== null &&
-      Math.abs(previous.resetAtMs - current.resetAtMs) <= 60_000 &&
+      sameResetCycle(previous.resetAtMs, current.resetAtMs) &&
       previous.resetAtMs > current.observedAtMs;
     if (sameCycle && delta >= 0) {
       burn += delta;
@@ -125,9 +125,6 @@ function currentSample(
   if (sample.resetAtMs !== null && sample.resetAtMs <= atMs) return;
   return { ...sample, remainingPercent: sample.remainingPercent };
 }
-
-/** Reset times that differ by less than this are the same cycle (providers round them). */
-const SAME_CYCLE_MS = 60_000;
 
 /**
  * A recorded balance for history only. One quiet account (e.g. disabled for a while) never blanks
@@ -165,7 +162,7 @@ function recordedPoints(
     weights[index + 1] === weight &&
     before.resetAtMs !== null &&
     after.resetAtMs !== null &&
-    Math.abs(before.resetAtMs - after.resetAtMs) <= SAME_CYCLE_MS &&
+    sameResetCycle(before.resetAtMs, after.resetAtMs) &&
     after.remainingPercent <= before.remainingPercent
   ) {
     const share = (atMs - before.observedAtMs) / (after.observedAtMs - before.observedAtMs);
