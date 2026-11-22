@@ -5281,3 +5281,15 @@ $table-tiers: (
     padding: 12px 13px;
   }
 }
+// The Combined number card matches the provider number cards: at least their 280px on wide screens, so
+// it doesn't change width between views, and the card's full width on phones.
+.pool.combined > .headline {
+  min-width: 280px;
+}
+@media (max-width: 640px) {
+  .pool.combined > .headline {
+    justify-self: stretch;
+    width: auto;
+    min-width: 0;
+  }
+}
