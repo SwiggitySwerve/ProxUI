@@ -141,8 +141,8 @@ Regression coverage lives in `tests/proxUsageNormalize.test.ts` and
   at most 1000 records. `replay.ts` validates the numbered envelope. Both RESP and
   HTTP authentication failures block that source's management requests for at
   least 60 seconds. A 400 or malformed page backs off without popping or advancing.
-- The hub sends nothing unprompted on a subscribed socket and answers each `PING` at
-  once. The collector pings every 5 seconds and closes the socket after 15 seconds with
+- With no usage traffic the hub sends nothing on a subscribed socket, and it answers each
+  `PING` at once. The collector pings every 5 seconds and closes the socket after 15 seconds with
   no bytes received, so a half-open socket leaves `subscribed` within about 15 seconds.
 - Per-source `(boot_id, queue_seq)` lives in `meta` under `cursor:<instance>`;
   `cursor-at:<instance>` records its commit time for coverage when no heartbeat

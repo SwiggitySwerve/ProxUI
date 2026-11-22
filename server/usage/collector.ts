@@ -386,7 +386,7 @@ export class UsageCollector {
       await this.clock.sleep(1000, signal);
       if (signal.aborted) break;
       const now = this.clock.now();
-      // The hub sends nothing unprompted, so on an idle hub only the pong to each 5 s PING
+      // An idle hub sends nothing unprompted, so there only the pong to each 5 s PING
       // proves the socket is alive. Silence for three ping intervals closes a half-open socket.
       if (now - (this.status.lastActivityAtMs ?? now) >= 15_000) {
         connection.close();

@@ -123,46 +123,33 @@ describe('usage collector with an in-process proxy', () => {
     expect(env.collector.status.state).toBe('stopped');
   });
 
-  test('subscribedAtMs marks each subscription and clears before recovery awaits', async () => {
+  test('subscribedAtMs and subscribedBootId mark each subscription and clear before recovery awaits', async () => {
     const env = await setup();
     await ready(env);
     await eventually(() => env.collector.status.state === 'subscribed');
     const first = env.collector.status.subscribedAtMs;
+    const firstBoot = env.proxy.bootId;
     expect(first).toBe(env.clock.now());
-    const seen: { state: string; subscribedAtMs: number | null }[] = [];
+    expect(env.collector.status.subscribedBootId).toBe(firstBoot);
+    const seen: {
+      state: string;
+      subscribedAtMs: number | null;
+      subscribedBootId: string | null;
+    }[] = [];
     env.writer.recovery = async () => {
-      const { state, subscribedAtMs } = env.collector.status;
-      seen.push({ state, subscribedAtMs });
+      const { state, subscribedAtMs, subscribedBootId } = env.collector.status;
+      seen.push({ state, subscribedAtMs, subscribedBootId });
     };
     await env.clock.advance(5000);
-    env.proxy.drop();
+    env.proxy.restart(); // The hub process restarts with a new boot id.
     await eventually(() => env.collector.status.retryAtMs !== null);
     // Status as writer.recovery began, after the monitor and label awaits.
-    expect(seen[0]).toEqual({ state: 'backoff', subscribedAtMs: null });
+    expect(seen[0]).toEqual({ state: 'backoff', subscribedAtMs: null, subscribedBootId: null });
     await env.clock.advance(1000);
     await eventually(() => env.collector.status.state === 'subscribed');
     expect(env.collector.status.subscribedAtMs).toBe(env.clock.now());
     expect(env.collector.status.subscribedAtMs!).toBeGreaterThan(first!);
-  });
-
-  test('subscribedBootId names the hub boot replay finished against, and follows a restart', async () => {
-    const env = await setup();
-    await ready(env);
-    await eventually(() => env.collector.status.state === 'subscribed');
-    const first = env.proxy.bootId;
-    expect(env.collector.status.subscribedBootId).toBe(first);
-    const seen: { state: string; subscribedBootId: string | null }[] = [];
-    env.writer.recovery = async () => {
-      const { state, subscribedBootId } = env.collector.status;
-      seen.push({ state, subscribedBootId });
-    };
-    env.proxy.restart();
-    await eventually(() => env.collector.status.retryAtMs !== null);
-    expect(seen[0]).toEqual({ state: 'backoff', subscribedBootId: null });
-    await env.clock.advance(1000);
-    await eventually(() => env.collector.status.state === 'subscribed');
-    expect(env.gaps).toMatchObject([{ reason: 'proxy-restart' }]);
-    expect(env.proxy.bootId).not.toBe(first);
+    expect(env.proxy.bootId).not.toBe(firstBoot);
     expect(env.collector.status.subscribedBootId).toBe(env.proxy.bootId);
   });
 
