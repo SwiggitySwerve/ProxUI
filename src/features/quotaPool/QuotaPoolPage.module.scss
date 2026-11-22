@@ -5049,3 +5049,16 @@ $table-tiers: (
     flex: none;
   }
 }
+// The Now strip's value drops under its label at the right edge when the card has no room for both
+// ("248.4 of 300 points" on a phone), instead of running past the card's padding.
+.pool .poolHeader .leadCard > .statsGroup[data-group='now'] {
+  flex-wrap: wrap;
+  .stats,
+  .stats > div {
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .stats dd {
+    margin-left: auto;
+  }
+}
