@@ -137,8 +137,11 @@ function ResetFact({
         />
       </FactSection>
     );
+  // A disabled button with a stated reason never sits beside "Usable now": the reason says why it
+  // can't be used from here, and the row's Manual resets cell still counts what is usable (G10).
+  const blockedHere = disabled && !!reason && !spent && resets.usable > 0;
   const aside = [
-    !live && status.statusKey && t(status.statusKey, { usable: resets.usable }),
+    !live && !blockedHere && status.statusKey && t(status.statusKey, { usable: resets.usable }),
     !spent && reason,
   ]
     .filter(Boolean)

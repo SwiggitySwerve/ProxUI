@@ -37,7 +37,7 @@ def fixture(state):
     """Synthetic, precomputed API contract examples, not production forecasts."""
     pools = []
     # "many" is 200 accounts, to show how long rosters read; every other state keeps the small pair.
-    sizes = (120, 80) if state.startswith("many") else (3, 2)
+    sizes = (120, 80) if state.startswith("many") else (4, 2) if state.startswith("real") else (3, 2)
     for provider, count, scale in [("claude", sizes[0], sizes[0] / 3), ("codex", sizes[1], sizes[1] / 2)]:
         # A larger roster scales every amount, so its rates and projection agree with its balance.
         remaining = (248.4 if provider == "claude" else 142.8) * scale
@@ -168,10 +168,51 @@ def fixture(state):
                         nextResetGainPoints=None)
             recorded[-1] = dict(recorded[-1], remainingPoints=None, burnPointsPerHour=None,
                                 drainPointsPerHour=None)
+        if state.startswith("real") and provider == "claude":
+            # Shaped like a live hub (G9): every account is Ultra and holds resets of several kinds, most
+            # of them usable, and the masked addresses differ in length the way mask.ts output does.
+            names = ("ops•••am@no•••.io", "kat•••on@ex•••.dev", "ada•••ce@ma•••.com", "lin•••ds@p•••.me")
+            held = ((["weekly"], 1), (["weekly", "fable", "fable"], 3), (["fable"], 1), (["weekly", "weekly", "fable"], 3))
+            for account, name, (kinds, usable), weekly in zip(accounts, names, held, (60.0, 0.0, 12.0, 0.0)):
+                expiries = [NOW + (4 + 3 * k) * DAY for k in range(len(kinds))]
+                account.update(identifier=name, remainingPercent=weekly,
+                               plan=dict(label="Ultra", capacityPoints=2000, known=True),
+                               resets=dict(available=len(kinds), usable=usable, blocker=None, kinds=kinds,
+                                           expiries=expiries, nextExpiryAtMs=expiries[0], observedAtMs=NOW))
+                account["windows"] = [dict(w, remainingPercent=weekly) if w["id"] == "seven-day" else w
+                                      for w in account["windows"] if w["id"] != "five-hour"]
+                account["noFiveHourLimit"] = True
+            if state == "real-mixed":
+                # Every kind an account can hold at once (5-hour, weekly, Fable, full): the held line's longest
+                # case, which must read as a count, not wrap the row. The rest keep their real-shaped mixes.
+                kinds = ["session", "weekly", "fable", "full"]
+                expiries = [NOW + (4 + 3 * k) * DAY for k in range(len(kinds))]
+                accounts[0]["resets"].update(available=4, usable=2, kinds=kinds, expiries=expiries,
+                                             nextExpiryAtMs=expiries[0])
+                # A pair whose Vietnamese line ("1 5 giờ · 1 toàn bộ") passes 18 characters yet fits the column,
+                # so the fit is measured, not counted.
+                pair = ["session", "full"]
+                accounts[2]["resets"].update(available=2, usable=1, kinds=pair, expiries=expiries[:2],
+                                             nextExpiryAtMs=expiries[0])
+            # The pool holds what its Ultra accounts hold: 72% of one 2,000-point account across four.
+            f = 1440 / remaining
+            pool.update(capacityPoints=8000, remainingPoints=1440,
+                        nextResetGainPoints=round(pool["nextResetGainPoints"] * f),
+                        resets=[dict(r, gainPoints=round(r["gainPoints"] * f)) for r in pool["resets"]])
+            for series in ("recorded", "projected"):
+                pool[series] = [dict(item, remainingPoints=item["remainingPoints"] * f) for item in pool[series]]
         if state == "long-name":
             # A name beyond 28ch, beside a (usable) reset chip: it wraps in its Account cell, minimized or not.
             accounts[0]["identifier"] = "a.deliberately.long.credential.name.for.a.shared.workstation@example-corporate.test"
         pools.append(pool)
+    if state == "many-kinds":
+        # The lone Claude holder sorts past the first page and holds every kind, so the pool summary states
+        # them all and must stay inside the card (a long language wraps it between kinds).
+        holder = pools[0]["accounts"][0]
+        kinds = ["session", "weekly", "fable", "full"]
+        expiries = [NOW + (4 + 3 * k) * DAY for k in range(len(kinds))]
+        holder["identifier"] = "zoe•••ka@ex•••.test"
+        holder["resets"].update(available=4, usable=2, kinds=kinds, expiries=expiries, nextExpiryAtMs=expiries[0])
     if state == "multi-low":
         # One Claude row with several low limits beside a normal weekly value (5-hour and Weekly Opus),
         # and one whose own weekly value is low as well.
@@ -236,6 +277,11 @@ def fixture(state):
     if state == "no-limit":
         total.update(capacityPoints=400, remainingPoints=152)
         # The total is the sum of the provider layers at the same moments, so the bands stack.
+        total["projected"] = [dict(a, remainingPoints=a["remainingPoints"] + b["remainingPoints"])
+                              for a, b in zip(pools[0]["projected"], pools[1]["projected"])]
+    if state.startswith("real"):
+        # The total is the sum of the provider layers at the same moments, so the bands stack.
+        total.update(capacityPoints=8200, remainingPoints=1440 + 142.8)
         total["projected"] = [dict(a, remainingPoints=a["remainingPoints"] + b["remainingPoints"])
                               for a, b in zip(pools[0]["projected"], pools[1]["projected"])]
     if state in ("partial","stale","collecting","long"):
@@ -446,12 +492,15 @@ STALE_JS = "(lng) => {" + C3_HELPERS + r"""
 A_PAGED_CASES = ("many", "many-low", "many-narrow")  # rosters that offer Show more
 CAVEAT_EN = "Renewal dates are estimated from each plan's start date; annual plans differ."
 # Reads every Accounts section: the caveat's place, count and text. Returns {out, texts} for one page state.
-CAVEAT_JS = "() => {" + C3_HELPERS + r"""
+CAVEAT_JS = "(expectOpen) => {" + C3_HELPERS + r"""
   const out=[],texts=[],caveat='[class*="__renewalCaveat___"]';
   for(const article of document.querySelectorAll('article')){
     const section=article.querySelector('section[class*="__accounts___"]'),card=article.querySelector('h2').textContent;
     // Fixture: every Claude account's renewal is estimated from its start date; Codex reports its dates.
-    const want=/claude/i.test(card)?1:0,got=[...section.querySelectorAll(caveat)];
+    // The caveat appears only while at least one estimated-renewal row is open so collapsed lists stay clean.
+    const hasOpen = [...section.querySelectorAll('details[open]')].filter(shown).length > 0;
+    const want = (/claude/i.test(card) && (expectOpen ?? hasOpen)) ? 1 : 0;
+    const got=[...section.querySelectorAll(caveat)];
     if(got.length!==want)out.push({card,why:'expected '+want+' caveat(s), found '+got.length});
     const grid=section.querySelector('[class*="__accountGrid___"]'),footer=section.querySelector('[class*="__rosterFooter___"]');
     for(const c of got){
@@ -472,11 +521,11 @@ CAVEAT_JS = "() => {" + C3_HELPERS + r"""
 }"""
 
 
-async def caveat_pass(page, label, out, ref, lng="en"):
-    """Measure the caveat in the page's current state; every state must show the same text as the first one read."""
-    got = await page.evaluate(CAVEAT_JS)
+async def caveat_pass(page, label, out, ref, lng="en", expect_open=None):
+    """Measure the caveat in the page's current state; when open rows show estimated renewals, text must match."""
+    got = await page.evaluate(CAVEAT_JS, expect_open)
     out += [dict(f, during=label, lng=lng) for f in got["out"]]
-    if not got["texts"]:
+    if expect_open is True and not got["texts"]:
         out.append(dict(why="no caveat to measure", during=label, lng=lng))
     for t in got["texts"]:
         ref.setdefault(t["card"], t["text"])
@@ -489,18 +538,17 @@ async def caveat_pass(page, label, out, ref, lng="en"):
 
 
 async def renewal_caveat_failures(page, context, url, route_api, name, state):
-    """A2: each provider Accounts section with an estimated renewal among any of its accounts shows the caveat exactly
-    once, after the list and its Show more footer (never inside a row, disclosure or page), with the same text when
-    rows are closed, opened, searched, filtered or paged, in DOM and visual order. Short basis stays on one line."""
+    """A2: each provider Accounts section with an estimated renewal shows the caveat once after the list/footer
+    while an estimated-renewal row is open, and hides it when all rows are collapsed. Short basis stays on one line."""
     if state in C3_NO_ROSTER:
         return []
     out, ref = [], {}
-    await caveat_pass(page, "closed", out, ref)
+    await caveat_pass(page, "initial", out, ref)
     toggles = page.locator('article [class*="__expandAccounts___"][aria-expanded="false"]:not([class*="__showAll___"])')
     closed = await toggles.count()  # the cases that start expanded have none to open
     for _ in range(closed):
         await toggles.first.click()
-    await caveat_pass(page, "opened", out, ref)
+    await caveat_pass(page, "opened", out, ref, expect_open=True)
     for _ in range(closed):
         await page.locator('article [class*="__expandAccounts___"][aria-expanded="true"]:not([class*="__showAll___"])').first.click()
     search = page.get_by_role("searchbox", name="Search accounts").first
@@ -508,14 +556,14 @@ async def renewal_caveat_failures(page, context, url, route_api, name, state):
         original = await search.input_value()
         for term in ("zzzz-no-match", "gra"):
             await search.fill(term)
-            await caveat_pass(page, f"searched {term!r}", out, ref)
+            await caveat_pass(page, f"searched {term!r}", out, ref, expect_open=False)
         await search.fill(original)
     low = page.locator('article [class*="__rosterLow___"]')
     if await low.count():
         flip = await low.first.get_attribute("aria-pressed") != "true"  # many-low starts filtered
         if flip:
             await low.first.click()
-        await caveat_pass(page, "filtered", out, ref)
+        await caveat_pass(page, "filtered", out, ref, expect_open=False)
         if flip:
             await low.first.click()
     if state == "expanded":
@@ -1070,13 +1118,16 @@ G_SWEEPS = {
 }
 
 
-async def open_fixture_page(browser, url, state, width, lng, view, height=1000, failing=False):
+async def open_fixture_page(browser, url, state, width, lng, view, height=1000, failing=False, pinned=False):
     """A fresh page on the fixture, in `state` at `width`; `view` is pressed in English first, then the language is set.
-    `failing` answers the pools call with a 503, so the page shows its initial-error card instead of cards."""
+    `failing` answers the pools call with a 503, so the page shows its initial-error card instead of cards. `pinned`
+    holds the clock at the fixture's reading time, so dated fixture data (held resets) is still current."""
     context = await browser.new_context(
         viewport=dict(width=width, height=height), device_scale_factor=1, is_mobile=width < 600,
         has_touch=width < 600, locale="en-US", timezone_id="UTC", color_scheme="dark", reduced_motion="reduce",
     )
+    if pinned:
+        await context.clock.install(time=NOW / 1000)
     page = await context.new_page()
 
     async def route_api(route):
@@ -1151,8 +1202,8 @@ async def check_combined_controls(page, width):
 
 
 async def check_rate_headline(page):
-    """G3: in a rate view every headline reads label, then number; the label is one line above the number and
-    "points/h" shares the number's baseline. A withheld headline keeps its word and label and shows no number or unit."""
+    """G3: in a rate view every headline puts its metric label on one line above the number, and "points/h" shares
+    the number's baseline. A withheld headline keeps its word and label."""
     return await page.evaluate("() => {" + C1_PRELUDE + r"""
       const fails = []; let measured = 0;
       for (const card of cards()) {
@@ -1167,16 +1218,16 @@ async def check_rate_headline(page):
           continue;
         }
         measured++;
-        if (!(label.compareDocumentPosition(strong) & Node.DOCUMENT_POSITION_FOLLOWING)) fails.push({who, why: 'label does not come before the number in the DOM'});
+        const l = label.getBoundingClientRect(), s = strong.getBoundingClientRect();
+        if (l.bottom > s.top + 1) fails.push({who, why: `label bottom ${l.bottom.toFixed(1)} is not above number top ${s.top.toFixed(1)}`});
         const probe = () => { const p = document.createElement('span'); p.style.cssText = 'display:inline-block;width:0;height:0'; return p; };
         const numberProbe = probe(), unitProbe = probe();
         strong.insertBefore(numberProbe, unit); unit.appendChild(unitProbe);
         const drift = Math.abs(numberProbe.getBoundingClientRect().bottom - unitProbe.getBoundingClientRect().bottom);
         numberProbe.remove(); unitProbe.remove();
         if (drift > 2) fails.push({who, why: `unit baseline ${drift.toFixed(1)}px off the number's`});
-        const ls = getComputedStyle(label), lh = parseFloat(ls.lineHeight) || parseFloat(ls.fontSize) * 1.2, l = label.getBoundingClientRect();
+        const ls = getComputedStyle(label), lh = parseFloat(ls.lineHeight) || parseFloat(ls.fontSize) * 1.2;
         if (l.height > lh * 1.5) fails.push({who, why: `label ${l.height.toFixed(1)}px tall, over 1.5 lines of ${lh.toFixed(1)}px`});
-        if (l.bottom > strong.getBoundingClientRect().top + 0.5) fails.push({who, why: 'label is not above the number'});
       }
       if (!measured) fails.push({why: 'no rate headline with a number to measure'});
       return fails;
@@ -1214,13 +1265,14 @@ R_LOW = 20  # a limit below this many percent is low (the UI's own rule)
 # The exact count strings the app must show, written out here rather than read from the locales.
 # A tuple is (singular form, other form) where the language has two; a language with one form has a 1-tuple.
 R_COUNT_TEXT = {
-    "en": dict(shown="{d} of {t} shown", only=("{f} of {t} matches", "{f} of {t} match"),
-               some=("{d} of {f} match shown · {t} total", "{d} of {f} matches shown · {t} total"),
+    "en": dict(shown="{d} of {t} shown", only=("{f} of {f} shown · {t} total",),
+               some=("{d} of {f} shown · {t} total",),
                none="No matches · {t} total"),
-    "ru": dict(shown="Показано {d} из {t}", only=("Совпадает {f} из {t}", "Совпадают {f} из {t}"),
-               some=("Показано {d} из {f} совпадения · всего {t}", "Показано {d} из {f} совпадений · всего {t}"),
+    "ru": dict(shown="Показано {d} из {t}", only=("Показано {f} из {f} · всего {t}",),
+               some=("Показано {d} из {f} · всего {t}",),
                none="Нет совпадений · всего {t}"),
-    "vi": dict(shown="Hiển thị {d} / {t}", only=("Khớp {f} / {t}",), some=("Hiển thị {d} / {f} kết quả khớp · tổng {t}",),
+    "vi": dict(shown="Hiển thị {d} / {t}", only=("Hiển thị {f} / {f} · tổng {t}",),
+               some=("Hiển thị {d} / {f} · tổng {t}",),
                none="Không có kết quả khớp · tổng {t}"),
 }
 
@@ -1312,7 +1364,7 @@ R_SNAP = "(i) => {" + R_JS + r"""
 }"""
 
 
-def r_count_verify(out, card, step, s, want, lng):
+def r_count_verify(out, card, step, s, want, lng, low_active=False):
     """Check one reading of a count against the fixture-derived D, F and T, as an exact string."""
     where = dict(card=card, lng=lng, step=step, text=s["text"])
     found = (s["inTools"], s["inCard"], s["last"])
@@ -1327,8 +1379,8 @@ def r_count_verify(out, card, step, s, want, lng):
         out.append(dict(where, why=f"{s['rows']} rows on screen but D = {want['d']}"))
     if s["moreN"] != want["f"] - want["d"]:
         out.append(dict(where, why=f"Show more offers {s['moreN']} but {want['f'] - want['d']} matches are hidden"))
-    if s["lowPressed"] and not s["query"] and s["chipN"] != want["f"]:
-        out.append(dict(where, why=f"the low filter's chip says {s['chipN']} but {want['f']} rows match"))
+    if low_active and s["lowPressed"] and s["chipN"] != -1:
+        out.append(dict(where, why=f"the active low filter chip repeats a count ({s['chipN']}) already shown in the result summary"))
 
 
 async def _roster_counts(page, lng, state):
@@ -1346,7 +1398,7 @@ async def _roster_counts(page, lng, state):
 
         async def settle(step):
             s = await page.evaluate(R_SNAP, c["i"])
-            r_count_verify(out, card, step, s, r_expected(state, card, flt, show_all), lng)
+            r_count_verify(out, card, step, s, r_expected(state, card, flt, show_all), lng, low_active=flt["low"])
             return s
 
         s = await settle("initial")
@@ -1485,10 +1537,10 @@ async def _chip_checks(page, lng, out):
         if off["text"] != labels["off"] or on["text"] != labels["on"]:
             out.append(dict(who, why="chip label is not the translated 'Show…' (off) / 'Filtering to…' (on) text", off=off["text"], on=on["text"]))
         if lng == "en":
-            if not re.fullmatch(r"Show \d+ with a limit below 20%", off["text"]):
-                out.append(dict(who, why="off label is not 'Show N with a limit below 20%'", text=off["text"]))
-            if not re.fullmatch(r"Filtering to \d+ with a limit below 20%", on["text"]):
-                out.append(dict(who, why="on label is not 'Filtering to N with a limit below 20%'", text=on["text"]))
+            if not re.fullmatch(r"Limit below 20% \(\d+\)", off["text"]):
+                out.append(dict(who, why="off label is not 'Limit below 20% (N)'", text=off["text"]))
+            if on["text"] != "Limit below 20%":
+                out.append(dict(who, why="on label is not 'Limit below 20%'", text=on["text"]))
         elif off["text"] == labels["enOff"]:
             out.append(dict(who, why="off label is still the English text", text=off["text"]))
         if on["svgs"] != 2 or not on["trailing"]:
@@ -1518,6 +1570,8 @@ async def _affected_chip(page, out):
         out.append(dict(why="affected chip wording changed", text=s["text"]))
     if s["pressed"] != "true" or not s["icon"]:
         out.append(dict(why="affected chip is not aria-pressed with a visible icon", state=s["pressed"], icon=s["icon"]))
+    if s["svgs"] != 2 or not s["trailing"]:
+        out.append(dict(why="affected chip lacks a trailing clear x icon", svgs=s["svgs"], trailing=s["trailing"]))
     if r_delta_e(s["fill"], s["card"]) < 12:
         out.append(dict(why="affected chip fill is not the filled selected style", fill=s["fill"], card=s["card"]))
     if max(ratio(s["border"], s["card"]), ratio(s["fill"], s["card"])) < 3:
@@ -1657,7 +1711,7 @@ async def check_options_summary(page, name, state, width):
         return [dict(why="Options button not visible")]
     rate_view = state in ("drain", "burn")
     # Remaining names its Future assumption ("Same as now" by default); rate views hide Future, so they omit it.
-    expected = ["5-hour" if state == "no-limit" else "Weekly", "Drain rate" if state == "drain" else "Burn rate" if state == "burn" else "Remaining", "3h"]
+    expected = ["5-hour" if state == "no-limit" else "Weekly", "Drain rate" if state == "drain" else "Burn rate" if state == "burn" else "Remaining", "3h avg"]
     if not rate_view:
         expected.append("Same as now")
     failures = []
@@ -1803,8 +1857,9 @@ async def check_expanded_duplicates(page, state, width):
 
 
 async def check_panel_order(page, state, width):
-    """H3: from the limits down an opened row reads Manual resets (full row), Usage, Billing at 900px and below,
-    in the visual and the DOM order; at 1100 and 1280 Usage is left of Billing, which is left of Manual resets."""
+    """H3 (G9): an opened row leads with the burn rate figure. At 900px and below it reads, from the limits down,
+    the figure, Manual resets (full row), Usage, Billing, in the visual and the DOM order; at 1100 and 1280 the
+    figure is left of or above Usage, Usage is left of or above Billing, and Manual resets is right of both."""
     if state != "expanded" or width not in (390, 820, 1100, 1280):
         return []
     return await page.evaluate("(wide) => {" + H_PRELUDE + r"""
@@ -1814,20 +1869,25 @@ async def check_panel_order(page, state, width):
         const who = row.querySelector('[class*="__accountLabel___"]')?.firstChild?.textContent;
         const facts = row.querySelector('[class*="__accountFacts___"]'), sections = [...facts.querySelectorAll('section')];
         const find = re => sections.find(s => re.test(s.querySelector('h4')?.textContent || '')), usage = find(/^Usage$/), billing = find(/^Billing$/), resets = sections.find(s => s.dataset.tone === 'accent');
+        const lead = facts.querySelector('[class*="__burnLead___"]');
         if (!usage || !billing || !resets || sections.length !== 3) { fails.push({who, why: 'row does not hold exactly Usage, Billing and Manual resets', found: sections.length}); continue; }
+        if (!lead || !shown(lead)) { fails.push({who, why: 'no burn rate figure'}); continue; }
         if (facts.querySelectorAll('[data-tone="accent"]').length !== 1) fails.push({who, why: 'not exactly one reset section'});
+        if (/Burn rate/.test([...usage.querySelectorAll('dt')].map(d => d.textContent).join())) fails.push({who, why: 'Usage repeats the burn rate'});
         const r = e => e.getBoundingClientRect(), limits = row.querySelector('summary > ul[aria-label="Limits"]'), cs = getComputedStyle(facts);
+        const before = (x, y) => !!(x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING);
+        const leftOrAbove = (x, y) => r(x).right <= r(y).left + 1 || r(x).bottom <= r(y).top + 1;
         if (!wide) {
           const dom = sections.map(s => s === resets ? 'resets' : s === usage ? 'usage' : 'billing').join(',');
-          if (dom !== 'resets,usage,billing') fails.push({who, why: 'DOM order is ' + dom});
+          if (dom !== 'resets,usage,billing' || !before(lead, resets)) fails.push({who, why: 'DOM order is not figure, ' + dom});
           const lim = [...limits.children].filter(shown), last = lim[lim.length - 1] || limits;
-          if (r(resets).top < r(last).bottom - 1) fails.push({who, why: 'Manual resets starts above the limits end'});
-          if (r(usage).top < r(resets).bottom - 1 || r(billing).top < r(usage).bottom - 1) fails.push({who, why: 'visual order is not resets, usage, billing', tops: [resets, usage, billing].map(e => Math.round(r(e).top))});
+          if (r(lead).top < r(last).bottom - 1) fails.push({who, why: 'the figure starts above the limits end'});
+          if (r(resets).top < r(lead).bottom - 1 || r(usage).top < r(resets).bottom - 1 || r(billing).top < r(usage).bottom - 1) fails.push({who, why: 'visual order is not figure, resets, usage, billing', tops: [lead, resets, usage, billing].map(e => Math.round(r(e).top))});
           const inner = r(facts).width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
           if (Math.abs(r(resets).width - inner) > 2) fails.push({who, why: `Manual resets spans ${r(resets).width.toFixed(0)} of the ${inner.toFixed(0)}px row`});
         } else {
-          if (!(r(usage).left < r(billing).left - 4 && r(billing).left < r(resets).left - 4)) fails.push({who, why: 'Usage is not left of Billing, left of Manual resets', lefts: [usage, billing, resets].map(e => Math.round(r(e).left))});
-          if (r(usage).right > r(billing).left + 1 || r(billing).right > r(resets).left + 1) fails.push({who, why: 'the three panels overlap'});
+          if (!leftOrAbove(lead, usage) || !leftOrAbove(usage, billing)) fails.push({who, why: 'the figure, Usage and Billing are not in reading order', boxes: [lead, usage, billing].map(e => [Math.round(r(e).left), Math.round(r(e).top)])});
+          if (r(usage).right > r(resets).left + 1 || r(billing).right > r(resets).left + 1) fails.push({who, why: 'Manual resets is not right of Usage and Billing'});
         }
       }
       return fails;
@@ -1923,12 +1983,17 @@ def a_expected_facts(state, provider):
     """The summary pairs a provider card must show today (English), derived from the fixture, not from the page."""
     pool = next(p for p in fixture(state)["pools"] if p["provider"] == provider)
     five_hour = state == "no-limit"
+    holders = [a for a in pool["accounts"] if a["resets"] and a["resets"]["available"] > 0]
     available = sum(a["resets"]["available"] for a in pool["accounts"] if a["resets"])
     usable = sum(a["resets"]["usable"] for a in pool["accounts"] if a["resets"])
     stale = sum(a["status"] == "stale" for a in pool["accounts"])
     no_limit = sum(bool(a.get("noFiveHourLimit")) for a in pool["accounts"]) if five_hour else 0
     facts = []
-    if available:
+    # Pool-level reset totals appear unless one account holds them all and its row is on the first page (name
+    # order, R_PAGE rows), where its own cell or chip already states the count.
+    order = sorted(pool["accounts"], key=lambda a: (a.get("identifier") or a["label"]).casefold())
+    lone_shown = len(holders) == 1 and order.index(holders[0]) < R_PAGE
+    if available and not lone_shown:
         facts.append(("Manual resets", str(available)))
         if usable:
             facts.append(("Usable resets", str(usable)))
@@ -1993,17 +2058,19 @@ async def a_summary_pass(page, state, lng, out):
     if not got["cards"]:
         out.append(dict(lng=lng, why="no provider card to measure"))
     measured = 0
+    expected_total = 0
     for card in got["cards"]:
         want = a_expected_facts(state, card["provider"])
         have = card["facts"]
         measured += len(have)
+        expected_total += len(want)
         if lng == "en" and have != [list(w) for w in want]:
             out.append(dict(provider=card["provider"], lng=lng, why=f"summary reads {have}, expected {want}"))
         elif lng != "en":
             numbers = lambda pairs: [re.findall(r"\d+", v) for _, v in pairs]
             if numbers(have) != numbers(want) or any(not label or label == w[0] for (label, _), w in zip(have, want)):
                 out.append(dict(provider=card["provider"], lng=lng, why=f"summary {have} should have the numbers of {want} under translated labels"))
-    if not measured:
+    if expected_total and not measured:
         out.append(dict(lng=lng, why="no summary item to measure"))
 
 
@@ -2064,7 +2131,7 @@ async def check_captions(page, name, state, width):
     found = await page.evaluate(H1C_CAPTION_JS)
     shot = Image.open(io.BytesIO(await page.screenshot(full_page=True, animations="disabled"))).convert("RGB")
     out = []
-    need = ["axis tick", "axis unit", "legend", "latest reading"]
+    need = ["axis tick", "axis unit", "legend"]
     if width >= 901:
         need.append("counts toward total")
     if state == "expanded":
@@ -2208,16 +2275,19 @@ async def check_data_collection_facts(page, name):
       if (!dl || !shown(dl)) return [{why: 'no Data collection facts to measure'}];
       const facts = [...dl.children], ref = document.querySelector('[class*="__summaryLabel___"]'), refValue = document.querySelector('[class*="__summaryValue___"]');
       if (facts.length !== 2) fails.push({why: facts.length + ' Data collection facts, expected 2'});
-      if (!ref || !refValue) fails.push({why: 'no Accounts summary fact to match against'});
       for (const f of facts) {
         const dt = f.querySelector('dt'), dd = f.querySelector('dd'), label = dt?.textContent;
         if (!dt || !dd) { fails.push({why: 'a Data collection fact lacks its label or value'}); continue; }
         const a = dt.getBoundingClientRect(), b = dd.getBoundingClientRect();
         if (b.top < a.bottom - 1 || b.top - a.bottom > 8 || Math.abs(a.left - b.left) > 1) fails.push({label, why: 'the value is not directly under its label'});
-        if (ref) {
-          const ls = getComputedStyle(dt), rs = getComputedStyle(ref), vs = getComputedStyle(dd), ws = getComputedStyle(refValue);
+        const ls = getComputedStyle(dt), vs = getComputedStyle(dd);
+        if (ref && refValue) {
+          const rs = getComputedStyle(ref), ws = getComputedStyle(refValue);
           if (ls.fontSize !== rs.fontSize || ls.color !== rs.color) fails.push({label, why: 'the label type differs from the Accounts summary labels', got: [ls.fontSize, ls.color], want: [rs.fontSize, rs.color]});
           if (vs.fontSize !== ws.fontSize || vs.fontWeight !== ws.fontWeight || vs.color !== ws.color) fails.push({label, why: 'the value type differs from the Accounts summary values', got: [vs.fontSize, vs.fontWeight, vs.color], want: [ws.fontSize, ws.fontWeight, ws.color]});
+        } else {
+          if (parseFloat(ls.fontSize) < 12 || parseFloat(ls.fontSize) > 13.5) fails.push({label, why: 'the label size is out of the caption scale', got: ls.fontSize});
+          if (vs.fontSize !== '14px' || vs.fontWeight !== '500') fails.push({label, why: 'the value type differs from the 14px/500 summary scale', got: [vs.fontSize, vs.fontWeight]});
         }
       }
       const fr = facts.map(f => f.getBoundingClientRect()), colGap = parseFloat(getComputedStyle(dl).columnGap) || 0, dlBox = dl.getBoundingClientRect();
@@ -2284,7 +2354,8 @@ async def a_chip_pass(page, lng, out, compare=True):
                 out.append(dict(where, why=f"chip vs row contrast {c['fillRatio']:.2f}"))
             if c["textRatio"] < 4.5:
                 out.append(dict(where, why=f"text contrast {c['textRatio']:.2f}"))
-            if label == "closed" and not c["shown"]:
+            # G9: from 901px the row's Manual resets cell replaces the chip, so only stacked rows show it.
+            if label == "closed" and not c["shown"] and page.viewport_size["width"] <= 900:
                 out.append(dict(where, why="a closed row's chip is not visible"))
     inks = {usable: {c["ink"] for c in chips if c["usable"] == usable} for usable in (True, False)}
     if not compare:
@@ -2409,7 +2480,9 @@ B_ROW_JS = "(args) => { const [view, isOpen, width] = args;" + H_PRELUDE + r"""
     }
     // Closed rows at 390 stay compact: 110px with one block, 150px with two or three; a stale line adds its own height.
     if (!isOpen && width === 390) {
-      const budget = items.length <= 1 ? 110 : 150, extra = row.dataset.status === 'stale' && status ? r(status).height + 6 : 0, h = r(row).height;
+      // G9: a reset chip has its own line under the plan, so it adds its height too.
+      const chip = summary.querySelector('[class*="__accountResetMarker___"]'), chipExtra = chip && shown(chip) ? r(chip).height + 2 : 0;
+      const budget = items.length <= 1 ? 110 : 150, extra = (row.dataset.status === 'stale' && status ? r(status).height + 6 : 0) + chipExtra, h = r(row).height;
       if (h > budget + extra) fails.push({who, why: `closed row is ${h.toFixed(0)}px tall with ${items.length} block(s) (limit ${budget + extra})`});
     }
   }
@@ -2681,10 +2754,11 @@ const textRight = el => { // the right edge of the painted text, not of its box
 
 
 async def check_fact_panel_gap(page, state, width):
-    """D1, rewritten for H2-B: in every opened row at 1100/1280/1440/1920 Manual resets is a compact right-hand
-    column 300-420px wide, to the right of every fact column, at the same left edge (within 1px) in every open row
-    of a card; the empty run between adjacent fact columns' painted content is at most 160px; every column gap
-    (including the one before Manual resets) is equal within 2px; and a 920px+ panel shows three fact columns."""
+    """D1, rewritten for G9: in every opened row at 1100/1280/1440/1920 the burn rate figure is a number at least
+    24px tall; Manual resets is a right-hand column 240-440px wide, right of every fact, at one left edge (within
+    1px) in every open row of a card; in Usage and Billing every label starts at one x and every value at another
+    (within 1px), and lists that stack share both; and no empty run between adjacent columns' painted content
+    passes 160px (225px in a panel of 1300px or more)."""
     if state != "expanded" or width not in D_GAP_WIDTHS:
         return []
     return await page.evaluate("() => {" + D_PRELUDE + r"""
@@ -2699,33 +2773,40 @@ async def check_fact_panel_gap(page, state, width):
       };
       const fails = [], rows = [...document.querySelectorAll('article details[open]')];
       if (!rows.length) return [{why: 'no open row to measure'}];
-      const boxLefts = new Map();
+      const boxLefts = new Map(), r = e => e.getBoundingClientRect();
       for (const row of rows) {
         const who = row.querySelector('[class*="__accountLabel___"]')?.firstChild?.textContent;
-        const facts = row.querySelector('[class*="__accountFacts___"]');
-        const accent = facts.querySelector('section[data-tone="accent"]');
-        const items = [...facts.querySelectorAll('section')].filter(s => s.dataset.tone !== 'accent').flatMap(s => [...s.querySelectorAll('dl > div')]).filter(shown);
-        if (!accent || !shown(accent) || !items.length) { fails.push({who, why: 'no fact column or Manual resets box to measure'}); continue; }
-        const a = accent.getBoundingClientRect();
-        if (a.width < 299.5 || a.width > 420.5) fails.push({who, why: `Manual resets is ${a.width.toFixed(0)}px wide, expected 300-420`});
+        const facts = row.querySelector('[class*="__accountFacts___"]'), layout = facts.querySelector('[class*="__factsLayout___"]');
+        const lead = facts.querySelector('[class*="__burnLead___"]'), accent = facts.querySelector('section[data-tone="accent"]');
+        const lists = [...facts.querySelectorAll('section')].filter(s => s.dataset.tone !== 'accent' && shown(s));
+        if (!layout || !lead || !accent || !shown(accent) || lists.length !== 2) { fails.push({who, why: 'no figure, two lists and Manual resets to measure'}); continue; }
+        const big = lead.querySelector('strong');
+        if (big && parseFloat(getComputedStyle(big).fontSize) < 24) fails.push({who, why: `the burn rate figure is ${getComputedStyle(big).fontSize}, under 24px`});
+        const a = r(accent), panelWidth = r(layout).width;
+        if (a.width < 239.5 || a.width > 440.5) fails.push({who, why: `Manual resets is ${a.width.toFixed(0)}px wide, expected 240-440`});
         const card = row.closest('article');
         if (!boxLefts.has(card)) boxLefts.set(card, []);
         boxLefts.get(card).push({who, left: a.left});
-        const columns = [];
-        for (const item of items.sort((x, y) => x.getBoundingClientRect().left - y.getBoundingClientRect().left)) {
-          const left = item.getBoundingClientRect().left, last = columns[columns.length - 1];
-          if (last && Math.abs(last.left - left) < 3) last.items.push(item); else columns.push({left, items: [item]});
+        const facts1 = lists.flatMap(l => [...l.querySelectorAll('dl > div')]).filter(d => d.querySelector('dt'));
+        if (a.left < Math.max(...facts1.map(d => textRight(d)), textRight(lead)) - 0.5) fails.push({who, why: 'Manual resets is not right of every fact'});
+        // Lists: labels share one x and values another; lists that stack (one left edge) share both.
+        const groups = [];
+        for (const l of lists) {
+          const left = Math.round(r(l).left), g = groups.find(g => Math.abs(g.left - left) <= 1);
+          if (g) g.lists.push(l); else groups.push({left, lists: [l]});
         }
-        const panelWidth = facts.firstElementChild.getBoundingClientRect().width;
-        if (panelWidth >= 920 && columns.length !== 3) fails.push({who, why: `a ${panelWidth.toFixed(0)}px panel shows ${columns.length} fact columns, expected 3`});
-        if (columns.length < 2) fails.push({who, why: 'fewer than two fact columns'});
-        const rights = columns.map(c => Math.max(...c.items.map(i => i.getBoundingClientRect().right)));
-        if (a.left < Math.max(...rights)) fails.push({who, why: 'Manual resets is not to the right of every fact column'});
-        const lefts = [...columns.slice(1).map(c => c.left), a.left];
-        const gaps = lefts.map((l, i) => l - rights[i]);
-        if (Math.max(...gaps) - Math.min(...gaps) > 2) fails.push({who, why: 'column gaps differ', gaps: gaps.map(g => +g.toFixed(1))});
-        const runs = columns.slice(1).map((c, i) => Math.min(...c.items.map(textLeft)) - Math.max(...columns[i].items.map(textRight)));
-        if (runs.length && Math.max(...runs) > 160) fails.push({who, why: `${Math.max(...runs).toFixed(0)}px empty between fact columns, at most 160`, runs: runs.map(r => +r.toFixed(1))});
+        for (const g of groups) {
+          const dts = g.lists.flatMap(l => [...l.querySelectorAll('dt')]), dds = g.lists.flatMap(l => [...l.querySelectorAll('dl > div > dd:first-of-type')]);
+          const xs = els => els.map(e => Math.round(r(e).left));
+          if (Math.max(...xs(dts)) - Math.min(...xs(dts)) > 1) fails.push({who, why: 'labels start at different x', xs: xs(dts)});
+          if (Math.max(...xs(dds)) - Math.min(...xs(dds)) > 1) fails.push({who, why: 'values start at different x', xs: xs(dds)});
+        }
+        // Empty runs between columns: figure | each list column | Manual resets, by painted text.
+        const cols = [{l: textLeft(lead), r: textRight(lead)}, ...groups.sort((x, y) => x.left - y.left).map(g => ({l: Math.min(...g.lists.map(textLeft)), r: Math.max(...g.lists.map(textRight))})), {l: a.left, r: a.right}]
+          .sort((x, y) => x.l - y.l);
+        const runs = cols.slice(1).map((c, i) => c.l - cols[i].r).filter(run => run > 0);
+        const maxRun = panelWidth >= 1300 ? 225 : 160;
+        if (runs.length && Math.max(...runs) > maxRun) fails.push({who, why: `${Math.max(...runs).toFixed(0)}px empty between columns, at most ${maxRun}`, runs: runs.map(x => +x.toFixed(1))});
       }
       for (const lefts of boxLefts.values()) {
         const xs = lefts.map(l => l.left);
@@ -2781,8 +2862,8 @@ async def check_reset_reason(page, name, state):
             fails.append(dict(who=who, why=f"the reason is {item['gap']:.0f}px from the button, at most 8"))
         if not item["disabled"]:
             continue
-        if item["style"] != "solid":
-            fails.append(dict(who=who, why="disabled Use reset outline is not solid", style=item["style"]))
+        if item["style"] != "dashed":
+            fails.append(dict(who=who, why="disabled Use reset outline is not dashed", style=item["style"]))
         if item["fill"] not in ("rgba(0, 0, 0, 0)", "transparent"):
             fails.append(dict(who=who, why="disabled Use reset has a fill", fill=item["fill"]))
         # Pixels, not CSS: shoot the box (scrolled into view) and read the button inside it.
@@ -2864,23 +2945,23 @@ async def check_reset_dialog_facts(dialog):
     if not facts or any(f is None for f in facts):
         return [dict(why="the dialog has no label-above-value facts to measure")]
     labels = [f["label"] for f in facts]
-    # "Next to expire" (the soonest held expiry) follows Resets used whenever the account's resets have a known
+    # "Expires" (the soonest held expiry) follows Resets to use whenever the account's resets have a known
     # future expiry; it names a date and time in UTC.
-    if labels not in (["Account", "Resets used", "Limits cleared"], ["Account", "Resets used", "Next to expire", "Limits cleared"]):
-        fails.append(dict(why="the dialog facts are not Account, Resets used, [Next to expire,] Limits cleared", labels=labels))
-    expiry = next((f["value"] for f in facts if f and f["label"] == "Next to expire"), None)
+    if labels not in (["Account", "Resets to use", "Limits to reset"], ["Account", "Resets to use", "Expires", "Limits to reset"]):
+        fails.append(dict(why="the dialog facts are not Account, Resets to use, [Expires,] Limits to reset", labels=labels))
+    expiry = next((f["value"] for f in facts if f and f["label"] == "Expires"), None)
     if expiry is not None and not re.search(r"\d{1,2}:\d{2}\s*[AP]M\s*UTC", expiry.replace("\u00a0", " ")):
-        fails.append(dict(why="Next to expire is not a date and time", value=expiry))
+        fails.append(dict(why="Expires is not a date and time", value=expiry))
     for fact in facts:
         if not fact["above"] or not fact["aligned"]:
             fails.append(dict(why="a dialog fact's label is not above its value", label=fact["label"]))
     by = {f["label"]: f["value"] for f in facts}
     if "•••" not in by.get("Account", "") or "@" not in by.get("Account", ""):
         fails.append(dict(why="Account does not show the masked name", value=by.get("Account")))
-    if not re.fullmatch(r"1( of \d+ held)?", by.get("Resets used", "")):
-        fails.append(dict(why='Resets used is not "1 of N held" or "1"', value=by.get("Resets used")))
-    if "5-hour limit" not in by.get("Limits cleared", "") or "Weekly limit" not in by.get("Limits cleared", ""):
-        fails.append(dict(why="Limits cleared does not name the account's windows", value=by.get("Limits cleared")))
+    if not re.fullmatch(r"1( of \d+ held)?", by.get("Resets to use", "")):
+        fails.append(dict(why='Resets to use is not "1 of N held" or "1"', value=by.get("Resets to use")))
+    if "5-hour limit" not in by.get("Limits to reset", "") or "Weekly limit" not in by.get("Limits to reset", ""):
+        fails.append(dict(why="Limits to reset does not name the account's windows", value=by.get("Limits to reset")))
     if "will use 1 manual reset" in reading["text"]:
         fails.append(dict(why="the packed confirmation sentence is still shown"))
     warn = reading["warn"]
@@ -3044,7 +3125,8 @@ async def check_banner_layout(page):
       const button = banner.querySelector('button');
       if (!button) return [{why: 'banner has no Try again button'}];
       const b = banner.getBoundingClientRect(), k = button.getBoundingClientRect(), p = page.getBoundingClientRect(), s = getComputedStyle(banner), fails = [];
-      if (b.width > 640.5) fails.push({why: 'banner wider than 640px', width: b.width});
+      if (banner.hasAttribute('data-alone') && b.width > 640.5) fails.push({why: 'standalone card wider than 640px', width: b.width});
+      if (!banner.hasAttribute('data-alone') && Math.abs(b.right - p.right) > 2) fails.push({why: 'in-page banner does not align to card right edge', right: b.right, content: p.right});
       if (Math.abs(b.left - p.left) > 1) fails.push({why: 'banner is not left-aligned with the content', left: b.left, content: p.left});
       const below = b.bottom - k.bottom - parseFloat(s.borderBottomWidth), top = parseFloat(s.paddingTop);
       if (below < top - 0.5) fails.push({why: 'Try again has less room below than the banner pads above', below, top});
@@ -3289,7 +3371,8 @@ W_TRACK_JS = "([isOpen, minTrack]) => {" + C1_PRELUDE + r"""
         const bar = li.querySelector(':scope > [class*="__limitBar___"]');
         if (!bar || !shown(bar)) continue;
         const b = r(bar), id = li.dataset.limitId, at = {who, row: label, limit: id};
-        (columns[id] ||= []).push({...at, left: b.left, right: b.right});
+        const isEmpty = bar.hasAttribute('data-empty');
+        (columns[id] ||= []).push({...at, left: b.left, right: b.right, empty: isEmpty});
         tracks++;
         lastRight = Math.max(lastRight, b.right);
         const fill = bar.querySelector(':scope > span'), strong = li.querySelector(':scope > strong'), text = strong && textNodeLike(strong);
@@ -3299,20 +3382,23 @@ W_TRACK_JS = "([isOpen, minTrack]) => {" + C1_PRELUDE + r"""
           // The value text starts at one x in a column, whatever the Low mark beside it.
           const node = [...strong.querySelectorAll('*')].find(e => e.children.length === 0 && pct.test(e.textContent)) || strong, range = document.createRange();
           range.selectNodeContents(node);
-          columns[id][columns[id].length - 1].valueLeft = range.getBoundingClientRect().left;
+          // G10: values are right-aligned after the Low slot, so a column's values end at one x.
+          columns[id][columns[id].length - 1].valueLeft = range.getBoundingClientRect().right;
         } else if (fill || text) fails.push({...at, why: 'a bar and its value text do not pair up'});
-        if (b.width < minTrack) fails.push({...at, why: `the bar track is only ${b.width.toFixed(0)}px wide (at least ${minTrack}px here)`});
+        if (!isEmpty && b.width < minTrack) fails.push({...at, why: `the bar track is only ${b.width.toFixed(0)}px wide (at least ${minTrack}px here)`});
       }
-      // A table with fewer limits still spreads them over the row: its last column ends near the row's right edge.
+      // Every provider table fills the full row width (two-limit and three-limit tables alike).
       const balance = summary.querySelector(':scope > strong');
       if (balance && shown(balance)) lastRight = Math.max(lastRight, r(balance).right);
-      if (lastRight && contentRight - lastRight > 24) fails.push({who, row: label, why: `the last column ends ${(contentRight - lastRight).toFixed(0)}px short of the row's right edge`});
+      if (lastRight && contentRight - lastRight > 80) fails.push({who, row: label, why: `the last column ends ${(contentRight - lastRight).toFixed(0)}px short of the row's right edge`});
     }
     for (const [id, cells] of Object.entries(columns)) {
-      const spread = key => Math.max(...cells.map(c => c[key])) - Math.min(...cells.map(c => c[key]));
-      if (spread('left') > 1 || spread('right') > 1) fails.push({who, limit: id, why: 'bar tracks do not share left and right edges', lefts: [...new Set(cells.map(c => +c.left.toFixed(1)))], rights: [...new Set(cells.map(c => +c.right.toFixed(1)))]});
+      const filledCells = cells.filter(c => !c.empty);
+      const spread = (arr, key) => Math.max(...arr.map(c => c[key])) - Math.min(...arr.map(c => c[key]));
+      if (filledCells.length > 1 && (spread(filledCells, 'left') > 1 || spread(filledCells, 'right') > 1)) fails.push({who, limit: id, why: 'bar tracks do not share left and right edges', lefts: [...new Set(filledCells.map(c => +c.left.toFixed(1)))], rights: [...new Set(filledCells.map(c => +c.right.toFixed(1)))]});
+      if (cells.length > 1 && spread(cells, 'right') > 1) fails.push({who, limit: id, why: 'bar tracks do not share a right edge', rights: [...new Set(cells.map(c => +c.right.toFixed(1)))]});
       const values = cells.filter(c => c.valueLeft !== undefined);
-      if (values.length > 1 && Math.max(...values.map(c => c.valueLeft)) - Math.min(...values.map(c => c.valueLeft)) > 1) fails.push({who, limit: id, why: 'value text does not start at one x', lefts: [...new Set(values.map(c => +c.valueLeft.toFixed(1)))]});
+      if (values.length > 1 && Math.max(...values.map(c => c.valueLeft)) - Math.min(...values.map(c => c.valueLeft)) > 1) fails.push({who, limit: id, why: 'value text does not end at one x', rights: [...new Set(values.map(c => +c.valueLeft.toFixed(1)))]});
     }
   }
   if (!tracks) fails.push({why: 'no visible limit bar track to measure'});
@@ -3597,7 +3683,7 @@ W_HEADLINE_JS = "() => {" + C1_PRELUDE + r"""
     probe.remove();
     const context = headline.querySelector(':scope > [class*="__headlineContext___"]'), sr = (word || strong).getBoundingClientRect();
     out.push({index, word: word ? word.textContent.trim() : null, baseline, weight: parseInt(getComputedStyle(word || strong).fontWeight, 10),
-      beside: !context || (context.getBoundingClientRect().left >= sr.right - 1 && context.getBoundingClientRect().top < sr.bottom)});
+      above: !context || (context.getBoundingClientRect().bottom <= sr.top + 2 && Math.abs(context.getBoundingClientRect().left - sr.left) <= 2)});
   }
   return out;
 }"""
@@ -3605,7 +3691,7 @@ W_HEADLINE_JS = "() => {" + C1_PRELUDE + r"""
 
 async def check_headline_baseline(browser, url, page, name, width):
     """W4: a headline that shows a word ("Withheld", "Not summed") has the big number's weight (600 or more), keeps its
-    context label beside it, and sits on the baseline the number has in the same card on a ready page (2px)."""
+    context label above it (matching all views), and sits on the baseline the number has in the same card on a ready page (2px)."""
     if name not in W_HEADLINE_CASES:
         return []
     context, ready = await open_fixture_page(browser, url, "ready", width, "en", None)
@@ -3627,8 +3713,8 @@ async def check_headline_baseline(browser, url, page, name, width):
             out.append(dict(why="the word's baseline differs from the number's on a ready page", word=item["word"], baseline=round(item["baseline"], 1), ready=round(base["baseline"], 1)))
         if item["weight"] < 600:
             out.append(dict(why="the word is lighter than the number", word=item["word"], weight=item["weight"]))
-        if not item["beside"] or not base["beside"]:
-            out.append(dict(why="the context label is not beside the word", word=item["word"]))
+        if not item["above"] or not base["above"]:
+            out.append(dict(why="the context label is not above the word", word=item["word"]))
     if not words:
         out.append(dict(why="no Withheld or Not summed headline to measure"))
     return out
@@ -3640,7 +3726,7 @@ E2_KEYS = ("sortLabelFailures", "chartFooterFailures", "notSummedNoteFailures", 
 E2_SORT_CASES = ("many", "many-narrow", "many-search-narrow")
 E2_FOOTER_CASES = ("partial", "stale", "partial-narrow", "stale-narrow")
 E2_NOTE_CASES = ("stacked-unavailable",)
-E2_NOTE_EN = "Sources for the same provider may share accounts, so they aren't added up. Choose Provider lines to see each one."
+E2_NOTE_EN = "Sources for the same provider may share accounts, so they aren't added up. Each source is shown on its own line."
 
 
 async def check_sort_label(page, name, state):
@@ -3700,7 +3786,7 @@ async def check_chart_footer(page, name, state):
 
 async def check_not_summed_note(page, name, state):
     """H2-E4: the combined card's "Not summed" note reads the settled sentence (sentence one: sources may share accounts, so
-    they aren't added up; sentence two: choose Provider lines), and Provider lines is a real control on the page."""
+    they aren't added up; sentence two: each source has its own line), and Provider lines is a real control on the page."""
     if name not in E2_NOTE_CASES:
         return []
     notes = await page.locator('[class*="__stateNote___"]').all_inner_texts()
@@ -3756,17 +3842,17 @@ async def check_stale_line(page, name, state, width):
 
 # G2 checks (round h2, job G): the card header's Accounts jump and the row's "Manual resets" chip. Each has its own JSON
 # key, registered in G2_KEYS for the summary and the exit gate. A check that finds nothing to measure fails.
-G2_KEYS = ("accountsJumpFailures", "resetChipFitFailures")
+G2_KEYS = ("accountsJumpFailures", "resetChipFitFailures", "rowGeometryFailures")
 G2_JUMP_CASES = {"many": 1440, "many-narrow": 390}
 G2_CHIP_CASES = {"laptop": ("en", *R_LANGS, "ko", "zh-CN", "zh-TW"), "many": ("en", *R_LANGS), "narrow": ("en",)}
 # The exact chip strings, written out here rather than read from the locales: (plain, usable).
-G2_CHIP_TEXT = {
-    "en": ("Manual resets {n}", "Manual resets {n} · {u} usable"),
-    "ko": ("수동 초기화 {n}", "수동 초기화 {n} · {u}개 사용 가능"),
-    "ru": ("Ручные сбросы: {n}", "Ручные сбросы: {n} · доступно {u}"),
-    "vi": ("Đặt lại thủ công {n}", "Đặt lại thủ công {n} · {u} dùng được"),
-    "zh-CN": ("手动重置 {n}", "手动重置 {n} · {u} 个可用"),
-    "zh-TW": ("手動重設 {n}", "手動重設 {n} · {u} 個可用"),
+G2_CHIP_TEXT = {  # G10: "label · usable" over "held" (no kinds in these fixtures), lines joined by " / "
+    "en": ("Manual resets · {u} usable / {n} held",) * 2,
+    "ko": ("수동 초기화 · {u}개 사용 가능 / {n}개 보유",) * 2,
+    "ru": ("Ручные сбросы · доступно {u} / в запасе {n}",) * 2,
+    "vi": ("Lượt đặt lại thủ công · {u} dùng được / {n} đang giữ",) * 2,
+    "zh-CN": ("手动重置 · {u} 个可用 / 持有 {n} 个",) * 2,
+    "zh-TW": ("手動重設 · {u} 個可用 / 持有 {n} 個",) * 2,
 }
 G2_JUMP_JS = """(i) => {
   const card = document.querySelectorAll('article')[i], section = card.querySelector('section[class*="__accounts___"]');
@@ -3868,7 +3954,7 @@ G2_CHIP_JS = """() => {
       ...summary.querySelectorAll(':scope > ul > li')].filter(e => e && e !== chip && !e.contains(chip) && e.checkVisibility({checkVisibilityCSS: true}));
     const hits = others.filter(e => { const b = r(e); return b.width > 0 && b.height > 0 && Math.min(c.right, b.right) - Math.max(c.left, b.left) > 1 && Math.min(c.bottom, b.bottom) - Math.max(c.top, b.top) > 1; })
       .map(e => (e.textContent || e.className).trim().slice(0, 24));
-    out.push({text: chip.textContent.trim(), usable: chip.hasAttribute('data-usable'), clipped: chip.scrollWidth > chip.clientWidth + 1, cut, hits,
+    out.push({text: [...chip.children].map(e => e.textContent.trim()).join(' / '), usable: chip.hasAttribute('data-usable'), clipped: chip.scrollWidth > chip.clientWidth + 1, cut, hits,
       chipH: c.height, outside: c.left < s.left - 0.5 || c.right > s.right - pad + 0.5 || c.right > innerWidth,
       nameH: r(nameCell).height, lh: parseFloat(getComputedStyle(text).lineHeight) || 21});
   }
@@ -3876,7 +3962,64 @@ G2_CHIP_JS = """() => {
 }"""
 
 
+# G9: wide tables show resets in their own Manual resets cell (usable over held); phones keep the chip.
+G2_CELL_TEXT = {  # G10: usable over held in every row, "0 usable" included
+    "en": ("{u} usable / {n} held",) * 2,
+    "ko": ("{u}개 사용 가능 / {n}개 보유",) * 2,
+    "ru": ("доступно {u} / в запасе {n}",) * 2,
+    "vi": ("{u} dùng được / {n} đang giữ",) * 2,
+    "zh-CN": ("{u} 个可用 / 持有 {n} 个",) * 2,
+    "zh-TW": ("{u} 個可用 / 持有 {n} 個",) * 2,
+}
+G2_CELL_JS = """() => {
+  const out = [], r = e => e.getBoundingClientRect();
+  for (const cell of document.querySelectorAll('article details:not([open]) [class*="__resetCell___"]')) {
+    if (!cell.checkVisibility({checkVisibilityCSS: true}) || cell.querySelector('[data-quiet]')) continue;
+    const summary = cell.parentElement, c = r(cell), next = [...summary.querySelectorAll(':scope > ul > li')].filter(e => e.checkVisibility({checkVisibilityCSS: true}))[0];
+    const nameCell = summary.querySelector('[class*="__accountName___"]'), text = nameCell.querySelector('[class*="__accountText___"]');
+    let right = -Infinity; const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) { if (n.parentElement.closest('[aria-hidden="true"]') || !n.parentElement.checkVisibility({checkVisibilityCSS: true})) continue;
+      const g = document.createRange(); g.selectNodeContents(n); for (const b of g.getClientRects()) if (b.width > 0) right = Math.max(right, b.right); }
+    // The cell's own screen-reader label (the column header is hidden from assistive technology) and the held line's
+    // hidden measuring copy are not part of its text.
+    const hidden = e => /__visuallyHidden___/.test(e.className);
+    out.push({text: [...cell.children].filter(e => !hidden(e) && e.getAttribute('aria-hidden') !== 'true').map(e => e.textContent.trim()).join(' / '),
+      label: [...cell.children].filter(hidden).map(e => e.textContent.trim()).join(''), usable: !!cell.querySelector('[data-usable]'),
+      clipped: cell.scrollWidth > cell.clientWidth + 1, crosses: next ? right > r(next).left + 0.5 : false,
+      cellH: c.height, nameH: r(nameCell).height, lh: parseFloat(getComputedStyle(text).lineHeight) || 21});
+  }
+  return out;
+}"""
+
+
+async def g2_cell_pass(page, lng, out):
+    cells = await page.evaluate(G2_CELL_JS)
+    if not cells:
+        out.append(dict(lng=lng, why="no closed row with a Manual resets cell to measure"))
+        return
+    plain, usable = (re.compile("^" + re.escape(t).replace(r"\{n\}", r"\d+").replace(r"\{u\}", r"\d+") + "$") for t in G2_CELL_TEXT[lng])
+    for c in cells:
+        where = dict(lng=lng, cell=c["text"])
+        if not (usable if c["usable"] else plain).match(c["text"]):
+            out.append(dict(where, why="cell text is not the usable / held wording"))
+        if not c["label"]:
+            out.append(dict(where, why="cell has no screen-reader label"))
+        if c["clipped"]:
+            out.append(dict(where, why="cell is clipped"))
+        if c["crosses"]:
+            out.append(dict(where, why="cell runs into the next column"))
+        if c["cellH"] > 2 * c["lh"] + 4:
+            out.append(dict(where, why=f"cell is {c['cellH']:.0f}px tall, over two lines"))
+        if c["nameH"] > 2 * c["lh"] + 4:
+            out.append(dict(where, why=f"name cell is {c['nameH']:.0f}px tall, over two lines (name and plan)"))
+    if not any(c["usable"] for c in cells) or all(c["usable"] for c in cells):
+        out.append(dict(lng=lng, why="needs both a usable and a held-only cell to compare"))
+
+
 async def g2_chip_pass(page, lng, wide, out):
+    if wide:
+        await g2_cell_pass(page, lng, out)
+        return
     chips = await page.evaluate(G2_CHIP_JS)
     if not chips:
         out.append(dict(lng=lng, why="no closed row with a reset chip to measure"))
@@ -3892,7 +4035,8 @@ async def g2_chip_pass(page, lng, wide, out):
             out.append(dict(where, why="chip leaves its row"))
         if c["hits"]:
             out.append(dict(where, why="chip overlaps another cell", hits=c["hits"]))
-        if c["chipH"] > 26:
+        # G10: the chip is two lines by design (usable, then held); a third line means a part wrapped.
+        if c["chipH"] > 46:
             out.append(dict(where, why=f"chip wraps inside itself ({c['chipH']:.0f}px tall)"))
         # From 901px the name cell holds the name and, wrapped under it, the chip: never a third line.
         if wide and c["nameH"] > 2 * c["lh"] + 4:
@@ -3921,6 +4065,303 @@ async def check_reset_chip_fit(page, context, url, route_api, name, width):
         finally:
             await fresh.close()
     return out
+
+
+G9_ROW_JS = r"""(wide) => {
+  const out = [], r = e => e.getBoundingClientRect(), shown = e => e && e.checkVisibility({checkVisibilityCSS: true}) && r(e).width > 0;
+  const painted = el => { let left = Infinity, right = -Infinity; const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) { if (!n.textContent.trim() || !shown(n.parentElement) || n.parentElement.closest('[class*="__srOnly___"], [class*="__visuallyHidden___"]')) continue;
+      const pb = r(n.parentElement); if (pb.width <= 1 && pb.height <= 1) continue; // visually hidden (1px, clipped)
+      const g = document.createRange(); g.selectNodeContents(n); for (const b of g.getClientRects()) if (b.width > 0) { left = Math.min(left, b.left); right = Math.max(right, b.right); } }
+    return {left, right}; };
+  for (const card of document.querySelectorAll('article')) {
+    const h2 = card.querySelector('h2')?.textContent?.trim();
+    const rows = [...card.querySelectorAll('details[class*="__account___"]:not([open])')].filter(shown);
+    if (!rows.length) continue;
+    // The table form is on only while its column header shows (a narrow card stacks its rows from 901px too).
+    if (wide && shown(card.querySelector('[class*="__accountHead___"]'))) {
+      // Rows without a status line (stale, error) are one height; every cell's painted text stays in its column.
+      const plain = rows.filter(d => !shown(d.querySelector(':scope > summary > [class*="__accountStatus___"]')) || !d.querySelector(':scope > summary > [class*="__accountStatus___"]').textContent.trim());
+      const hs = plain.map(d => Math.round(r(d.querySelector('summary')).height));
+      if (hs.length > 1 && Math.max(...hs) - Math.min(...hs) > 1) out.push({card: h2, why: 'closed rows differ in height', heights: [...new Set(hs)]});
+      for (const d of rows) {
+        const s = d.querySelector('summary'), cells = [s.querySelector('[class*="__accountName___"]'), s.querySelector('[class*="__resetCell___"]'), ...s.querySelectorAll(':scope > ul > li')].filter(shown)
+          .sort((x, y) => r(x).left - r(y).left);
+        const who = s.querySelector('[class*="__accountText___"]')?.textContent;
+        for (let i = 0; i + 1 < cells.length; i++) {
+          const p = painted(cells[i]), next = r(cells[i + 1]).left;
+          if (p.right > next + 0.5) out.push({card: h2, who, why: 'a cell runs into the next column', over: +(p.right - next).toFixed(1), cell: String(cells[i].className).slice(0, 30)});
+        }
+      }
+    } else if (!shown(card.querySelector('[class*="__accountHead___"]'))) {
+      // Stacked rows: every reset chip starts at the name's left edge, in every row.
+      const lefts = rows.map(d => { const chip = d.querySelector('[class*="__accountResetMarker___"]'), text = d.querySelector('[class*="__accountText___"]');
+        return shown(chip) ? {chip: Math.round(r(chip).left), name: Math.round(painted(text).left)} : null; }).filter(Boolean);
+      for (const l of lefts) if (Math.abs(l.chip - l.name) > 1) out.push({card: h2, why: 'a reset chip does not start at the name\'s left edge', chip: l.chip, name: l.name});
+    }
+  }
+  return out;
+}"""
+
+
+# The held line's longest case (an account holding every kind) in English and Russian, at the case's width.
+G9_MIXED_CASES = ("real", "real-1100")
+# Wide held lines on the mixed fixture's Claude card, by account: whether each names its kinds.
+G9_HELD_JS = r"""() => {
+  const card = [...document.querySelectorAll('article')].find(a => /__claude___/.test(a.className)), out = {};
+  for (const row of card ? card.querySelectorAll('details:not([open])') : []) {
+    const name = row.querySelector('[class*="__accountText___"]')?.textContent?.trim(), line = row.querySelector('[class*="__resetCell___"] > small');
+    if (name && line?.checkVisibility()) out[name] = line.querySelector('[data-kind]') ? 'named' : line.textContent.trim();
+  }
+  return out;
+}"""
+# What the four-kind account (ops…) and the 5-hour + full account (ada…) must show: the four kinds never fit; the
+# pair fits in English and Vietnamese (19 characters, under 120px) but not in Russian.
+G9_HELD_WANT = {"en": ("count", "named"), "vi": ("count", "named"), "ru": ("count", "count")}
+# A lone reset holder past the first page, holding every kind, in phone widths and a long language.
+G9_SUMMARY_CASES = ("real-narrow",)
+G9_SUMMARY_JS = r"""() => {
+  const out = [], facts = [...document.querySelectorAll('article [class*="__summaryFact___"]')].filter(f => f.querySelector('[class*="__resetKindTotals___"]'));
+  if (!facts.length) return [{why: 'no reset summary with kinds to measure'}];
+  for (const f of facts) {
+    const card = f.closest('article'), edge = card.getBoundingClientRect().right - parseFloat(getComputedStyle(card).paddingRight);
+    if (f.getBoundingClientRect().right > edge + 0.5) out.push({why: 'the reset summary runs past its card', over: +(f.getBoundingClientRect().right - edge).toFixed(1)});
+  }
+  if (document.documentElement.scrollWidth > innerWidth) out.push({why: 'the page scrolls sideways', scrollWidth: document.documentElement.scrollWidth});
+  return out;
+}"""
+
+
+async def check_row_geometry(page, width, browser=None, url=None, name=None):
+    """G9: wide tables hold closed rows of one height (unless a status line adds one) with no cell's text crossing into
+    the next column; stacked rows start every reset chip at the name's left edge. The `real` cases also check the
+    mixed-kind fixture on fresh pages in English and Russian (clock pinned, so its resets are held): rows stay one
+    height and some held lines name their kinds while the longest falls back to its count. `real-narrow` checks a
+    lone off-page holder's reset summary at 390 and 320px in both languages."""
+    out = await page.evaluate(G9_ROW_JS, width >= 901)
+    if browser and name in G9_MIXED_CASES:
+        for lng, (four, pair) in G9_HELD_WANT.items():
+            context, fresh = await open_fixture_page(browser, url, "real-mixed", width, lng, None, pinned=True)
+            try:
+                tag = f"real-mixed@{width}/{lng}"
+                out += [dict(page=tag, **f) for f in await fresh.evaluate(G9_ROW_JS, width >= 901)]
+                held = await fresh.evaluate(G9_HELD_JS)
+                got = [next((v for k, v in held.items() if k.startswith(p)), None) for p in ("ops", "ada")]
+                want = [w if w == "named" else "count" for w in (four, pair)]
+                if [g if g in (None, "named") else "count" for g in got] != want:
+                    out.append(dict(page=tag, why="held lines (four kinds, 5-hour + full) are not named/counted as measured", want=want, got=got))
+            finally:
+                await context.close()
+    if browser and name in G9_SUMMARY_CASES:
+        for w in (390, 320):
+            for lng in ("en", "ru"):
+                context, fresh = await open_fixture_page(browser, url, "many-kinds", w, lng, None, pinned=True)
+                try:
+                    out += [dict(page=f"many-kinds@{w}/{lng}", **f) for f in await fresh.evaluate(G9_SUMMARY_JS)]
+                finally:
+                    await context.close()
+    return out
+
+
+# Universal class-based regression guards (Council D1-D4): run on every case across all 66 captures
+# without per-case allowlists, catching SVG text collisions, wide<->phone Low order drift, cross-card
+# table rail drift, runaway empty voids / FactPanel vertical stretch / 3-line caption wraps, and
+# stranded header loading status.
+UNIVERSAL_KEYS = (
+    "svgTextOverlapFailures",
+    "parityAndRailFailures",
+    "emptyRunAndStretchFailures",
+    "headerStatusProximityFailures",
+)
+
+UNIVERSAL_CHECKS_JS = "(width) => {" + C3_HELPERS + r"""
+  const r = e => e.getBoundingClientRect();
+  const paintedRight = el => {
+    let right = -Infinity;
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      const p = n.parentElement;
+      if (!p || !n.textContent.trim() || !shown(p) || p.closest('[class*="__srOnly___"], [class*="__statusGhost___"]')) continue;
+      const rng = document.createRange(); rng.selectNodeContents(n);
+      for (const b of rng.getClientRects()) if (b.width > 0 && b.height > 0) right = Math.max(right, b.right);
+    }
+    for (const svg of el.querySelectorAll('svg')) {
+      if (shown(svg) && !svg.closest('[class*="__statusGhost___"]')) right = Math.max(right, r(svg).right);
+    }
+    return right;
+  };
+  const d1 = [], d2 = [], d3 = [], d4 = [];
+
+  // D1: Universal SVG <text> overlap (<1px clearance) and clip (>1px outside parent SVG) across every chart.
+  for (const svg of document.querySelectorAll('svg[role="img"]')) {
+    if (!shown(svg)) continue;
+    const sb = r(svg);
+    const card = svg.closest('article, section')?.querySelector('h2')?.textContent?.trim() || 'chart';
+    const texts = [...svg.querySelectorAll('text')].filter(t => {
+      if (!shown(t) || !t.textContent.trim()) return false;
+      const b = r(t);
+      return b.width > 0.5 && b.height > 0.5;
+    });
+    for (let i = 0; i < texts.length; i++) {
+      const a = texts[i], ab = r(a), at = a.textContent.trim().slice(0, 32);
+      if (ab.left < sb.left - 1.5 || ab.right > sb.right + 1.5 || ab.top < sb.top - 1.5 || ab.bottom > sb.bottom + 1.5) {
+        d1.push({card, text: at, why: 'SVG text clips outside chart frame'});
+      }
+      for (let j = i + 1; j < texts.length; j++) {
+        const b = texts[j], bb = r(b), bt = b.textContent.trim().slice(0, 32);
+        const dx = Math.min(ab.right, bb.right) - Math.max(ab.left, bb.left);
+        const dy = Math.min(ab.bottom, bb.bottom) - Math.max(ab.top, bb.top);
+        if (dx > -1 && dy > -1) {
+          d1.push({card, a: at, b: bt, dx: +dx.toFixed(1), dy: +dy.toFixed(1), why: 'SVG chart labels touch or overlap'});
+        }
+      }
+    }
+  }
+
+  // D2a: Universal numeric rail alignment for Low markers: Low precedes % in every mode (G10), and in
+  // stacked/phone rows every % in a row's limits list shares one flush-right vertical rail (<= 1.5px).
+  for (const row of document.querySelectorAll('article details')) {
+    if (!shown(row)) continue;
+    const head = row.closest('article')?.querySelector('[class*="__accountHead___"]');
+    const isTable = !!(head && shown(head));
+    const pctRights = [];
+    for (const el of row.querySelectorAll(':scope > summary > strong[data-low="true"], :scope > summary > ul[aria-label="Limits"] > li > strong')) {
+      if (!shown(el)) continue;
+      const pctNode = textNodeWith(el, /%/);
+      if (!pctNode) continue;
+      const rng = document.createRange(); rng.selectNodeContents(pctNode);
+      const pb = rng.getBoundingClientRect();
+      if (!isTable && el.closest('ul[aria-label="Limits"]')) pctRights.push(pb.right);
+      const word = el.querySelector('[class*="__lowWord___"]');
+      if (!word || !shown(word)) continue;
+      const wb = r(word);
+      // G10: wide tables read like the stacked rows, Low right before its percentage.
+      if (Math.abs(pb.top - wb.top) <= 6 && wb.right > pb.left + 1) {
+        d2.push({why: (isTable ? 'wide table' : 'stacked row') + ': Low appears after its percentage', pctLeft: +pb.left.toFixed(1), lowRight: +wb.right.toFixed(1)});
+      }
+    }
+    if (!isTable && pctRights.length > 1) {
+      const spread = Math.max(...pctRights) - Math.min(...pctRights);
+      if (spread > 1.5) {
+        d2.push({why: `stacked row percentages do not share one right rail (${spread.toFixed(1)}px spread)`});
+      }
+    }
+  }
+
+  // D2b: Universal cross-card table column rail alignment whenever >=2 provider cards are in table mode
+  // (excluding extreme 3-slotted stress cards where a 3-limit card must yield Account width to preserve
+  // the 100px/90px bar-length floor).
+  const tableCards = [...document.querySelectorAll('article')].map(art => {
+    const head = art.querySelector('[class*="__accountHead___"]');
+    if (!head || !shown(head)) return null;
+    const grid = art.querySelector('[class*="__accountGrid___"]');
+    const spans = [...head.children].filter(shown);
+    const barWidths = {};
+    for (const li of art.querySelectorAll('details > summary > ul[aria-label="Limits"] > li')) {
+      const bar = li.querySelector(':scope > [class*="__limitBar___"]');
+      if (bar && shown(bar) && li.dataset.limitId && !(li.dataset.limitId in barWidths)) {
+        barWidths[li.dataset.limitId] = r(bar).width;
+      }
+    }
+    return {
+      who: art.querySelector('h2')?.textContent?.trim() || '?',
+      aligned: !!grid?.hasAttribute('data-align-sibling'),
+      slots: parseInt(grid?.getAttribute('data-slots') || '0', 10),
+      cols: spans.map(s => ({text: s.textContent.trim().slice(0, 24), left: r(s).left})),
+      barWidths,
+    };
+  }).filter(Boolean);
+  if (tableCards.length >= 2) {
+    const ref = tableCards[0];
+    for (const cur of tableCards.slice(1)) {
+      if (ref.slots >= 3 || cur.slots >= 3) continue;
+      // Chevron, Account, Plan, and 5-hour remaining left rails align across sibling provider tables.
+      const checkN = Math.min(4, ref.cols.length, cur.cols.length);
+      for (let idx = 0; idx < checkN; idx++) {
+        const diff = Math.abs(ref.cols[idx].left - cur.cols[idx].left);
+        if (diff > 2) {
+          d2.push({why: `cross-card column rail drift (${diff.toFixed(1)}px)`, col: idx, refCard: ref.who, curCard: cur.who, refLeft: +ref.cols[idx].left.toFixed(1), curLeft: +cur.cols[idx].left.toFixed(1)});
+        }
+      }
+    }
+  }
+
+  // D3a: Value-to-bar empty-run bound in wide table limit cells (Low sits after the bar, so every
+  // numeric column maintains one tight <=24px value-to-bar gap).
+  for (const li of document.querySelectorAll('article details > summary > ul[aria-label="Limits"] > li')) {
+    const head = li.closest('article')?.querySelector('[class*="__accountHead___"]');
+    if (!head || !shown(head) || !shown(li)) continue;
+    const bar = li.querySelector(':scope > [class*="__limitBar___"]');
+    const val = li.querySelector('[class*="__limitValue___"]');
+    if (!bar || !val || !shown(bar) || !shown(val)) continue;
+    const pctR = paintedRight(val), barL = r(bar).left;
+    if (pctR > -Infinity && barL - pctR > 24) {
+      d3.push({why: `value-to-bar gap ${(barL - pctR).toFixed(0)}px exceeds 24px`, text: val.textContent.trim()});
+    }
+  }
+
+  // D3b & D3e: Hero-to-Now empty-run bound when sharing a row (hard ceiling 180px), and at >=1440px
+  // provider-card Now/Forecast facts must stay inline beside the hero instead of wrapping below it.
+  for (const art of document.querySelectorAll('article')) {
+    const headline = art.querySelector('[class*="__headline___"]'), stats = art.querySelector('[class*="__statsBlock___"]');
+    if (!headline || !stats || !shown(headline) || !shown(stats)) continue;
+    const hb = r(headline), sb = r(stats);
+    const card = art.querySelector('h2')?.textContent?.trim();
+    if (Math.abs(hb.top - sb.top) < 40 && sb.left > hb.left) {
+      const hr = paintedRight(headline);
+      if (hr > -Infinity && sb.left - hr > 180) {
+        d3.push({card, why: `hero-to-Now empty gap ${(sb.left - hr).toFixed(0)}px exceeds 180px`});
+      }
+    } else if (width >= 1440 && sb.top >= hb.bottom - 4) {
+      d3.push({card, why: `Now/Forecast wrapped below hero at ${width}px (headline bottom ${hb.bottom.toFixed(0)}, stats top ${sb.top.toFixed(0)})`});
+    }
+  }
+
+  // D3c: FactPanel Usage->Billing vertical stretch bound across all open drawers.
+  for (const facts of document.querySelectorAll('article details[open] [class*="__accountFacts___"]')) {
+    if (!shown(facts)) continue;
+    const secs = [...facts.querySelectorAll('section')].filter(s => shown(s) && s.dataset.tone !== 'accent');
+    if (secs.length >= 2) {
+      const a = r(secs[0]), b = r(secs[1]);
+      if (Math.abs(a.left - b.left) < 4 && b.top - a.bottom > 48) {
+        d3.push({why: `FactPanel vertical section gap ${(b.top - a.bottom).toFixed(0)}px exceeds 48px`});
+      }
+    }
+  }
+
+  // D3d: Micro-copy wrap cap (no 3-line breaks on table subtitles or phone counts note).
+  for (const note of document.querySelectorAll('article [class*="__accountHead___"] small, article [class*="__phoneCountsNote___"]')) {
+    if (!shown(note)) continue;
+    const lh = parseFloat(getComputedStyle(note).lineHeight) || 18;
+    const h = r(note).height;
+    if (h > lh * 2.2) {
+      d3.push({why: `micro-copy wrapped past 2 lines (${h.toFixed(0)}px vs ${lh.toFixed(0)}px lh)`, text: note.textContent.trim().slice(0, 48)});
+    }
+  }
+
+  // D4: Header live-status proximity on desktop loading states.
+  if (width >= 641) {
+    const status = document.querySelector('[class*="__loadingHeaderStatus___"]');
+    const titleRow = document.querySelector('[class*="__titleRow___"]');
+    if (status && titleRow && shown(status) && shown(titleRow)) {
+      const sb = r(status), tb = r(titleRow);
+      if (Math.abs(sb.top - tb.top) < 40 && sb.left - tb.right > 48) {
+        d4.push({why: `loading status sits ${(sb.left - tb.right).toFixed(0)}px away from title (max 48px)`});
+      }
+    }
+  }
+
+  return {
+    svgTextOverlapFailures: d1,
+    parityAndRailFailures: d2,
+    emptyRunAndStretchFailures: d3,
+    headerStatusProximityFailures: d4,
+  };
+}"""
+
+
+async def check_universal_guards(page, width):
+    return await page.evaluate(UNIVERSAL_CHECKS_JS, width)
 
 
 async def main():
@@ -3956,6 +4397,10 @@ async def main():
         ("expanded-1100", "expanded", 1100, 900),
         ("expanded-1280", "expanded", 1280, 900),
         ("expanded-1440", "expanded", 1440, 1000),
+        ("real", "real", 1440, 1000),
+        ("real-1100", "real", 1100, 900),
+        ("real-narrow", "real", 390, 844),
+        ("real-open", "real-open", 1440, 1000),
         ("drain", "drain", 1440, 1000),
         ("deep-link", "deep-link", 1440, 1000),
         ("burn-narrow", "burn", 390, 844),
@@ -4060,6 +4505,12 @@ async def main():
                         # One fixed version, so the five-second inventory poll never refetches mid-capture.
                         await route.fulfill(json={"version": "fixture", "syncedAtMs": NOW, "sources": []})
                         return
+                    if "/prox/accounts" in url:
+                        await route.fulfill(json={"accounts": []})
+                        return
+                    if "/prox/resets/events" in url:
+                        await route.fulfill(json={"events": []})
+                        return
                     if "/prox/pools" in url:
                         if state == "loading":
                             await asyncio.sleep(20)
@@ -4141,7 +4592,7 @@ async def main():
                 dialog_facts_failures = []
                 if name.startswith("reset-confirm"):
                     codex = page.locator('article[class*="__codex___"]')
-                    row = codex.locator('details[class*="__account___"]').filter(has_text="Manual resets 2").first
+                    row = codex.locator('details[class*="__account___"]').filter(has_text="2 usable").first
                     await row.locator("summary").click()
                     use_reset = row.get_by_role("button", name="Use reset", exact=False)
                     await use_reset.wait_for()
@@ -4214,7 +4665,7 @@ async def main():
                         errors.append(f"show-affected: rows={rows} focus={focused}")
                 if state == "many-search":
                     await page.get_by_role("searchbox", name="Search accounts").first.fill("gra")
-                if state == "expanded":
+                if state in ("expanded", "real-open"):
                     # Each click renames its button to "Collapse all", so always take the first still closed.
                     for _ in range(await page.get_by_role("button", name="Expand all").count()):
                         await page.get_by_role("button", name="Expand all").first.click()
@@ -4336,6 +4787,7 @@ async def main():
                 results[name]["headlineBaselineFailures"] = await check_headline_baseline(browser, args.url, page, name, width)
                 results[name]["planGapFailures"] = await check_plan_gap(browser, args.url, name)
                 results[name]["tableFitFailures"] = await check_table_fit(browser, args.url, page, name, width)
+                results[name].update(await check_universal_guards(page, width))
                 if args.capture_only:
                     accounts = page.locator('article section[class*="__accounts___"]').first
                     if await accounts.count():
@@ -4487,7 +4939,12 @@ async def main():
                         "before => document.querySelector('[class*=\"__countdown___\"]').textContent !== before",
                         arg=before,
                     )
-                    assert "Auto-refresh in" in await countdown.inner_text()
+                    # A long case can reach the 60s mark here, when the countdown reads "Refreshing…" for
+                    # a moment; the countdown must come back to "Auto-refresh in".
+                    await page.wait_for_function(
+                        "() => document.querySelector('[class*=\"__countdown___\"]').textContent.includes('Auto-refresh in')",
+                        timeout=15000,
+                    )
                     assert await page.get_by_role("button", name="Refresh all", exact=True).count() == 0
                     assert await page.locator('.header-actions button').first.is_visible()
                     overlaps = await countdown.evaluate('''node => {
@@ -4556,6 +5013,7 @@ async def main():
                 results[name]["dataCollectionFactFailures"] = await check_data_collection_facts(page, name)
                 results[name]["accountsJumpFailures"] = await check_accounts_jump(browser, args.url, name)
                 results[name]["resetChipFitFailures"] = await check_reset_chip_fit(page, context, args.url, route_api, name, width)
+                results[name]["rowGeometryFailures"] = await check_row_geometry(page, width, browser, args.url, name)
                 if state == "ready":
                     # Phones fold Rate behind Options; opening it shows the select.
                     options = page.locator(OPTIONS_BUTTON)
@@ -4591,7 +5049,7 @@ async def main():
             errors=result["errors"],
         )
     for name, result in results.items():
-        summary[name].update({key: len(result.get(key, [])) for key in C1_KEYS + P1_KEYS + G_KEYS + H_KEYS + R_KEYS + A_KEYS + B_KEYS + D_KEYS + H1C_KEYS + T_KEYS + W_KEYS + B2_KEYS + D2_KEYS + E2_KEYS + C2_KEYS + A2_KEYS + G2_KEYS + X2_KEYS})
+        summary[name].update({key: len(result.get(key, [])) for key in C1_KEYS + P1_KEYS + G_KEYS + H_KEYS + R_KEYS + A_KEYS + B_KEYS + D_KEYS + H1C_KEYS + T_KEYS + W_KEYS + B2_KEYS + D2_KEYS + E2_KEYS + C2_KEYS + A2_KEYS + G2_KEYS + X2_KEYS + UNIVERSAL_KEYS})
     if args.compact_baseline:
         baseline = json.loads((ROOT / "docs/evidence/hillclimb" / args.compact_baseline / "measurements.json").read_text())
         for name, result in results.items():

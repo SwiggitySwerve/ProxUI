@@ -787,9 +787,9 @@ describe('stacked chart geometry', () => {
     expect(long).toContain('Lowest limit remaining first');
     // The sort pill carries a visible "Sort" prefix ahead of the select.
     expect(long).toMatch(/<label[^>]*><span[^>]*>Sort<\/span><select/);
-    // The low chip says what pressing it does and what its count counts ("Show N …").
+    // The low chip uses one stable noun phrase across off and on states ("Limit below 20% (N)").
     expect(long).toMatch(
-      /<button[^>]*aria-pressed="false"[^>]*>[\s\S]*?Show 1 with a limit below 20%/
+      /<button[^>]*aria-pressed="false"[^>]*>[\s\S]*?Limit below 20% \(1\)/
     );
     expect(long).toContain('data-large="true"');
     const short = render(3);
@@ -990,6 +990,66 @@ describe('pool presentation', () => {
     );
     expect(markup).not.toContain('Reset:');
     expect(markup).not.toContain('>+0<');
+  });
+
+  test('an upper reset label drops its leader where it would cross a lower label', () => {
+    const chart = (second: number) =>
+      renderToStaticMarkup(
+        createElement(PoolChart, {
+          pool: {
+            ...pool,
+            resets: [
+              { atMs: 800, gainPoints: 100 },
+              { atMs: second, gainPoints: 100 },
+            ],
+          },
+          dashboard,
+          mode: 'remaining',
+        })
+      );
+    // The leader runs from the upper lane (34px over the frame) down to the frame's top.
+    const leader = /<line x1="[\d.]+" x2="[\d.]+" y1="28" y2="56"><\/line>/;
+    // Two resets a few pixels apart: the first label rises, the second sits under its leader.
+    const close = chart(805);
+    expect(close.match(/>\+100<\/text>/g)).toHaveLength(2);
+    expect(close).toContain('y="22" text-anchor="middle">+100');
+    expect(close).toContain('y="46" text-anchor="middle">+100');
+    expect(close).not.toMatch(leader);
+    // Far enough apart that the lower label clears the leader, which then stays.
+    expect(chart(860)).toMatch(leader);
+  });
+
+  test('a wide reset cell names itself and measures its held line against the column', async () => {
+    await i18n.changeLanguage('en');
+    const day = 86_400_000;
+    const later = Date.now() + day;
+    const kinds = ['session', 'weekly', 'fable'] as const;
+    const holder = {
+      ...pool.accounts[0],
+      resets: {
+        available: 3,
+        usable: 2,
+        blocker: null,
+        kinds: [...kinds],
+        expiries: kinds.map((_, index) => later + index * day),
+        nextExpiryAtMs: later,
+        observedAtMs: 500,
+      },
+    };
+    const markup = renderToStaticMarkup(
+      createElement(PoolCard, {
+        pool: { ...pool, accounts: [holder] },
+        dashboard,
+        mode: 'remaining',
+        reveal: false,
+      })
+    );
+    // The column heading is hidden from screen readers, so the cell leads with its own label. The
+    // held line starts with the kinds; a hidden copy lets the browser swap in "3 held" when they
+    // don't fit the column (the capture checks that in English and Russian).
+    expect(markup).toMatch(
+      /<span>Manual resets <\/span><span data-usable="true">2 usable<\/span><small>(?:(?!<\/small>).)*1 5-hour(?:(?!<\/small>).)*<\/small><span aria-hidden="true">(?:(?!<\/span><\/span>).)*1 Fable/
+    );
   });
 
   test('uses server capacity and missing predictions without exposing hidden emails', async () => {
@@ -1353,7 +1413,8 @@ describe('pool presentation', () => {
       })
     );
     expect(markup).toMatch(
-      /<li data-limit-id="five-hour" data-missing="true"[^>]*><span>5-hour remaining<\/span><em>No 5-hour limit<\/em><\/li>/
+      // An aria-hidden spacer may follow the reason: wide tables use it to start the reason at the bars.
+      /<li data-limit-id="five-hour" data-missing="true"[^>]*><span>5-hour remaining<\/span><em>No 5-hour limit<\/em>(?:<strong aria-hidden="true">(?:(?!<\/li>).)*<\/strong>)?<\/li>/
     );
   });
   test('every forecast state gets one chip shape with its own icon, and Ready is neutral', async () => {

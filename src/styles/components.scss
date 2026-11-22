@@ -234,7 +234,7 @@ textarea {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, 0.68);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -364,6 +364,19 @@ textarea {
 .modal-pill {
   .btn {
     border-radius: $radius-full;
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid #666666;
+    color: var(--text-primary);
+
+    &:hover {
+      background: var(--bg-hover, var(--bg-tertiary));
+      border-color: var(--border-hover);
+    }
   }
   // The close button is a 44px target at every width and pointer; the icon keeps its size.
   .modal-close-floating {
@@ -405,6 +418,11 @@ textarea {
   justify-content: flex-end;
   gap: $spacing-sm;
   background: var(--bg-primary);
+
+  .btn {
+    font-size: 14px;
+    font-weight: 500;
+  }
 }
 
 @media (max-width: $breakpoint-mobile) {

@@ -34,7 +34,11 @@ import {
   writeViewState,
   type QuotaViewState,
 } from './model/viewState';
-import { formatPoolDate, formatPoolNumber, providerAccountCount } from './presentation';
+import {
+  formatPoolDate,
+  formatPoolNumber,
+  providerAccountCount,
+} from './presentation';
 import styles from './QuotaPoolPage.module.scss';
 
 /** Points per plan (server/quota/plans.ts), listed in About so each weight reads on its own line. */
@@ -168,13 +172,12 @@ export function QuotaPoolPage() {
     todayPressedRef.current = false;
     node.focus();
   }, []);
-  // The Options button spells out the current choices; Future joins wherever it applies (rate views
-  // hide it). The default reads as its own short name, "Same as now"; any other choice keeps the
-  // "Future:" prefix, since "Half" alone says nothing.
+  // The Options button spells out every current choice on one line at 390px ("Weekly · Remaining · 3h
+  // avg · Same as now"); a non-default Future is named with its prefix. Rate views omit Future.
   const optionsSummary = [
     t(`quota_pool.${view.window === 'weekly' ? 'weekly' : 'five_hour'}`),
     t(`quota_pool.${mode}`),
-    t('quota_pool.hours', { hours: view.lookback }),
+    t('quota_pool.options_avg', { hours: view.lookback }),
     ...(mode === 'remaining'
       ? [
           view.future === 1
@@ -217,25 +220,33 @@ export function QuotaPoolPage() {
               {t('quota_pool.show_emails')}
             </label>
           )}
-          {/* Manual refresh is the header's refresh button; this shows when the next automatic one runs. */}
-          {Boolean(data?.pools.length) && (
+          {/* Manual refresh is the header's refresh button; this shows when the next automatic one runs.
+              When a refresh fails, the retry countdown moves into the warning banner beside Try again. */}
+          {Boolean(data?.pools.length) && !state.refreshError && (
             <RefreshCountdown
               dueAtMs={state.nextCollectAtMs}
               refreshing={Boolean(refreshing)}
-              retrying={Boolean(state.refreshError)}
+              retrying={false}
             />
+          )}
+          {/* Loading status sits directly in the header utility row so it is the first readable
+              line on both phones and desktop without shifting the skeleton controls below. */}
+          {showSkeleton && (
+            <span className={styles.loadingHeaderStatus} role="status">
+              <span className={styles.loadingDot} />
+              {t('quota_pool.loading')}
+            </span>
           )}
           {/* Phones: Show emails and Auto-refresh, as their own row. */}
           {showSkeleton && (
-            <>
+            <span className={styles.loadingActionsSkeleton} aria-hidden="true" inert>
               <Skeleton
                 className={styles.loadingAction}
                 rounded={999}
                 data-skeleton-row="utility"
-                inert
               />
-              <Skeleton className={styles.loadingAction} rounded={999} inert />
-            </>
+              <Skeleton className={styles.loadingAction} rounded={999} />
+            </span>
           )}
         </div>
       </header>
@@ -269,7 +280,26 @@ export function QuotaPoolPage() {
             })}
           </div>
           <div className={styles.dateNavigation}>
-            <span>{range ? `${date(range.fromMs, true)} – ${date(range.toMs, true)}` : null}</span>
+            <span className={styles.dateRange}>
+              {range ? `${date(range.fromMs, true)} – ${date(range.toMs, true)}` : null}
+              {/* When already on the current range, pair "Current" with the date readout instead
+                  of trapping bare text between the two circular step buttons. */}
+              {query.offsetDays === 0 && (
+                <>
+                  <span className={styles.dateDot} aria-hidden="true">
+                    ·
+                  </span>
+                  <span
+                    className={styles.todayState}
+                    ref={focusTodayState}
+                    tabIndex={-1}
+                    title={t('quota_pool.today_current')}
+                  >
+                    {t('quota_pool.today_state')}
+                  </span>
+                </>
+              )}
+            </span>
             <button
               type="button"
               className={styles.dateStep}
@@ -279,18 +309,7 @@ export function QuotaPoolPage() {
             >
               <IconChevronLeft size={18} aria-hidden="true" />
             </button>
-            {/* When the range already ends today, Today would do nothing, so the slot says so
-                  instead of showing a dim button. Pressing Today moves focus to that label. */}
-            {query.offsetDays === 0 ? (
-              <span
-                className={styles.todayState}
-                ref={focusTodayState}
-                tabIndex={-1}
-                title={t('quota_pool.today_current')}
-              >
-                {t('quota_pool.today_state')}
-              </span>
-            ) : (
+            {query.offsetDays !== 0 && (
               <button
                 type="button"
                 className={styles.today}
@@ -430,14 +449,16 @@ export function QuotaPoolPage() {
           role="alert"
           data-alone={!data || undefined}
         >
-          {/* Red only when nothing loaded; over saved data the failure is a warning. */}
-          <IconAlertTriangle
-            size={20}
-            className={data ? styles.warningIcon : styles.errorIcon}
-            aria-hidden="true"
-          />
           <div>
-            <h2>{t(`quota_pool.${data ? 'refresh_failed_title' : 'load_failed_title'}`)}</h2>
+            <h2>
+              {/* Red only when nothing loaded; over saved data the failure is a warning. */}
+              <IconAlertTriangle
+                size={18}
+                className={data ? styles.warningIcon : styles.errorIcon}
+                aria-hidden="true"
+              />
+              {t(`quota_pool.${data ? 'refresh_failed_title' : 'load_failed_title'}`)}
+            </h2>
             {/* Say what went wrong in plain words before the saved-data line and the code. */}
             {state.refreshError && (
               <p>
@@ -449,9 +470,11 @@ export function QuotaPoolPage() {
               </p>
             )}
             <p>
-              {/* A failed refresh says how old the data still on screen is. */}
+              {/* A failed refresh says how old the data still on screen is, keeping date+time whole. */}
               {state.refreshError && data
-                ? t('quota_pool.refresh_error_dated', { date: date(data.nowMs) })
+                ? t('quota_pool.refresh_error_dated', {
+                    date: date(data.nowMs).replace(/ /g, '\u00a0'),
+                  })
                 : t(
                     `quota_pool.${state.refreshError ? 'refresh_error' : data ? 'load_error' : 'load_error_initial'}`
                   )}
@@ -464,12 +487,21 @@ export function QuotaPoolPage() {
                   })}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => void (state.refreshError ? state.refresh() : state.reload())}
-          >
-            {t('quota_pool.retry')}
-          </button>
+          <div className={styles.errorActions}>
+            <button
+              type="button"
+              onClick={() => void (state.refreshError ? state.refresh() : state.reload())}
+            >
+              {t('quota_pool.retry')}
+            </button>
+            {state.refreshError && Boolean(data?.pools.length) && (
+              <RefreshCountdown
+                dueAtMs={state.nextCollectAtMs}
+                refreshing={Boolean(refreshing)}
+                retrying
+              />
+            )}
+          </div>
         </div>
       )}
       {data?.issues.map((issue) => (
@@ -516,7 +548,7 @@ export function QuotaPoolPage() {
               <Skeleton
                 className={styles.loadingDate}
                 height={40}
-                rounded={10}
+                rounded={999}
                 data-skeleton-row="date"
               />
               <Skeleton
@@ -532,21 +564,13 @@ export function QuotaPoolPage() {
               {/* Phones: the graph toggle beside the heading, and the chart-view select on its own row. */}
               <Skeleton className={styles.loadingToggle} rounded={999} inert />
               <Skeleton className={styles.loadingSelect} rounded={999} inert />
-              <span className={styles.loadingStatus} role="status">
-                <span className={styles.loadingDot} />
-                {t('quota_pool.loading')}
-              </span>
             </div>
-            {/* The combined card has a headline and a view select, not the provider facts. */}
+            {/* The combined card has a label-above-value headline matching loaded cards. */}
             <div className={styles.loadingHero}>
               <span className={styles.loadingNumber}>
-                <Skeleton width={150} height={44} rounded={8} />
-                <span>
-                  <Skeleton width={150} height={12} rounded={4} />
-                  <Skeleton width={96} height={12} rounded={4} />
-                </span>
+                <Skeleton width={150} height={14} rounded={4} />
+                <Skeleton width={180} height={42} rounded={8} />
               </span>
-              <Skeleton width={150} height={36} rounded={10} />
             </div>
             <Skeleton height={168} rounded={8} />
           </div>
@@ -569,11 +593,8 @@ export function QuotaPoolPage() {
               </div>
               <div className={styles.loadingStats}>
                 <span className={styles.loadingNumber}>
-                  <Skeleton width={130} height={44} rounded={8} />
-                  <span>
-                    <Skeleton width={150} height={12} rounded={4} />
-                    <Skeleton width={96} height={12} rounded={4} />
-                  </span>
+                  <Skeleton width={140} height={14} rounded={4} />
+                  <Skeleton width={170} height={42} rounded={8} />
                 </span>
                 {[0, 1, 2, 3].map((index) => (
                   <span key={index} className={styles.loadingFact}>
@@ -712,7 +733,7 @@ function RefreshCountdown({
   if (dueAtMs === null) return null;
   return (
     <span className={styles.countdown} data-refreshing={refreshing} role="status">
-      {/* A clock for the countdown, so the status doesn't pass for a refresh button. */}
+      {/* A clock for the countdown; a spinning refresh icon while a collection is running. */}
       {refreshing ? (
         <IconRefreshCw size={16} aria-hidden="true" />
       ) : (
