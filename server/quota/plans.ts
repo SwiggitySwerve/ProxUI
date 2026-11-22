@@ -58,6 +58,22 @@ export function planWeight(
   return { multiplier: units ?? 1, label: displayName ?? plan ?? null, known: units !== undefined };
 }
 
+/**
+ * The plan in force at `atMs`: the newest change at or before it, else the earliest known plan.
+ * Without a history, the current plan.
+ */
+export function planAt(
+  account: { plan?: string; planHistory?: readonly { plan: string; fromMs: number }[] },
+  atMs: number
+): string | undefined {
+  const history = account.planHistory;
+  if (!history?.length) return account.plan;
+  let plan = history[0].plan;
+  for (const entry of history) if (entry.fromMs <= atMs) plan = entry.plan;
+  // An empty entry marks a time the provider named no plan.
+  return plan || undefined;
+}
+
 /** ChatGPT's usage response names the plan, e.g. "pro" or "promax". */
 export function planFromCodexUsage(body: unknown): string | null {
   return normalizePlanType(parseCodexUsagePayload(body)?.plan_type);

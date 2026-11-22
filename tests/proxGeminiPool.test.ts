@@ -141,6 +141,10 @@ function fixture() {
   const calls: { instanceId: string; body?: Record<string, unknown> }[] = [];
   let quota: unknown = summary();
   let tier = 'g1-ultra-lite-tier';
+  let tierReadMs = 0;
+  // Answers of the later Antigravity endpoints, by index into ANTIGRAVITY_QUOTA_URLS.
+  let fallbackQuotas: unknown[] = [];
+  let quotaReadMs = 0;
   const fetcher = Object.assign(
     async (input: string | URL | Request, init: RequestInit = {}) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
@@ -148,13 +152,22 @@ function fixture() {
       const body = init.body ? JSON.parse(String(init.body)) : undefined;
       calls.push({ instanceId, body });
       if (!body) return Response.json(inventories.get(instanceId));
-      if (body.url === ANTIGRAVITY_QUOTA_URLS[0])
+      if (body.url === ANTIGRAVITY_QUOTA_URLS[0]) {
+        clock += quotaReadMs;
         return Response.json({ status_code: 200, body: JSON.stringify(quota) });
-      if (body.url === ANTIGRAVITY_CODE_ASSIST_URL)
+      }
+      const fallback = fallbackQuotas[ANTIGRAVITY_QUOTA_URLS.indexOf(body.url)];
+      if (fallback !== undefined) {
+        clock += quotaReadMs;
+        return Response.json({ status_code: 200, body: JSON.stringify(fallback) });
+      }
+      if (body.url === ANTIGRAVITY_CODE_ASSIST_URL) {
+        clock += tierReadMs;
         return Response.json({
           status_code: 200,
           body: { paidTier: { id: tier, name: 'Google AI Ultra' } },
         });
+      }
       if (body.url === `${CLAUDE_USAGE_URL}?cedar_ember=1&skip_spend=1`)
         return Response.json({
           status_code: 200,
@@ -208,6 +221,9 @@ function fixture() {
     setQuota: (value: unknown) => (quota = value),
     setTier: (value: string) => (tier = value),
     advance: (ms: number) => (clock += ms),
+    setTierReadMs: (ms: number) => (tierReadMs = ms),
+    setFallbackQuotas: (values: unknown[]) => (fallbackQuotas = values),
+    setQuotaReadMs: (ms: number) => (quotaReadMs = ms),
   };
 }
 
@@ -303,6 +319,54 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     await f.collector.refresh();
     expect(tierReads()).toBe(3);
   });
+  test('a plan change starts at the reading its poll took, not at the later tier read', async () => {
+    const f = fixture();
+    await f.collector.refresh();
+    f.setTier('g1-ultra-tier');
+    f.setTierReadMs(250);
+    f.advance(30 * 60_000);
+    await f.collector.refresh();
+    const account = f.store.listAccounts().find((a) => a.provider === 'antigravity')!;
+    const readingAtMs = Math.max(
+      ...f.store
+        .listSamples(0, Number.MAX_SAFE_INTEGER)
+        .filter((sample) => sample.accountId === account.id)
+        .map((sample) => sample.observedAtMs)
+    );
+    expect(account.planHistory).toEqual([
+      { plan: 'g1-ultra-lite-tier', fromMs: 0 },
+      { plan: 'g1-ultra-tier', fromMs: readingAtMs },
+    ]);
+    expect(account.planObservedAtMs).toBe(readingAtMs + 250);
+  });
+
+  test('a plan change starts at the earliest reading of a poll that asked several endpoints', async () => {
+    const f = fixture();
+    await f.collector.refresh();
+    const pollStart = NOW + 30 * 60_000;
+    f.advance(30 * 60_000);
+    f.setTier('g1-ultra-tier');
+    // The first endpoint has no Gemini group, the next only its five-hour window and the third
+    // only the weekly one, each 400 ms later: the weekly reading is listed first but read last.
+    const [gemini, thirdParty] = summary(0.2, 0.6).groups;
+    f.setQuota({ groups: [{ ...thirdParty, buckets: thirdParty.buckets.slice(0, 1) }] });
+    f.setFallbackQuotas([
+      undefined,
+      { groups: [{ ...gemini, buckets: gemini.buckets.slice(1) }] },
+      { groups: [{ ...gemini, buckets: gemini.buckets.slice(0, 1) }] },
+    ]);
+    f.setQuotaReadMs(400);
+    await f.collector.refresh();
+    const account = f.store.listAccounts().find((a) => a.provider === 'antigravity')!;
+    const poll = f.store
+      .listSamples(pollStart, Number.MAX_SAFE_INTEGER)
+      .filter((sample) => sample.accountId === account.id);
+    expect(new Set(poll.map((sample) => sample.observedAtMs)).size).toBe(2);
+    const fromMs = account.planHistory!.at(-1)!.fromMs;
+    expect(account.planHistory!.at(-1)!.plan).toBe('g1-ultra-tier');
+    expect(fromMs).toBe(Math.min(...poll.map((sample) => sample.observedAtMs)));
+  });
+
   test('a reading without the Gemini group records explicit missing windows, not zero', () => {
     const { samples } = quotaSamples(
       'antigravity',

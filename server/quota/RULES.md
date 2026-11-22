@@ -80,6 +80,10 @@ credential UI. The store owns persistence; the collector uses only public APIs.
   targeted refresh asks again when the last ask is at least 5 minutes old, so an
   upgrade or downgrade reweights the pool without a restart. A failed plan read
   changes nothing else.
+- A plan change applies from when it is first seen (`quota_plan_history`). Each sample
+  keeps the weight of the plan in force when it was recorded (`planAt`), so an upgrade
+  never rescales earlier history, and a rate interval across a change is not burn. A
+  plan known before the history existed, and an account's first plan, hold from the start.
 - An account with no five-hour limit is `no-limit` in the five-hour pool, not `missing-window`:
   outside its capacity and eligible count, and it never withholds the pool or combined five-hour
   total. Claude is decided by plan (Ultra answered with limits but no five-hour one). Codex is
