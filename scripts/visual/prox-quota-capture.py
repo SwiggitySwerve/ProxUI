@@ -189,6 +189,11 @@ def fixture(state):
                 expiries = [NOW + (4 + 3 * k) * DAY for k in range(len(kinds))]
                 accounts[0]["resets"].update(available=4, usable=2, kinds=kinds, expiries=expiries,
                                              nextExpiryAtMs=expiries[0])
+                # A pair whose Vietnamese line ("1 5 giờ · 1 toàn bộ") passes 18 characters yet fits the column,
+                # so the fit is measured, not counted.
+                pair = ["session", "full"]
+                accounts[2]["resets"].update(available=2, usable=1, kinds=pair, expiries=expiries[:2],
+                                             nextExpiryAtMs=expiries[0])
             # The pool holds what its Ultra accounts hold: 72% of one 2,000-point account across four.
             f = 1440 / remaining
             pool.update(capacityPoints=8000, remainingPoints=1440,
@@ -3973,7 +3978,8 @@ G2_CELL_JS = """() => {
     const summary = cell.parentElement, c = r(cell), next = [...summary.querySelectorAll(':scope > ul > li')].filter(e => e.checkVisibility({checkVisibilityCSS: true}))[0];
     const nameCell = summary.querySelector('[class*="__accountName___"]'), text = nameCell.querySelector('[class*="__accountText___"]');
     let right = -Infinity; const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
-    for (let n = w.nextNode(); n; n = w.nextNode()) { const g = document.createRange(); g.selectNodeContents(n); for (const b of g.getClientRects()) if (b.width > 0) right = Math.max(right, b.right); }
+    for (let n = w.nextNode(); n; n = w.nextNode()) { if (n.parentElement.closest('[aria-hidden="true"]') || !n.parentElement.checkVisibility({checkVisibilityCSS: true})) continue;
+      const g = document.createRange(); g.selectNodeContents(n); for (const b of g.getClientRects()) if (b.width > 0) right = Math.max(right, b.right); }
     // The cell's own screen-reader label (the column header is hidden from assistive technology) and the held line's
     // hidden measuring copy are not part of its text.
     const hidden = e => /__visuallyHidden___/.test(e.className);
@@ -4100,11 +4106,18 @@ G9_ROW_JS = r"""(wide) => {
 
 # The held line's longest case (an account holding every kind) in English and Russian, at the case's width.
 G9_MIXED_CASES = ("real", "real-1100")
-# Wide held lines on the mixed fixture: some name their kinds (they fit the column), some fall back to the count.
+# Wide held lines on the mixed fixture's Claude card, by account: whether each names its kinds.
 G9_HELD_JS = r"""() => {
-  const lines = [...document.querySelectorAll('article details:not([open]) [class*="__resetCell___"] > small')].filter(e => e.checkVisibility());
-  return {named: lines.filter(e => e.querySelector('[data-kind]')).length, counted: lines.filter(e => !e.querySelector('[data-kind]')).length};
+  const card = [...document.querySelectorAll('article')].find(a => /__claude___/.test(a.className)), out = {};
+  for (const row of card ? card.querySelectorAll('details:not([open])') : []) {
+    const name = row.querySelector('[class*="__accountText___"]')?.textContent?.trim(), line = row.querySelector('[class*="__resetCell___"] > small');
+    if (name && line?.checkVisibility()) out[name] = line.querySelector('[data-kind]') ? 'named' : line.textContent.trim();
+  }
+  return out;
 }"""
+# What the four-kind account (ops…) and the 5-hour + full account (ada…) must show: the four kinds never fit; the
+# pair fits in English and Vietnamese (19 characters, under 120px) but not in Russian.
+G9_HELD_WANT = {"en": ("count", "named"), "vi": ("count", "named"), "ru": ("count", "count")}
 # A lone reset holder past the first page, holding every kind, in phone widths and a long language.
 G9_SUMMARY_CASES = ("real-narrow",)
 G9_SUMMARY_JS = r"""() => {
@@ -4127,14 +4140,16 @@ async def check_row_geometry(page, width, browser=None, url=None, name=None):
     lone off-page holder's reset summary at 390 and 320px in both languages."""
     out = await page.evaluate(G9_ROW_JS, width >= 901)
     if browser and name in G9_MIXED_CASES:
-        for lng in ("en", "ru"):
+        for lng, (four, pair) in G9_HELD_WANT.items():
             context, fresh = await open_fixture_page(browser, url, "real-mixed", width, lng, None, pinned=True)
             try:
                 tag = f"real-mixed@{width}/{lng}"
                 out += [dict(page=tag, **f) for f in await fresh.evaluate(G9_ROW_JS, width >= 901)]
                 held = await fresh.evaluate(G9_HELD_JS)
-                if not held["named"] or not held["counted"]:
-                    out.append(dict(page=tag, why="expected held lines that name their kinds and one that counts", **held))
+                got = [next((v for k, v in held.items() if k.startswith(p)), None) for p in ("ops", "ada")]
+                want = [w if w == "named" else "count" for w in (four, pair)]
+                if [g if g in (None, "named") else "count" for g in got] != want:
+                    out.append(dict(page=tag, why="held lines (four kinds, 5-hour + full) are not named/counted as measured", want=want, got=got))
             finally:
                 await context.close()
     if browser and name in G9_SUMMARY_CASES:

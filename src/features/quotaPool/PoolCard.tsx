@@ -127,8 +127,10 @@ function HeldLine({ kinds, available }: { kinds: ResetKindCount[] | null; availa
     const cell = lineRef.current?.parentElement;
     const probe = probeRef.current;
     if (!cell || !probe) return;
+    // Fractional widths: a 120.1px line rounds to 120 and would wrap in a 120px cell.
     const check = () => {
-      if (cell.clientWidth > 0) setFits(probe.offsetWidth <= cell.clientWidth);
+      const room = cell.getBoundingClientRect().width;
+      if (room > 0) setFits(probe.getBoundingClientRect().width <= room);
     };
     check();
     const observer = new ResizeObserver(check);
