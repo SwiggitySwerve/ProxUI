@@ -5239,3 +5239,33 @@ $table-tiers: (
     white-space: normal;
   }
 }
+// The Now strip is one row at every width: "Now ·", the label, the value at the right. A long label
+// ("Weekly remaining" in rate views) wraps in its own column, so "Now ·" never strands on a line (G12b).
+.pool .poolHeader .leadCard > .statsGroup[data-group='now'],
+.pool .poolHeader .leadCard > .statsGroup[data-group='now'][data-group] {
+  display: grid;
+  grid-template-columns: max-content minmax(min-content, 1fr) minmax(min-content, max-content);
+  flex-direction: row;
+  align-items: baseline;
+  column-gap: 4px;
+  .statsHeading::after {
+    content: ' ·';
+  }
+  .stats,
+  .stats > div {
+    display: contents;
+  }
+  .stats dt {
+    padding-right: 8px;
+    white-space: normal;
+  }
+  .stats dd {
+    margin: 0;
+    text-align: right;
+    white-space: normal;
+  }
+  // "of 8,000 points" moves under the number as one piece when the strip is narrow.
+  .stats dd small {
+    white-space: nowrap;
+  }
+}
