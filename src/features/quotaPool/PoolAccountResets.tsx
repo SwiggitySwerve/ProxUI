@@ -397,7 +397,7 @@ function ClaudeResetAction({
               ? // A finished read with nothing usable is not still loading; a running claim is neither.
                 t(
                   reset.count === null
-                    ? 'quota_pool.reset_loading'
+                    ? 'quota_pool.reset_checking_credential'
                     : 'quota_pool.reset_claude_unavailable'
                 )
               : undefined

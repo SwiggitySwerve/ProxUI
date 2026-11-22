@@ -4995,18 +4995,8 @@ $table-tiers: (
     height: 44px;
   }
 }
-// Manual resets: the status or reason follows the facts, so "Resets held" sits on the same line as
-// its neighbours' first rows; the button's aria-describedby still names it.
-.pool .factsLayout > section[data-action] {
-  > p {
-    order: 2;
-    padding: 0 15px 15px;
-  }
-  > dl {
-    order: 1;
-    padding-bottom: 10px;
-  }
-}
+// Manual resets: the status or reason sits directly under the strip that holds Use reset (K7); the
+// equal strips keep every card's first line at one height.
 // The header's two cards share one height.
 .pool .poolHeader > .statsBlock {
   align-items: stretch;
@@ -5145,5 +5135,73 @@ $table-tiers: (
     .stats dt {
       white-space: nowrap;
     }
+  }
+}
+
+// 601–739px headers (901–1000px screens): the stacked number card hugs its number and the Now strip,
+// so neither leaves an empty run across the card (G12b).
+@container poolHeader (min-width: 601px) and (max-width: 739px) {
+  .pool .poolHeader .leadCard {
+    justify-self: start;
+    width: max-content;
+    min-width: 320px;
+    max-width: 100%;
+  }
+}
+// Combined usage: its number sits in the same card as a provider's, hugging the figure, so every
+// headline on the page reads as a card (G12b).
+.pool.combined > .headline {
+  justify-self: start;
+  width: max-content;
+  max-width: 100%;
+  margin-top: 4px;
+  padding: 15px 17px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--card-bg);
+}
+.pool.combined > .headline strong {
+  font-size: 38px;
+  line-height: 1.08;
+  letter-spacing: -0.04em;
+}
+@container poolHeader (max-width: 600px) {
+  .pool.combined > .headline strong {
+    font-size: 32px;
+  }
+}
+// Phones: in an opened row a long label wraps beside its value, so the value stays on the label's
+// first line at the right edge.
+@media (max-width: 640px) {
+  .pool .factsLayout > section > dl > div:not(:has(.resetExpiries)) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    > dd {
+      margin: 0;
+    }
+    > dd[class*='detail'] {
+      grid-column: 1 / -1;
+      text-align: right;
+    }
+  }
+}
+// Expiries: the kind badge is one fixed column, so dates start at one x; a slightly smaller badge
+// leaves the date and the time left on one line at 1440px.
+.pool .factsLayout .resetExpiries[data-kinds] {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 8px;
+  li {
+    display: contents;
+  }
+  .resetKind {
+    justify-self: start;
+    align-self: start;
+    padding: 0 5px;
+    font-size: 12px;
+    line-height: 19px;
+  }
+  [class*='resetExpiryWhen'] {
+    column-gap: 6px;
   }
 }
