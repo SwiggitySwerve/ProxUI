@@ -117,6 +117,12 @@ export function QuotaPoolPage() {
   const shownPools = orderedPools.filter(
     (pool) => activeProvider === 'all' || activeProvider === poolProviderViewId(pool.provider)
   );
+  // Wide tables give the Manual resets column room for two kinds ("1 weekly · 2 Fable held") when no
+  // card has more than two limit columns; every card shares the width, so their columns line up (G11).
+  const wideResets = shownPools.every(
+    (pool) =>
+      new Set(pool.accounts.flatMap((account) => account.windows.map((limit) => limit.id))).size <= 2
+  );
   const providerName = (id: string) =>
     poolProviderLabel(
       t,
@@ -172,21 +178,19 @@ export function QuotaPoolPage() {
     node.focus();
   }, []);
   // The Options button spells out every current choice on one line at 390px ("Weekly · Remaining · 3h
-  // avg · Future: same"); Future is always named, so its value never reads as a setting of its own
-  // (G11). Rate views omit Future.
+  // avg · Future: same"); Future is always named, so its value never reads as a setting of its own,
+  // and rate views say it is off, as the wide toolbar's control does (G11).
   const optionsSummary = [
     t(`quota_pool.${view.window === 'weekly' ? 'weekly' : 'five_hour'}`),
     t(`quota_pool.${mode}`),
     t('quota_pool.options_avg', { hours: view.lookback }),
-    ...(mode === 'remaining'
-      ? [
-          view.future === 1
-            ? t('quota_pool.options_future_same')
-            : `${t('quota_pool.future_prefix')}: ${t(
-                `quota_pool.scenario.${view.future === 0.5 ? 'half' : view.future === 2 ? 'double' : 'idle'}`
-              )}`,
-        ]
-      : []),
+    mode !== 'remaining'
+      ? t('quota_pool.options_future_off')
+      : view.future === 1
+        ? t('quota_pool.options_future_same')
+        : `${t('quota_pool.future_prefix')}: ${t(
+            `quota_pool.scenario.${view.future === 0.5 ? 'half' : view.future === 2 ? 'double' : 'idle'}`
+          )}`,
   ].join(' · ');
 
   return (
@@ -588,7 +592,7 @@ export function QuotaPoolPage() {
                   <PoolProviderMark provider={item} />
                   {t(`quota_pool.${item}`)}
                 </h2>
-                {/* Phones: the account count and status chip, then the action pills. */}
+                {/* The account count and status chip; wide screens put the action pills on this row too. */}
                 <Skeleton className={styles.loadingCount} rounded={4} />
                 <Skeleton className={styles.loadingChip} rounded={999} />
                 <span className={styles.loadingPills}>
@@ -608,6 +612,11 @@ export function QuotaPoolPage() {
                   </span>
                 ))}
               </div>
+              {/* Phones: the action pills follow the facts, right above the chart, as the loaded card's do (G11). */}
+              <span className={styles.loadingPillsBelow}>
+                <Skeleton className={styles.loadingPill} rounded={999} />
+                <Skeleton className={styles.loadingPill} rounded={999} />
+              </span>
               <Skeleton height={120} rounded={8} />
               <div className={styles.loadingRows}>
                 {[0, 1].map((index) => (
@@ -633,6 +642,7 @@ export function QuotaPoolPage() {
         className={styles.pools}
         aria-busy={state.loading}
         data-chip-line={chipLine || undefined}
+        data-wide-resets={wideResets || undefined}
       >
         {data &&
           shownPools.map((pool, index, shown) => (

@@ -180,16 +180,19 @@ function SummaryFact({ label, children }: { label: string; children: ReactNode }
   );
 }
 
+/** At 900px and below an opened row reads: limits, Manual resets, Usage, Billing. */
 const STACKED_FACTS = '(max-width: 900px)';
-/** At 900px and below an opened row reads: limits, Manual resets, Usage, Billing. Rendered on the server, rows are wide. */
-function useStackedFacts() {
+/** Phones put a card's state note after its facts, ahead of the action pills (G11). */
+const PHONE = '(max-width: 640px)';
+/** Whether a media query matches, following changes. Rendered on the server it never does: the wide layout. */
+function useMedia(query: string) {
   return useSyncExternalStore(
     (notify) => {
-      const query = window.matchMedia(STACKED_FACTS);
-      query.addEventListener('change', notify);
-      return () => query.removeEventListener('change', notify);
+      const list = window.matchMedia(query);
+      list.addEventListener('change', notify);
+      return () => list.removeEventListener('change', notify);
     },
-    () => window.matchMedia(STACKED_FACTS).matches,
+    () => window.matchMedia(query).matches,
     () => false
   );
 }
@@ -214,7 +217,8 @@ export function PoolCard({
 }) {
   const { t, i18n } = useTranslation();
   const id = useId();
-  const stackedFacts = useStackedFacts();
+  const stackedFacts = useMedia(STACKED_FACTS);
+  const phone = useMedia(PHONE);
   const [minimized, setMinimized] = useState(false);
   const [rosterQuery, setRosterQuery] = useState('');
   const [rosterSort, setRosterSort] = useState<AccountSort>('name');
@@ -489,6 +493,24 @@ export function PoolCard({
   const providerLabel = poolProviderLabel(t, pool.provider, pool.displayName);
   const appearance = poolProviderStyle(pool.provider);
   const slotCount = limitColumns.filter((column) => columnStatus.has(column.id)).length;
+  // Why the forecast or total is limited, across the card under its summary. On phones it sits in the
+  // header after the facts, so the action pills that follow it stay right above the chart (G11).
+  const stateBanner = pool.forecastState !== 'ready' && (
+    <p className={styles.stateNote} role="status" data-state={pool.forecastState}>
+      {/* The page's one "Refresh now" sits in the combined card's notice above. */}
+      <span>{stateNote}</span>
+      {affectedAccounts.length > 0 && (
+        // Once the list is filtered, the same button puts every account back.
+        <button
+          type="button"
+          className={styles.noteAction}
+          onClick={affectedOnly ? () => setAffectedOnly(false) : showAffected}
+        >
+          {t(affectedOnly ? 'quota_pool.show_all_accounts' : 'quota_pool.show_affected')}
+        </button>
+      )}
+    </p>
+  );
   return (
     <article
       className={`${styles.pool} ${appearance.className ?? ''}`}
@@ -667,24 +689,9 @@ export function PoolCard({
             </dl>
           </div>
         </div>
+        {phone && stateBanner}
       </div>
-      {/* Why the forecast or total is limited, across the card under its summary. */}
-      {pool.forecastState !== 'ready' && (
-        <p className={styles.stateNote} role="status" data-state={pool.forecastState}>
-          {/* The page's one "Refresh now" sits in the combined card's notice above. */}
-          <span>{stateNote}</span>
-          {affectedAccounts.length > 0 && (
-            // Once the list is filtered, the same button puts every account back.
-            <button
-              type="button"
-              className={styles.noteAction}
-              onClick={affectedOnly ? () => setAffectedOnly(false) : showAffected}
-            >
-              {t(affectedOnly ? 'quota_pool.show_all_accounts' : 'quota_pool.show_affected')}
-            </button>
-          )}
-        </p>
-      )}
+      {!phone && stateBanner}
       {/* No limit in this window means nothing to chart; the note above already says so. */}
       {pool.forecastState !== 'no-limit' && (
         <PoolGraph title={t('quota_pool.history_forecast')} id={`${id}-plot`} minimized={minimized}>

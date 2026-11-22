@@ -1714,15 +1714,14 @@ async def check_options_summary(page, name, state, width):
     if not await toggle.is_visible():
         return [dict(why="Options button not visible")]
     rate_view = state in ("drain", "burn")
-    # Remaining names its Future assumption ("Future: same" by default, G11); rate views turn Future off, so they omit it.
+    # The summary always names Future (G11): "Future: same" by default, "Future: off" in rate views, which turn it off.
     expected = ["5-hour" if state == "no-limit" else "Weekly", "Drain rate" if state == "drain" else "Burn rate" if state == "burn" else "Remaining", "3h avg"]
-    if not rate_view:
-        expected.append("Future: same")
+    expected.append("Future: off" if rate_view else "Future: same")
     failures = []
     text = await toggle.inner_text()
     failures += [dict(why=f"summary lacks {item!r}", text=text) for item in expected if item not in text]
-    if rate_view and ("Same as now" in text or "Future" in text):
-        failures.append(dict(why="a rate view's summary names Future, which it hides", text=text))
+    if rate_view and ("Same as now" in text or "Future: same" in text):
+        failures.append(dict(why="a rate view's summary names a Future choice, which it turns off", text=text))
     box = await toggle.bounding_box()
     if box["height"] < 43.5:
         failures.append(dict(why="Options button under 44px tall", box=box))
@@ -1904,7 +1903,7 @@ H_LOADED_ROWS = dict(utility='[class*="__privacy___"]', tabs='[class*="__provide
 
 async def check_skeleton_shape(browser, url, page, name, state, width):
     """H4: at 390 the loading skeleton mirrors the loaded structure (utility row, tabs, date, Options, Combined card
-    with a heading+toggle row and a select row, provider cards with a title/count/chip row and a pill row) and
+    with a heading+toggle row and a select row, provider cards with a title/count/chip row and, after the facts, a pill row) and
     its row tops and first card top are within 4px of a loaded page's at 390x844. Placeholders are visible, inert
     and aria-hidden. Opens its own second page in state ready."""
     if name in T_SKELETON_WIDE:
@@ -1918,9 +1917,15 @@ async def check_skeleton_shape(browser, url, page, name, state, width):
         visible: h(e) > 0 && e.checkVisibility({checkVisibilityCSS: true}), hidden: !!e.closest('[aria-hidden="true"]'), inert: !!e.closest('[inert]')}]));
       const card = document.querySelector('[data-skeleton-row="card"]');
       const part = (root, sel) => root.querySelector('[class*="__' + sel + '___"]');
-      const provider = [...document.querySelectorAll('[class*="__loadingIdentity___"]')].map(i => ({
-        title: top(part(i, 'loadingTitle')), count: top(part(i, 'loadingCount')), chip: top(part(i, 'loadingChip')), pills: top(part(i, 'loadingPills')),
-        sizes: [...i.querySelectorAll('[class*="__loadingCount___"], [class*="__loadingChip___"], [class*="__loadingPill___"]')].map(h), inert: !!i.closest('[inert]'), hidden: !!i.closest('[aria-hidden="true"]')}));
+      // G11: phone provider skeletons put their pill row after the fact placeholders, as the loaded cards do.
+      const provider = [...document.querySelectorAll('[class*="__loadingIdentity___"]')].map(i => {
+        const card = i.closest('[class*="__loading___"]'), below = part(card, 'loadingPillsBelow');
+        const facts = [...card.querySelectorAll('[class*="__loadingFact___"]')].map(f => f.getBoundingClientRect().bottom);
+        return {title: top(part(i, 'loadingTitle')), count: top(part(i, 'loadingCount')), chip: top(part(i, 'loadingChip')),
+          pills: below && h(below) > 0 ? top(below) : null, factsBottom: facts.length ? Math.max(...facts) : null,
+          sizes: [...i.querySelectorAll('[class*="__loadingCount___"], [class*="__loadingChip___"]'), ...(below ? below.querySelectorAll('[class*="__loadingPill___"]') : [])].map(h),
+          inert: !!i.closest('[inert]'), hidden: !!i.closest('[aria-hidden="true"]')};
+      });
       return {rows, provider, combined: card && {heading: top(card.querySelector('h2')) + h(card.querySelector('h2')) / 2, toggle: top(part(card, 'loadingToggle')) + h(part(card, 'loadingToggle')) / 2, select: top(part(card, 'loadingSelect')),
         toggleH: h(part(card, 'loadingToggle')), selectH: h(part(card, 'loadingSelect'))}};
     }""")
@@ -1937,8 +1942,8 @@ async def check_skeleton_shape(browser, url, page, name, state, width):
     if len(rows["provider"]) != 2:
         fails.append(dict(why="expected two provider skeletons", found=len(rows["provider"])))
     for p in rows["provider"]:
-        if max(p["title"], p["count"], p["chip"]) - min(p["title"], p["count"], p["chip"]) > 4 or p["pills"] < p["title"] + 20 or min(p["sizes"]) < 20 or not (p["inert"] and p["hidden"]):
-            fails.append(dict(why="provider skeleton lacks a title/count/chip row and a pill row, or is not inert and aria-hidden", provider=p))
+        if max(p["title"], p["count"], p["chip"]) - min(p["title"], p["count"], p["chip"]) > 4 or p["pills"] is None or p["factsBottom"] is None or p["pills"] < p["factsBottom"] - 1 or min(p["sizes"]) < 20 or not (p["inert"] and p["hidden"]):
+            fails.append(dict(why="provider skeleton lacks a title/count/chip row and a pill row after its facts, or is not inert and aria-hidden", provider=p))
     # H2-D4: each fact placeholder stacks its label bar over its value bar (the loaded Forecast facts do), inside its card.
     facts = await page.evaluate("""() => [...document.querySelectorAll('[class*="__loadingFact___"]')].map(f => {
       const [label, value] = [...f.children].map(c => c.getBoundingClientRect()), card = f.closest('[class*="__loading___"]').getBoundingClientRect();
@@ -4116,7 +4121,7 @@ G9_HELD_JS = r"""() => {
 # What the four-kind account (ops…) and the one-kind account (ada…) must show, as measured in the 120px column: the
 # four kinds never fit with "held" on the line; "2 full held" fits in English, while Vietnamese ("2 toàn bộ đang
 # giữ") and Russian ("в запасе полные: 2") are wider and fall back to the count.
-G9_HELD_WANT = {"en": ("count", "named"), "vi": ("count", "count"), "ru": ("count", "count")}
+G9_HELD_WANT = {"en": ("count", "named"), "vi": ("count", None), "ru": ("count", None)}  # English first: other languages only must not wrap
 # A lone reset holder past the first page, holding every kind, in phone widths and a long language.
 G9_SUMMARY_CASES = ("real-narrow",)
 G9_SUMMARY_JS = r"""() => {
@@ -4146,8 +4151,9 @@ async def check_row_geometry(page, width, browser=None, url=None, name=None):
                 out += [dict(page=tag, **f) for f in await fresh.evaluate(G9_ROW_JS, width >= 901)]
                 held = await fresh.evaluate(G9_HELD_JS)
                 got = [next((v for k, v in held.items() if k.startswith(p)), None) for p in ("ops", "ada")]
-                want = [w if w == "named" else "count" for w in (four, pair)]
-                if [g if g in (None, "named") else "count" for g in got] != want:
+                want = [w if w in ("named", None) else "count" for w in (four, pair)]
+                norm = [g if g in (None, "named") else "count" for g in got]
+                if any(w is not None and n != w for n, w in zip(norm, want)):
                     out.append(dict(page=tag, why="held lines (four kinds, one kind) are not named/counted as measured", want=want, got=got))
             finally:
                 await context.close()

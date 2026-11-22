@@ -612,6 +612,13 @@ $pool-error: #ff5252;
   margin: 14px 0 4px !important;
   padding: 8px 12px;
 }
+// Phones: the note sits in the card header after the facts and before the action pills (G11), at the
+// same 14px from the facts (the header's 10px row gap and 4px).
+.poolHeader > .stateNote {
+  flex: 1 0 100%;
+  margin: 4px 0 0 !important;
+  padding: 8px 12px;
+}
 .forecast {
   margin-top: 14px;
 }
@@ -2838,9 +2845,12 @@ $table-tiers: (
       width: 128px;
       height: 26px;
     }
+    // The pills follow the facts on phones (G11), so the title row holds only the title, count and chip.
     .loadingPills {
+      display: none;
+    }
+    .loadingPillsBelow {
       display: flex;
-      flex-basis: 100%;
       gap: 8px;
     }
     .loadingPill {
@@ -2848,6 +2858,10 @@ $table-tiers: (
       height: 44px;
     }
   }
+}
+// The phone-only pill row after the skeleton facts; wider screens keep their pills on the title row.
+.loadingPillsBelow {
+  display: none;
 }
 
 /* R */
@@ -3978,6 +3992,14 @@ $table-tiers: (
     --name-cap: 360px;
   }
 }
+// G11: when no card has more than two limit columns, from 1100px the Manual resets column fits two
+// kinds with "held" ("1 weekly · 2 Fable held", about 149px). Three-limit cards keep 120px, so their bars
+// keep the 1280px floor; every card on the page shares the width, so the columns still line up.
+@media (min-width: 1100px) {
+  .pools[data-wide-resets] .pool {
+    --plan-track: 152px;
+  }
+}
 
 // Align wide table chevrons, rows, and right edges flush with the card's inner content rails;
 // start expanded facts cleanly under the Account column text while keeping Manual resets flush right.
@@ -4223,6 +4245,17 @@ $table-tiers: (
   padding-inline: 14px 10px;
   select {
     padding-inline: 6px 10px;
+  }
+}
+// Future, off in rate views (G11b): its reason reads at secondary contrast; the off state is the dashed
+// outline (the disabled Use reset's) and the missing chevron, so it never invites a click.
+.page .selectLabel:has(select:disabled) {
+  border-style: dashed;
+  select:disabled {
+    appearance: none;
+    padding-inline-end: 4px;
+    color: var(--text-secondary);
+    cursor: default;
   }
 }
 .page .combinedOptions select {
@@ -4579,6 +4612,13 @@ $table-tiers: (
         grid-column: 1 / -1;
       }
     }
+    // A status slot starts 12px into its cell, so a Low mark never reads as the end of the bar or the
+    // reset line before it (G11b); a missing or unavailable cell in that column starts with it.
+    .limitStatus,
+    &[data-missing='true'] .missingSlot > .statusGhost,
+    &[data-unavailable='true'] strong:has(.unavailableWord) {
+      margin-inline-start: 12px;
+    }
     &[data-missing='true'] {
       .missingSlot {
         display: grid;
@@ -4627,6 +4667,10 @@ $table-tiers: (
   .pool .accountHead .headLabel {
     min-width: 0;
     font-weight: inherit;
+  }
+  // A slotted column indents its header by the same extra 12px as its rows (G11b).
+  .pool .accountHead > span[data-slotted] > .statusGhost {
+    margin-inline-start: 12px;
   }
 }
 
