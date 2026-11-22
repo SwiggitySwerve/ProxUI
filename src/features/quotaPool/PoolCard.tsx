@@ -4,6 +4,7 @@ import { billingFacts } from '@/domain/accountBilling';
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -32,7 +33,7 @@ import type { AccountResets } from '@/domain/quotaPool/types';
 import { laneOf, poolWindowId } from '@/domain/quotaWindows/lanes';
 import { profileWindowId } from '@/domain/quotaWindows/normalized';
 import { isBuiltInPoolProvider } from '@/domain/quotaPool/providers';
-import { heldResetKinds, sumResetKinds, wasSpent } from './resetAccounts';
+import { heldResetKinds, sumResetKinds, wasSpent, type ResetKindCount } from './resetAccounts';
 import { PoolAccountResets, ResetKindCounts } from './PoolAccountResets';
 import { PoolChart } from './PoolChart';
 import { PoolGraph } from './PoolGraph';
@@ -101,25 +102,54 @@ function ResetCell({ resets, spent, now }: { resets: AccountResets | null; spent
     );
   if (spent) return <span data-quiet="">{t('quota_pool.reset_requested')}</span>;
   if (resets.available === 0) return <span data-quiet="">{t('quota_pool.reset_none')}</span>;
-  // The 120px column holds about 18 characters of its 13px caption ("1 weekly · 2 Fable"); a longer
-  // held line reads as a count instead of wrapping the row (the opened row lists each kind).
-  const kinds = heldResetKinds(resets, now);
-  const kindsText = kinds
-    ?.map(({ kind, count }) => t(`quota_pool.reset_count_${kind}`, { count }))
-    .join(' · ');
-  const shownKinds = kindsText && kindsText.length <= 18 ? kinds : null;
   return (
     <>
       <span data-usable={resets.usable > 0 || undefined}>
         {t('quota_pool.reset_usable_part', { usable: resets.usable })}
       </span>
-      <small>
-        {shownKinds ? (
-          <ResetKindCounts kinds={shownKinds} />
+      <HeldLine kinds={heldResetKinds(resets, now)} available={resets.available} />
+    </>
+  );
+}
+
+/**
+ * The cell's held line: the kinds when they fit its one line in the font the browser really uses,
+ * else the count, so a row never wraps (the opened row lists each kind). A hidden copy of the kinds
+ * measures the fit, again whenever the cell resizes (it has no width while rows are stacked).
+ */
+function HeldLine({ kinds, available }: { kinds: ResetKindCount[] | null; available: number }) {
+  const { t, i18n } = useTranslation();
+  const lineRef = useRef<HTMLElement>(null);
+  const probeRef = useRef<HTMLSpanElement>(null);
+  const [fits, setFits] = useState(true);
+  const kindsKey = kinds?.map(({ kind, count }) => `${count} ${kind}`).join();
+  useLayoutEffect(() => {
+    const cell = lineRef.current?.parentElement;
+    const probe = probeRef.current;
+    if (!cell || !probe) return;
+    const check = () => {
+      if (cell.clientWidth > 0) setFits(probe.offsetWidth <= cell.clientWidth);
+    };
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(cell);
+    void document.fonts?.ready.then(check);
+    return () => observer.disconnect();
+  }, [kindsKey, i18n.language]);
+  return (
+    <>
+      <small ref={lineRef}>
+        {kinds && fits ? (
+          <ResetKindCounts kinds={kinds} />
         ) : (
-          t('quota_pool.reset_held_part', { count: resets.available })
+          t('quota_pool.reset_held_part', { count: available })
         )}
       </small>
+      {kinds && (
+        <span ref={probeRef} className={styles.heldProbe} aria-hidden="true">
+          <ResetKindCounts kinds={kinds} />
+        </span>
+      )}
     </>
   );
 }

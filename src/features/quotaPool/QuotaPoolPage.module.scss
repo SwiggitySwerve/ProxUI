@@ -956,6 +956,14 @@ $table-tiers: (
     line-height: 18px;
     overflow-wrap: anywhere;
   }
+  // The held kinds on one line in the held line's type, measured against the cell, never seen.
+  .heldProbe {
+    position: absolute;
+    visibility: hidden;
+    pointer-events: none;
+    font-size: 13px;
+    white-space: nowrap;
+  }
 }
 .accountLabel {
   min-width: 0;
@@ -3666,6 +3674,15 @@ $table-tiers: (
 .resetKindTotals {
   color: var(--text-secondary);
   font-weight: 400;
+  // A long list wraps between kinds, each kept whole, instead of running past the card; a pair that
+  // fits keeps its one line (on phones its minimum stays its one-line width while that fits).
+  [data-kind] {
+    white-space: nowrap;
+  }
+}
+.accountSummary > .summaryFact:has(.resetKindTotals) {
+  white-space: normal;
+  min-width: fit-content;
 }
 
 /* G1 */

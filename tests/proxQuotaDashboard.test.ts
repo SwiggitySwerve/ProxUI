@@ -1019,45 +1019,37 @@ describe('pool presentation', () => {
     expect(chart(860)).toMatch(leader);
   });
 
-  test('a wide reset cell names itself and fits its held line in the column', async () => {
+  test('a wide reset cell names itself and measures its held line against the column', async () => {
     await i18n.changeLanguage('en');
     const day = 86_400_000;
     const later = Date.now() + day;
-    const holder = (id: string, kinds: ('session' | 'weekly' | 'fable')[]) => ({
+    const kinds = ['session', 'weekly', 'fable'] as const;
+    const holder = {
       ...pool.accounts[0],
-      id,
       resets: {
-        available: kinds.length,
+        available: 3,
         usable: 2,
         blocker: null,
-        kinds,
+        kinds: [...kinds],
         expiries: kinds.map((_, index) => later + index * day),
         nextExpiryAtMs: later,
         observedAtMs: 500,
       },
-    });
+    };
     const markup = renderToStaticMarkup(
       createElement(PoolCard, {
-        pool: {
-          ...pool,
-          accounts: [
-            holder('mixed', ['session', 'weekly', 'fable']),
-            holder('long', ['session', 'weekly']),
-            holder('two', ['weekly', 'fable']),
-          ],
-        },
+        pool: { ...pool, accounts: [holder] },
         dashboard,
         mode: 'remaining',
         reveal: false,
       })
     );
-    // The column heading is hidden from screen readers, so each cell leads with its own label.
-    const cells = markup.match(/<span>Manual resets <\/span><span data-usable="true">2 usable<\/span><small>.*?<\/small>/g);
-    expect(cells).toHaveLength(3);
-    // A held line over the column's 18 characters would wrap the row, so it reads as a count;
-    // "1 weekly · 1 Fable" fits and stays named.
-    const held = cells!.map((cell) => cell.replace(/<[^>]+>/g, '').replace(/.*2 usable/, ''));
-    expect(held.sort()).toEqual(['1 weekly · 1 Fable', '2 held', '3 held']);
+    // The column heading is hidden from screen readers, so the cell leads with its own label. The
+    // held line starts with the kinds; a hidden copy lets the browser swap in "3 held" when they
+    // don't fit the column (the capture checks that in English and Russian).
+    expect(markup).toMatch(
+      /<span>Manual resets <\/span><span data-usable="true">2 usable<\/span><small>(?:(?!<\/small>).)*1 5-hour(?:(?!<\/small>).)*<\/small><span aria-hidden="true">(?:(?!<\/span><\/span>).)*1 Fable/
+    );
   });
 
   test('uses server capacity and missing predictions without exposing hidden emails', async () => {

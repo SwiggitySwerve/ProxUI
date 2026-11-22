@@ -200,6 +200,14 @@ def fixture(state):
             # A name beyond 28ch, beside a (usable) reset chip: it wraps in its Account cell, minimized or not.
             accounts[0]["identifier"] = "a.deliberately.long.credential.name.for.a.shared.workstation@example-corporate.test"
         pools.append(pool)
+    if state == "many-kinds":
+        # The lone Claude holder sorts past the first page and holds every kind, so the pool summary states
+        # them all and must stay inside the card (a long language wraps it between kinds).
+        holder = pools[0]["accounts"][0]
+        kinds = ["session", "weekly", "fable", "full"]
+        expiries = [NOW + (4 + 3 * k) * DAY for k in range(len(kinds))]
+        holder["identifier"] = "zoe•••ka@ex•••.test"
+        holder["resets"].update(available=4, usable=2, kinds=kinds, expiries=expiries, nextExpiryAtMs=expiries[0])
     if state == "multi-low":
         # One Claude row with several low limits beside a normal weekly value (5-hour and Weekly Opus),
         # and one whose own weekly value is low as well.
@@ -1105,13 +1113,16 @@ G_SWEEPS = {
 }
 
 
-async def open_fixture_page(browser, url, state, width, lng, view, height=1000, failing=False):
+async def open_fixture_page(browser, url, state, width, lng, view, height=1000, failing=False, pinned=False):
     """A fresh page on the fixture, in `state` at `width`; `view` is pressed in English first, then the language is set.
-    `failing` answers the pools call with a 503, so the page shows its initial-error card instead of cards."""
+    `failing` answers the pools call with a 503, so the page shows its initial-error card instead of cards. `pinned`
+    holds the clock at the fixture's reading time, so dated fixture data (held resets) is still current."""
     context = await browser.new_context(
         viewport=dict(width=width, height=height), device_scale_factor=1, is_mobile=width < 600,
         has_touch=width < 600, locale="en-US", timezone_id="UTC", color_scheme="dark", reduced_motion="reduce",
     )
+    if pinned:
+        await context.clock.install(time=NOW / 1000)
     page = await context.new_page()
 
     async def route_api(route):
@@ -3963,9 +3974,10 @@ G2_CELL_JS = """() => {
     const nameCell = summary.querySelector('[class*="__accountName___"]'), text = nameCell.querySelector('[class*="__accountText___"]');
     let right = -Infinity; const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
     for (let n = w.nextNode(); n; n = w.nextNode()) { const g = document.createRange(); g.selectNodeContents(n); for (const b of g.getClientRects()) if (b.width > 0) right = Math.max(right, b.right); }
-    // The cell's own screen-reader label (the column header is hidden from assistive technology) is not part of its text.
+    // The cell's own screen-reader label (the column header is hidden from assistive technology) and the held line's
+    // hidden measuring copy are not part of its text.
     const hidden = e => /__visuallyHidden___/.test(e.className);
-    out.push({text: [...cell.children].filter(e => !hidden(e)).map(e => e.textContent.trim()).join(' / '),
+    out.push({text: [...cell.children].filter(e => !hidden(e) && e.getAttribute('aria-hidden') !== 'true').map(e => e.textContent.trim()).join(' / '),
       label: [...cell.children].filter(hidden).map(e => e.textContent.trim()).join(''), usable: !!cell.querySelector('[data-usable]'),
       clipped: cell.scrollWidth > cell.clientWidth + 1, crosses: next ? right > r(next).left + 0.5 : false,
       cellH: c.height, nameH: r(nameCell).height, lh: parseFloat(getComputedStyle(text).lineHeight) || 21});
@@ -4088,20 +4100,51 @@ G9_ROW_JS = r"""(wide) => {
 
 # The held line's longest case (an account holding every kind) in English and Russian, at the case's width.
 G9_MIXED_CASES = ("real", "real-1100")
+# Wide held lines on the mixed fixture: some name their kinds (they fit the column), some fall back to the count.
+G9_HELD_JS = r"""() => {
+  const lines = [...document.querySelectorAll('article details:not([open]) [class*="__resetCell___"] > small')].filter(e => e.checkVisibility());
+  return {named: lines.filter(e => e.querySelector('[data-kind]')).length, counted: lines.filter(e => !e.querySelector('[data-kind]')).length};
+}"""
+# A lone reset holder past the first page, holding every kind, in phone widths and a long language.
+G9_SUMMARY_CASES = ("real-narrow",)
+G9_SUMMARY_JS = r"""() => {
+  const out = [], facts = [...document.querySelectorAll('article [class*="__summaryFact___"]')].filter(f => f.querySelector('[class*="__resetKindTotals___"]'));
+  if (!facts.length) return [{why: 'no reset summary with kinds to measure'}];
+  for (const f of facts) {
+    const card = f.closest('article'), edge = card.getBoundingClientRect().right - parseFloat(getComputedStyle(card).paddingRight);
+    if (f.getBoundingClientRect().right > edge + 0.5) out.push({why: 'the reset summary runs past its card', over: +(f.getBoundingClientRect().right - edge).toFixed(1)});
+  }
+  if (document.documentElement.scrollWidth > innerWidth) out.push({why: 'the page scrolls sideways', scrollWidth: document.documentElement.scrollWidth});
+  return out;
+}"""
 
 
 async def check_row_geometry(page, width, browser=None, url=None, name=None):
     """G9: wide tables hold closed rows of one height (unless a status line adds one) with no cell's text crossing into
-    the next column; stacked rows start every reset chip at the name's left edge. The `real` cases also check
-    the mixed-kind fixture on fresh pages in English and Russian."""
+    the next column; stacked rows start every reset chip at the name's left edge. The `real` cases also check the
+    mixed-kind fixture on fresh pages in English and Russian (clock pinned, so its resets are held): rows stay one
+    height and some held lines name their kinds while the longest falls back to its count. `real-narrow` checks a
+    lone off-page holder's reset summary at 390 and 320px in both languages."""
     out = await page.evaluate(G9_ROW_JS, width >= 901)
     if browser and name in G9_MIXED_CASES:
         for lng in ("en", "ru"):
-            context, fresh = await open_fixture_page(browser, url, "real-mixed", width, lng, None)
+            context, fresh = await open_fixture_page(browser, url, "real-mixed", width, lng, None, pinned=True)
             try:
-                out += [dict(page=f"real-mixed@{width}/{lng}", **f) for f in await fresh.evaluate(G9_ROW_JS, width >= 901)]
+                tag = f"real-mixed@{width}/{lng}"
+                out += [dict(page=tag, **f) for f in await fresh.evaluate(G9_ROW_JS, width >= 901)]
+                held = await fresh.evaluate(G9_HELD_JS)
+                if not held["named"] or not held["counted"]:
+                    out.append(dict(page=tag, why="expected held lines that name their kinds and one that counts", **held))
             finally:
                 await context.close()
+    if browser and name in G9_SUMMARY_CASES:
+        for w in (390, 320):
+            for lng in ("en", "ru"):
+                context, fresh = await open_fixture_page(browser, url, "many-kinds", w, lng, None, pinned=True)
+                try:
+                    out += [dict(page=f"many-kinds@{w}/{lng}", **f) for f in await fresh.evaluate(G9_SUMMARY_JS)]
+                finally:
+                    await context.close()
     return out
 
 
