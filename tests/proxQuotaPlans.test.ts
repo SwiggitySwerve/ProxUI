@@ -293,6 +293,26 @@ describe('plan persistence', () => {
       { plan: 'promax', fromMs: now + 2 },
     ]);
   });
+  test('a discovered reading without a plan keeps the earlier plans for earlier readings', () => {
+    const store = new QuotaStore(':memory:');
+    stores.push(store);
+    store.recordInventory('codex', [account('x', 'codex')], now);
+    store.recordDiscoveredReading('x', now, 'five', []);
+    store.recordDiscoveredReading('x', now + 1, null, []);
+    store.recordDiscoveredReading('x', now + 2, null, []);
+    store.recordDiscoveredReading('x', now + 3, 'twenty', []);
+    const [x] = store.listAccounts();
+    expect(x.planHistory).toEqual([
+      { plan: 'five', fromMs: 0 },
+      { plan: '', fromMs: now + 1 },
+      { plan: 'twenty', fromMs: now + 3 },
+    ]);
+    expect([0, now + 1, now + 3].map((atMs) => planAt(x, atMs))).toEqual([
+      'five',
+      undefined,
+      'twenty',
+    ]);
+  });
   test('a plan stored before the history existed holds from the start', () => {
     const dir = mkdtempSync(join(tmpdir(), 'prox-plan-history-'));
     try {

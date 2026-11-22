@@ -142,7 +142,8 @@ function fixture() {
   let quota: unknown = summary();
   let tier = 'g1-ultra-lite-tier';
   let tierReadMs = 0;
-  let fallbackQuota: unknown = null;
+  // Answers of the later Antigravity endpoints, by index into ANTIGRAVITY_QUOTA_URLS.
+  let fallbackQuotas: unknown[] = [];
   let quotaReadMs = 0;
   const fetcher = Object.assign(
     async (input: string | URL | Request, init: RequestInit = {}) => {
@@ -155,9 +156,10 @@ function fixture() {
         clock += quotaReadMs;
         return Response.json({ status_code: 200, body: JSON.stringify(quota) });
       }
-      if (body.url === ANTIGRAVITY_QUOTA_URLS[1] && fallbackQuota !== null) {
+      const fallback = fallbackQuotas[ANTIGRAVITY_QUOTA_URLS.indexOf(body.url)];
+      if (fallback !== undefined) {
         clock += quotaReadMs;
-        return Response.json({ status_code: 200, body: JSON.stringify(fallbackQuota) });
+        return Response.json({ status_code: 200, body: JSON.stringify(fallback) });
       }
       if (body.url === ANTIGRAVITY_CODE_ASSIST_URL) {
         clock += tierReadMs;
@@ -220,7 +222,7 @@ function fixture() {
     setTier: (value: string) => (tier = value),
     advance: (ms: number) => (clock += ms),
     setTierReadMs: (ms: number) => (tierReadMs = ms),
-    setFallbackQuota: (value: unknown) => (fallbackQuota = value),
+    setFallbackQuotas: (values: unknown[]) => (fallbackQuotas = values),
     setQuotaReadMs: (ms: number) => (quotaReadMs = ms),
   };
 }
@@ -338,16 +340,21 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     expect(account.planObservedAtMs).toBe(readingAtMs + 250);
   });
 
-  test('a plan change starts at the earliest reading of a poll that asked two endpoints', async () => {
+  test('a plan change starts at the earliest reading of a poll that asked several endpoints', async () => {
     const f = fixture();
     await f.collector.refresh();
     const pollStart = NOW + 30 * 60_000;
     f.advance(30 * 60_000);
     f.setTier('g1-ultra-tier');
-    // The first endpoint has only the five-hour window; the weekly one comes from the next, later.
-    const groups = summary(0.7, 0.6).groups;
-    f.setQuota({ groups: [{ ...groups[0], buckets: groups[0].buckets.slice(1) }] });
-    f.setFallbackQuota(summary(0.2, 0.6));
+    // The first endpoint has no Gemini group, the next only its five-hour window and the third
+    // only the weekly one, each 400 ms later: the weekly reading is listed first but read last.
+    const [gemini, thirdParty] = summary(0.2, 0.6).groups;
+    f.setQuota({ groups: [{ ...thirdParty, buckets: thirdParty.buckets.slice(0, 1) }] });
+    f.setFallbackQuotas([
+      undefined,
+      { groups: [{ ...gemini, buckets: gemini.buckets.slice(1) }] },
+      { groups: [{ ...gemini, buckets: gemini.buckets.slice(0, 1) }] },
+    ]);
     f.setQuotaReadMs(400);
     await f.collector.refresh();
     const account = f.store.listAccounts().find((a) => a.provider === 'antigravity')!;

@@ -70,7 +70,8 @@ export function planAt(
   if (!history?.length) return account.plan;
   let plan = history[0].plan;
   for (const entry of history) if (entry.fromMs <= atMs) plan = entry.plan;
-  return plan;
+  // An empty entry marks a time the provider named no plan.
+  return plan || undefined;
 }
 
 /** ChatGPT's usage response names the plan, e.g. "pro" or "promax". */

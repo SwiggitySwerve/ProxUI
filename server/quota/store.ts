@@ -715,7 +715,9 @@ export class QuotaStore {
       if (!samples.length) this.clearAccountError(accountId, observedAtMs);
       if (plan !== null) this.recordPlan(accountId, plan, observedAtMs);
       else {
-        this.db.query('DELETE FROM quota_plan_history WHERE accountId = ?').run(accountId);
+        // No plan from here on (an empty history entry weighs as unknown); earlier readings keep
+        // theirs.
+        this.recordPlanChange(accountId, '', observedAtMs);
         this.db.query('DELETE FROM quota_account_plans WHERE accountId = ?').run(accountId);
       }
     })();
@@ -738,19 +740,7 @@ export class QuotaStore {
    */
   recordPlan(accountId: string, plan: string, nowMs: number, fromMs = nowMs): void {
     this.db.transaction(() => {
-      const latest = this.db
-        .query<{ plan: string }, [string]>(
-          'SELECT plan FROM quota_plan_history WHERE accountId = ? ORDER BY fromMs DESC LIMIT 1'
-        )
-        .get(accountId);
-      if (latest?.plan !== plan) {
-        // An account's first plan is in force from the start: its first samples precede the read.
-        this.db
-          .query(
-            'INSERT OR REPLACE INTO quota_plan_history (accountId, plan, fromMs) VALUES (?, ?, ?)'
-          )
-          .run(accountId, plan, latest ? fromMs : 0);
-      }
+      this.recordPlanChange(accountId, plan, fromMs);
       this.db
         .query(
           `INSERT INTO quota_account_plans (accountId, plan, observedAtMs) VALUES (?, ?, ?)
@@ -758,6 +748,22 @@ export class QuotaStore {
         )
         .run(accountId, plan, nowMs);
     })();
+  }
+
+  /** Starts a history entry at `fromMs` when the plan differs from the latest one. */
+  private recordPlanChange(accountId: string, plan: string, fromMs: number): void {
+    const latest = this.db
+      .query<{ plan: string }, [string]>(
+        'SELECT plan FROM quota_plan_history WHERE accountId = ? ORDER BY fromMs DESC LIMIT 1'
+      )
+      .get(accountId);
+    // Nothing to end before the first plan; that plan is in force from the start, since an
+    // account's first samples precede its first plan read.
+    if (!latest && plan === '') return;
+    if (latest?.plan === plan) return;
+    this.db
+      .query('INSERT OR REPLACE INTO quota_plan_history (accountId, plan, fromMs) VALUES (?, ?, ?)')
+      .run(accountId, plan, latest ? fromMs : 0);
   }
 
   markAccountError(id: string, nowMs: number): void {
