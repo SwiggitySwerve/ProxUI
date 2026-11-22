@@ -637,7 +637,7 @@ export function PoolCard({
                     <dt>{t('quota_pool.burn_last', { hours: dashboard.lookbackHours })}</dt>
                     <dd>
                       {number(pool.burnPointsPerHour)}
-                      {pool.burnPointsPerHour !== null && ` ${t('quota_pool.points_hour')}`}
+                      {pool.burnPointsPerHour !== null && <small> {t('quota_pool.points_hour')}</small>}
                     </dd>
                   </div>
                 ) : (

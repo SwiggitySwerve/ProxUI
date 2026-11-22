@@ -4966,3 +4966,86 @@ $table-tiers: (
     padding: 10px 13px;
   }
 }
+
+/* G12b */
+// Alignment pass on the option 3 cards (Sol's measurements).
+// Cards end at their own content, sharing their top edge, so a long Manual resets card leaves no
+// blank run under Usage and Billing.
+.pool .factsLayout {
+  align-items: start;
+}
+// Every title strip is exactly one height, Use reset included.
+.pool .factsLayout > section > header,
+.pool .factsLayout > section[data-tone='accent'] > header {
+  box-sizing: border-box;
+  height: 52px;
+  min-height: 0;
+  flex-wrap: nowrap;
+}
+.pool .factsLayout > section > header > button {
+  height: 32px;
+  min-height: 0;
+}
+@media (pointer: coarse), (max-width: 640px) {
+  .pool .factsLayout > section > header,
+  .pool .factsLayout > section[data-tone='accent'] > header {
+    height: 60px;
+  }
+  .pool .factsLayout > section > header > button {
+    height: 44px;
+  }
+}
+// Manual resets: the status or reason follows the facts, so "Resets held" sits on the same line as
+// its neighbours' first rows; the button's aria-describedby still names it.
+.pool .factsLayout > section[data-action] {
+  > p {
+    order: 2;
+    padding: 0 15px 15px;
+  }
+  > dl {
+    order: 1;
+    padding-bottom: 10px;
+  }
+}
+// The header's two cards share one height.
+.pool .poolHeader > .statsBlock {
+  align-items: stretch;
+}
+// The mockup's type: the remaining number at 38px (32px on phones); the Now unit muted and light.
+.pool .poolHeader .leadCard > .headline strong {
+  font-size: 38px;
+  line-height: 1.08;
+  letter-spacing: -0.04em;
+}
+.pool .poolHeader .leadCard > .statsGroup[data-group='now'] .stats dd small {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 400;
+}
+@container poolHeader (max-width: 600px) {
+  .pool .poolHeader .leadCard > .headline strong {
+    font-size: 32px;
+  }
+  // Label | value on one line, an 8px gap, the value at the right edge; a caption under the value.
+  .pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] .stats > div {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2px 8px;
+    dd {
+      margin: 0;
+    }
+    dt {
+      white-space: normal;
+    }
+    small {
+      grid-column: 2;
+    }
+  }
+}
+// An expiry keeps its badge and date together; only the time left may wrap, under the date.
+.pool .factsLayout .resetExpiries li {
+  flex-wrap: nowrap;
+  > .resetKind {
+    flex: none;
+  }
+}
