@@ -5293,3 +5293,10 @@ $table-tiers: (
     min-width: 0;
   }
 }
+// 740–899px headers: the number card stretches to Forecast's three rows, so its number centres in the
+// space above the Now strip instead of leaving a gap under it.
+@container poolHeader (min-width: 740px) and (max-width: 899px) {
+  .pool .poolHeader .leadCard > .headline {
+    justify-content: center;
+  }
+}
