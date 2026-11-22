@@ -5062,3 +5062,42 @@ $table-tiers: (
     margin-left: auto;
   }
 }
+// Narrow cards: "Now" is a small caption over the strip's label and value, so a wrapping value never
+// strands "Now ·" with its separator on a line of its own.
+@container poolHeader (max-width: 600px) {
+  .pool .poolHeader .leadCard > .statsGroup[data-group='now'] {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    .statsHeading::after {
+      content: none;
+    }
+  }
+}
+// The skeleton draws the loaded header's two cards, so nothing reflows when data arrives (G12).
+.page .loading > .loadingStats {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  border: 0;
+}
+.loadingCard {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 24px;
+  min-width: 0;
+  padding: 15px 17px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: #121212;
+  > .loadingFact {
+    padding-left: 0 !important;
+    border-left: 0 !important;
+  }
+}
+@media (min-width: 1100px) {
+  .page .loading > .loadingStats {
+    grid-template-columns: minmax(300px, 0.9fr) minmax(480px, 1.5fr);
+  }
+}

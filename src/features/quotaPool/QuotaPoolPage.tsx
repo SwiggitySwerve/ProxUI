@@ -600,17 +600,26 @@ export function QuotaPoolPage() {
                   <Skeleton className={styles.loadingPill} rounded={999} />
                 </span>
               </div>
+              {/* The loaded header's two cards: the number with Now docked under it, then Forecast (G12). */}
               <div className={styles.loadingStats}>
-                <span className={styles.loadingNumber}>
-                  <Skeleton width={140} height={14} rounded={4} />
-                  <Skeleton width={170} height={42} rounded={8} />
-                </span>
-                {[0, 1, 2, 3].map((index) => (
-                  <span key={index} className={styles.loadingFact}>
+                <span className={styles.loadingCard}>
+                  <span className={styles.loadingNumber}>
+                    <Skeleton width={140} height={14} rounded={4} />
+                    <Skeleton width={170} height={42} rounded={8} />
+                  </span>
+                  <span className={styles.loadingFact}>
                     <Skeleton width={84} height={10} rounded={4} />
                     <Skeleton width={128} height={16} rounded={4} />
                   </span>
-                ))}
+                </span>
+                <span className={styles.loadingCard}>
+                  {[0, 1, 2].map((index) => (
+                    <span key={index} className={styles.loadingFact}>
+                      <Skeleton width={84} height={10} rounded={4} />
+                      <Skeleton width={128} height={16} rounded={4} />
+                    </span>
+                  ))}
+                </span>
               </div>
               {/* Phones: the action pills follow the facts, right above the chart, as the loaded card's do (G11). */}
               <span className={styles.loadingPillsBelow}>
