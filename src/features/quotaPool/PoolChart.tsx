@@ -193,26 +193,15 @@ function PoolChartView({
       const rx = projectX(reset.atMs);
       const text = `+${number(reset.gainPoints)}`;
       const halfW = text.length * 4.5 + 7;
-      // The upper lane (lane 1) sits above Snapshot, so a label there stays centred on its tick.
-      const upperX = Math.max(halfW + 4, Math.min(baseFrame.width - halfW - 4, rx));
-      let labelX = upperX;
-      let left = labelX - halfW;
-      let right = labelX + halfW;
-      // When a reset marker falls right beside Snapshot (e.g. 5-hour deep-link), nudge its label
-      // horizontally clear of Snapshot on the same baseline instead of stacking directly on top.
-      if (snapshotX !== null && left < snapRight + 10 && right > snapLeft - 10) {
-        const shiftedX = snapRight + halfW + 8;
-        if (shiftedX + halfW <= baseFrame.width - 4 && shiftedX - rx <= 56) {
-          labelX = shiftedX;
-          left = labelX - halfW;
-          right = labelX + halfW;
-        }
-      }
+      // On either lane a label centres on its tick, kept inside the chart's edges.
+      const labelX = Math.max(halfW + 4, Math.min(baseFrame.width - halfW - 4, rx));
+      const left = labelX - halfW;
+      const right = labelX + halfW;
       const hitsSnapshot = snapshotX !== null && left < snapRight + 10 && right > snapLeft - 10;
       const hitsUnit = left < axisUnitRight + 8;
       const nearTick = Math.abs(labelX - rx) <= 56;
       const crossesSnapshot = snapshotX !== null && rx > snapLeft - 4 && rx < snapRight + 4;
-      return { ...reset, rx, text, halfW, upperX, labelX, left, right, hitsSnapshot, hitsUnit, nearTick, crossesSnapshot };
+      return { ...reset, rx, text, halfW, labelX, left, right, hitsSnapshot, hitsUnit, nearTick, crossesSnapshot };
     });
   let needsUpperRail = false;
   let probeRight = -Infinity;
@@ -229,19 +218,20 @@ function PoolChartView({
   const resetMarkers = rawResets.map((reset) => {
     const base: 0 | 1 = needsUpperRail ? 1 : 0;
     for (const lane of [base, (1 - base) as 0 | 1]) {
-      // On the upper lane a label centres on its own tick (Snapshot is on the other lane).
-      const labelX = lane === 1 ? reset.upperX : reset.labelX;
-      const left = labelX - reset.halfW;
-      const right = labelX + reset.halfW;
-      const clear =
-        lane === 1 ? Math.abs(labelX - reset.rx) <= 56 : reset.nearTick && !reset.hitsSnapshot && !reset.hitsUnit;
-      if (clear && left >= placedRight[lane] + 14) {
-        placedRight[lane] = right;
-        return { ...reset, labelX, left, right, lane };
+      // The upper lane sits above Snapshot, so only the chart's own lane checks for it.
+      const clear = reset.nearTick && (lane === 1 || (!reset.hitsSnapshot && !reset.hitsUnit));
+      if (clear && reset.left >= placedRight[lane] + 14) {
+        placedRight[lane] = reset.right;
+        return { ...reset, lane };
       }
     }
     return { ...reset, lane: -1 as const };
   });
+  // An upper label's leader runs down through the lower lane, so it is left off where it would cross
+  // Snapshot's label or another reset's text (halfW less the 7px it keeps around the text, plus 2px).
+  const lowerLabels = resetMarkers.filter((reset) => reset.lane === 0);
+  const crossesLowerLabel = (rx: number) =>
+    lowerLabels.some((reset) => Math.abs(rx - reset.labelX) < reset.halfW - 5);
   const hasStaggeredReset = resetMarkers.some((reset) => reset.lane === 1);
   const staggerPad = hasStaggeredReset ? 18 : 0;
   const chartFrame = staggerPad
@@ -593,7 +583,7 @@ function PoolChartView({
                   y1={chartFrame.top + 14}
                   y2={chartFrame.bottom}
                 />
-                {reset.lane === 1 && !reset.crossesSnapshot && (
+                {reset.lane === 1 && !reset.crossesSnapshot && !crossesLowerLabel(reset.rx) && (
                   <line
                     className={styles.resetLeader}
                     x1={rx}

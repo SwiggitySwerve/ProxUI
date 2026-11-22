@@ -182,6 +182,13 @@ def fixture(state):
                 account["windows"] = [dict(w, remainingPercent=weekly) if w["id"] == "seven-day" else w
                                       for w in account["windows"] if w["id"] != "five-hour"]
                 account["noFiveHourLimit"] = True
+            if state == "real-mixed":
+                # Every kind an account can hold at once (5-hour, weekly, Fable, full): the held line's longest
+                # case, which must read as a count, not wrap the row. The rest keep their real-shaped mixes.
+                kinds = ["session", "weekly", "fable", "full"]
+                expiries = [NOW + (4 + 3 * k) * DAY for k in range(len(kinds))]
+                accounts[0]["resets"].update(available=4, usable=2, kinds=kinds, expiries=expiries,
+                                             nextExpiryAtMs=expiries[0])
             # The pool holds what its Ultra accounts hold: 72% of one 2,000-point account across four.
             f = 1440 / remaining
             pool.update(capacityPoints=8000, remainingPoints=1440,
@@ -1960,15 +1967,17 @@ def a_expected_facts(state, provider):
     """The summary pairs a provider card must show today (English), derived from the fixture, not from the page."""
     pool = next(p for p in fixture(state)["pools"] if p["provider"] == provider)
     five_hour = state == "no-limit"
-    reset_holders = sum(1 for a in pool["accounts"] if a["resets"] and a["resets"]["available"] > 0)
+    holders = [a for a in pool["accounts"] if a["resets"] and a["resets"]["available"] > 0]
     available = sum(a["resets"]["available"] for a in pool["accounts"] if a["resets"])
     usable = sum(a["resets"]["usable"] for a in pool["accounts"] if a["resets"])
     stale = sum(a["status"] == "stale" for a in pool["accounts"])
     no_limit = sum(bool(a.get("noFiveHourLimit")) for a in pool["accounts"]) if five_hour else 0
     facts = []
-    # Pool-level reset totals appear only when multiple accounts hold resets; a single holder's
-    # row chip already states the exact count right below.
-    if reset_holders > 1 and available:
+    # Pool-level reset totals appear unless one account holds them all and its row is on the first page (name
+    # order, R_PAGE rows), where its own cell or chip already states the count.
+    order = sorted(pool["accounts"], key=lambda a: (a.get("identifier") or a["label"]).casefold())
+    lone_shown = len(holders) == 1 and order.index(holders[0]) < R_PAGE
+    if available and not lone_shown:
         facts.append(("Manual resets", str(available)))
         if usable:
             facts.append(("Usable resets", str(usable)))
@@ -3701,7 +3710,7 @@ E2_KEYS = ("sortLabelFailures", "chartFooterFailures", "notSummedNoteFailures", 
 E2_SORT_CASES = ("many", "many-narrow", "many-search-narrow")
 E2_FOOTER_CASES = ("partial", "stale", "partial-narrow", "stale-narrow")
 E2_NOTE_CASES = ("stacked-unavailable",)
-E2_NOTE_EN = "Sources for the same provider may share accounts, so they aren't added up. Each provider is shown on its own line."
+E2_NOTE_EN = "Sources for the same provider may share accounts, so they aren't added up. Each source is shown on its own line."
 
 
 async def check_sort_label(page, name, state):
@@ -3761,7 +3770,7 @@ async def check_chart_footer(page, name, state):
 
 async def check_not_summed_note(page, name, state):
     """H2-E4: the combined card's "Not summed" note reads the settled sentence (sentence one: sources may share accounts, so
-    they aren't added up; sentence two: choose Provider lines), and Provider lines is a real control on the page."""
+    they aren't added up; sentence two: each source has its own line), and Provider lines is a real control on the page."""
     if name not in E2_NOTE_CASES:
         return []
     notes = await page.locator('[class*="__stateNote___"]').all_inner_texts()
@@ -3954,7 +3963,10 @@ G2_CELL_JS = """() => {
     const nameCell = summary.querySelector('[class*="__accountName___"]'), text = nameCell.querySelector('[class*="__accountText___"]');
     let right = -Infinity; const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
     for (let n = w.nextNode(); n; n = w.nextNode()) { const g = document.createRange(); g.selectNodeContents(n); for (const b of g.getClientRects()) if (b.width > 0) right = Math.max(right, b.right); }
-    out.push({text: [...cell.children].map(e => e.textContent.trim()).join(' / '), usable: !!cell.querySelector('[data-usable]'),
+    // The cell's own screen-reader label (the column header is hidden from assistive technology) is not part of its text.
+    const hidden = e => /__visuallyHidden___/.test(e.className);
+    out.push({text: [...cell.children].filter(e => !hidden(e)).map(e => e.textContent.trim()).join(' / '),
+      label: [...cell.children].filter(hidden).map(e => e.textContent.trim()).join(''), usable: !!cell.querySelector('[data-usable]'),
       clipped: cell.scrollWidth > cell.clientWidth + 1, crosses: next ? right > r(next).left + 0.5 : false,
       cellH: c.height, nameH: r(nameCell).height, lh: parseFloat(getComputedStyle(text).lineHeight) || 21});
   }
@@ -3972,6 +3984,8 @@ async def g2_cell_pass(page, lng, out):
         where = dict(lng=lng, cell=c["text"])
         if not (usable if c["usable"] else plain).match(c["text"]):
             out.append(dict(where, why="cell text is not the usable / held wording"))
+        if not c["label"]:
+            out.append(dict(where, why="cell has no screen-reader label"))
         if c["clipped"]:
             out.append(dict(where, why="cell is clipped"))
         if c["crosses"]:
@@ -4072,10 +4086,23 @@ G9_ROW_JS = r"""(wide) => {
 }"""
 
 
-async def check_row_geometry(page, width):
+# The held line's longest case (an account holding every kind) in English and Russian, at the case's width.
+G9_MIXED_CASES = ("real", "real-1100")
+
+
+async def check_row_geometry(page, width, browser=None, url=None, name=None):
     """G9: wide tables hold closed rows of one height (unless a status line adds one) with no cell's text crossing into
-    the next column; stacked rows start every reset chip at the name's left edge."""
-    return await page.evaluate(G9_ROW_JS, width >= 901)
+    the next column; stacked rows start every reset chip at the name's left edge. The `real` cases also check
+    the mixed-kind fixture on fresh pages in English and Russian."""
+    out = await page.evaluate(G9_ROW_JS, width >= 901)
+    if browser and name in G9_MIXED_CASES:
+        for lng in ("en", "ru"):
+            context, fresh = await open_fixture_page(browser, url, "real-mixed", width, lng, None)
+            try:
+                out += [dict(page=f"real-mixed@{width}/{lng}", **f) for f in await fresh.evaluate(G9_ROW_JS, width >= 901)]
+            finally:
+                await context.close()
+    return out
 
 
 # Universal class-based regression guards (Council D1-D4): run on every case across all 66 captures
@@ -4928,7 +4955,7 @@ async def main():
                 results[name]["dataCollectionFactFailures"] = await check_data_collection_facts(page, name)
                 results[name]["accountsJumpFailures"] = await check_accounts_jump(browser, args.url, name)
                 results[name]["resetChipFitFailures"] = await check_reset_chip_fit(page, context, args.url, route_api, name, width)
-                results[name]["rowGeometryFailures"] = await check_row_geometry(page, width)
+                results[name]["rowGeometryFailures"] = await check_row_geometry(page, width, browser, args.url, name)
                 if state == "ready":
                     # Phones fold Rate behind Options; opening it shows the select.
                     options = page.locator(OPTIONS_BUTTON)

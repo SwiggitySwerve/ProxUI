@@ -2677,12 +2677,6 @@ $table-tiers: (
   }
 }
 /* G */
-// Rate views: the label sits on one line above the number, whose unit shares its baseline.
-.headline[data-rate='true'] {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
 // Combined card, 901px up: the chart view select sits right before the graph toggle, which ends at
 // the card's content edge (the select's auto margin pushes both to the right).
 @media (min-width: 901px) {
@@ -3246,18 +3240,11 @@ $table-tiers: (
     font-size: 13px;
     white-space: nowrap;
   }
-  .limits li .unavailableWord,
-  .limits li .unavailableGhost {
+  .limits li .unavailableWord {
     font-weight: 400;
   }
-  .limits li[data-counted='true'] :is(.unavailableWord, .unavailableGhost) {
+  .limits li[data-counted='true'] .unavailableWord {
     font-weight: 600;
-  }
-  // "Unavailable" has no value beside it, so it runs on through the value column and 4px into the gap
-  // before the bar: only what passes them (the value column, 3.6em of the cell's 14px = 50.4px, the
-  // slot's 4px margin and those 4px) counts toward the status slot's width.
-  .pool .account > summary > .limits li :is(.unavailableWord, .unavailableGhost) {
-    margin-inline-end: -58.4px;
   }
   .limitBar[data-empty] {
     display: block;
@@ -3284,23 +3271,13 @@ $table-tiers: (
         font-weight: 600;
       }
     }
-    .unavailableGhost::after {
-      font-weight: inherit;
-    }
   }
-  .pool .account > summary > .limits li {
-    .limitStatus {
-      display: grid;
-      align-items: center;
-      justify-items: start;
-      margin-inline-end: 4px;
-      > * {
-        grid-area: 1 / 1;
-      }
-    }
-    .limitValue {
-      grid-column: 2;
-      justify-self: start;
+  .pool .account > summary > .limits li .limitStatus {
+    display: grid;
+    align-items: center;
+    justify-items: start;
+    > * {
+      grid-area: 1 / 1;
     }
   }
   // The cell already says which limit is unavailable; the line under the name would say it twice.
@@ -3754,9 +3731,7 @@ $table-tiers: (
   }
 }
 
-// Wide Accounts table: put the percentage first (left-aligned directly under its column header and
-// above its Resets subtitle), then the reserved status slot (Low), then the bar. Unavailable spans
-// value + status slot flush left under the header, keeping every bar start aligned.
+// Wide Accounts table: the name and its plan share the name cell (the limit cells follow the G10 block).
 @include wide-table {
   .pool .account > summary {
     .accountLabel {
@@ -3767,30 +3742,6 @@ $table-tiers: (
     }
     .accountResetMarker {
       margin-left: 0;
-    }
-    > .limits li {
-      grid-template-columns: 3.6em max-content minmax(24px, 1fr);
-      .limitValue {
-        grid-column: 1;
-        grid-row: 1;
-        justify-self: start;
-      }
-      .limitStatus {
-        grid-column: 2;
-        grid-row: 1;
-        margin-inline-start: 4px;
-        margin-inline-end: 0;
-        &:has(.unavailableWord) {
-          grid-column: 1 / 3;
-          margin-inline-start: 0;
-        }
-      }
-      :is(.unavailableWord, .unavailableGhost) {
-        margin-inline-end: 0;
-      }
-      .unavailableGhost {
-        margin-inline-start: -54.4px;
-      }
     }
   }
 }
@@ -4010,30 +3961,6 @@ $table-tiers: (
     }
     .accountFacts {
       padding-inline: calc(20px + var(--col-gap)) 0;
-    }
-  }
-}
-
-/* G2 */
-// Wide table limit cells: tighten the figure + Low status tracks so healthy percentages sit
-// noticeably closer to their bars while keeping values flush left under column headers, bars
-// aligned, and zero overlap between strong and limitBar.
-@include wide-table {
-  .pool .account > summary > .limits li {
-    grid-template-columns: 3.3em max-content minmax(24px, 1fr);
-    .limitStatus {
-      margin-inline-start: 4px;
-      margin-inline-end: 0;
-      &:has(.unavailableWord) {
-        grid-column: 1 / 3;
-        margin-inline-start: 0;
-      }
-    }
-    .unavailableGhost {
-      margin-inline-start: -50.2px;
-    }
-    .limitBar {
-      margin-inline-start: 6px;
     }
   }
 }
@@ -4310,27 +4237,6 @@ $table-tiers: (
 }
 
 /* G5 */
-// Unify Remaining and Rate hero layouts: figure first, caption beside it, and identical Now/Forecast
-// vertical rail across Remaining, Drain rate, and Burn rate at 1440px+.
-.headline[data-rate='true'] {
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  .rateDefinition {
-    display: block;
-    margin: 2px 0 0;
-    color: var(--text-tertiary);
-    font-size: 13px;
-    line-height: 1.4;
-  }
-}
-@media (min-width: 1440px) {
-  .pool[data-chart-mode='drain'] .poolHeader .headline,
-  .pool[data-chart-mode='burn'] .poolHeader .headline {
-    min-width: 272px;
-  }
-}
-
 // Error & refresh-error notices: inline icon in heading so title, body, error code and Try again
 // align flush-left on the exact same rail as the empty card, with Retrying beside Try again.
 .errorNotice {
@@ -4611,10 +4517,12 @@ $table-tiers: (
     }
     .limitStatus {
       grid-column: 1;
+      grid-row: 1;
       margin: 0 6px 0 0;
     }
     .limitValue {
       grid-column: 2;
+      grid-row: 1;
       justify-self: end;
       text-align: right;
     }

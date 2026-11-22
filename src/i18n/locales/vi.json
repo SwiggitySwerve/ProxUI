@@ -2729,7 +2729,7 @@
     "combined_total": "Tổng cộng",
     "total": "Tổng",
     "total_description": "Cộng các nhà cung cấp đã chọn theo điểm có trọng số gói, không phải token.",
-    "total_ambiguous": "Các nguồn của cùng một nhà cung cấp có thể dùng chung tài khoản nên không được cộng tổng. Mỗi nhà cung cấp được hiển thị trên một đường riêng.",
+    "total_ambiguous": "Các nguồn của cùng một nhà cung cấp có thể dùng chung tài khoản nên không được cộng tổng. Mỗi nguồn được hiển thị trên một đường riêng.",
     "total_unavailable": "Không có tổng — thiếu một số số dư.",
     "combined_usage": "Biểu đồ sử dụng tổng hợp",
     "combined_description": "Các nhóm nhà cung cấp dùng chung trục thời gian, mỗi đường giữ số dư hạn mức riêng. Nét liền: đã ghi nhận. Nét đứt: dự báo.",

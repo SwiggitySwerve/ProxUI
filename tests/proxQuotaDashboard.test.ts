@@ -992,6 +992,74 @@ describe('pool presentation', () => {
     expect(markup).not.toContain('>+0<');
   });
 
+  test('an upper reset label drops its leader where it would cross a lower label', () => {
+    const chart = (second: number) =>
+      renderToStaticMarkup(
+        createElement(PoolChart, {
+          pool: {
+            ...pool,
+            resets: [
+              { atMs: 800, gainPoints: 100 },
+              { atMs: second, gainPoints: 100 },
+            ],
+          },
+          dashboard,
+          mode: 'remaining',
+        })
+      );
+    // The leader runs from the upper lane (34px over the frame) down to the frame's top.
+    const leader = /<line x1="[\d.]+" x2="[\d.]+" y1="28" y2="56"><\/line>/;
+    // Two resets a few pixels apart: the first label rises, the second sits under its leader.
+    const close = chart(805);
+    expect(close.match(/>\+100<\/text>/g)).toHaveLength(2);
+    expect(close).toContain('y="22" text-anchor="middle">+100');
+    expect(close).toContain('y="46" text-anchor="middle">+100');
+    expect(close).not.toMatch(leader);
+    // Far enough apart that the lower label clears the leader, which then stays.
+    expect(chart(860)).toMatch(leader);
+  });
+
+  test('a wide reset cell names itself and fits its held line in the column', async () => {
+    await i18n.changeLanguage('en');
+    const day = 86_400_000;
+    const later = Date.now() + day;
+    const holder = (id: string, kinds: ('session' | 'weekly' | 'fable')[]) => ({
+      ...pool.accounts[0],
+      id,
+      resets: {
+        available: kinds.length,
+        usable: 2,
+        blocker: null,
+        kinds,
+        expiries: kinds.map((_, index) => later + index * day),
+        nextExpiryAtMs: later,
+        observedAtMs: 500,
+      },
+    });
+    const markup = renderToStaticMarkup(
+      createElement(PoolCard, {
+        pool: {
+          ...pool,
+          accounts: [
+            holder('mixed', ['session', 'weekly', 'fable']),
+            holder('long', ['session', 'weekly']),
+            holder('two', ['weekly', 'fable']),
+          ],
+        },
+        dashboard,
+        mode: 'remaining',
+        reveal: false,
+      })
+    );
+    // The column heading is hidden from screen readers, so each cell leads with its own label.
+    const cells = markup.match(/<span>Manual resets <\/span><span data-usable="true">2 usable<\/span><small>.*?<\/small>/g);
+    expect(cells).toHaveLength(3);
+    // A held line over the column's 18 characters would wrap the row, so it reads as a count;
+    // "1 weekly · 1 Fable" fits and stays named.
+    const held = cells!.map((cell) => cell.replace(/<[^>]+>/g, '').replace(/.*2 usable/, ''));
+    expect(held.sort()).toEqual(['1 weekly · 1 Fable', '2 held', '3 held']);
+  });
+
   test('uses server capacity and missing predictions without exposing hidden emails', async () => {
     await i18n.changeLanguage('en');
     const markup = renderToStaticMarkup(

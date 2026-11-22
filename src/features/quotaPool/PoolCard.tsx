@@ -101,15 +101,21 @@ function ResetCell({ resets, spent, now }: { resets: AccountResets | null; spent
     );
   if (spent) return <span data-quiet="">{t('quota_pool.reset_requested')}</span>;
   if (resets.available === 0) return <span data-quiet="">{t('quota_pool.reset_none')}</span>;
+  // The 120px column holds about 18 characters of its 13px caption ("1 weekly · 2 Fable"); a longer
+  // held line reads as a count instead of wrapping the row (the opened row lists each kind).
   const kinds = heldResetKinds(resets, now);
+  const kindsText = kinds
+    ?.map(({ kind, count }) => t(`quota_pool.reset_count_${kind}`, { count }))
+    .join(' · ');
+  const shownKinds = kindsText && kindsText.length <= 18 ? kinds : null;
   return (
     <>
       <span data-usable={resets.usable > 0 || undefined}>
         {t('quota_pool.reset_usable_part', { usable: resets.usable })}
       </span>
       <small>
-        {kinds ? (
-          <ResetKindCounts kinds={kinds} />
+        {shownKinds ? (
+          <ResetKindCounts kinds={shownKinds} />
         ) : (
           t('quota_pool.reset_held_part', { count: resets.available })
         )}
@@ -421,6 +427,10 @@ export function PoolCard({
           },
     { available: 0, usable: 0 }
   );
+  // A lone holder's row already states its resets, but only while that row is on this page.
+  const showResetSummary =
+    resetTotals.available > 0 &&
+    !(resetAccounts.length === 1 && pageAccounts.some((account) => account.id === resetAccounts[0].id));
   const coverageMissing =
     pool.loadedCount !== pool.accountCount || pool.eligibleCount !== pool.accountCount;
   const chip = poolChip(pool.forecastState, savedData);
@@ -663,11 +673,11 @@ export function PoolCard({
                 </span>
               )}
             </span>
-            {/* Only show pool-level reset totals when multiple accounts hold resets (a single
-                holder's row chip already states it once). Coverage facts always show when partial. */}
-            {((resetAccounts.length > 1 && resetTotals.available > 0) || coverageMissing) && (
+            {/* Pool-level reset totals, unless one shown row already states them. Coverage facts
+                always show when partial. */}
+            {(showResetSummary || coverageMissing) && (
               <span className={styles.accountSummary}>
-                {resetAccounts.length > 1 && resetTotals.available > 0 && (
+                {showResetSummary && (
                   <SummaryFact label={t('quota_pool.resets')}>
                     {resetTotals.available}
                     {resetKindTotals && (
@@ -678,7 +688,7 @@ export function PoolCard({
                     )}
                   </SummaryFact>
                 )}
-                {resetAccounts.length > 1 && resetTotals.available > 0 && resetTotals.usable > 0 && (
+                {showResetSummary && resetTotals.usable > 0 && (
                   <SummaryFact label={t('quota_pool.reset_usable_summary')}>
                     {resetTotals.usable}
                   </SummaryFact>
@@ -947,6 +957,8 @@ export function PoolCard({
                     </small>
                   </span>
                   <span className={styles.resetCell}>
+                    {/* The column header is hidden from screen readers, so the cell names itself. */}
+                    <span className={styles.visuallyHidden}>{t('quota_pool.resets')} </span>
                     <ResetCell
                       resets={account.resets}
                       spent={
