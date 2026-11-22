@@ -244,6 +244,22 @@ describe('plan history', () => {
     expect(at(11)).toBe(1200);
   });
 
+  test('a live balance read before a plan change keeps that plan; the forecast waits', () => {
+    // The change was recorded a minute ago without a new reading (e.g. a paused pool profile).
+    const changed: StoredAccount = {
+      ...gemini,
+      planHistory: [
+        { plan: 'g1-ultra-lite-tier', fromMs: 0 },
+        { plan: 'g1-ultra-tier', fromMs: now - MIN },
+      ],
+    };
+    const lite = [reading(9, 44, before), reading(6, 42, before), reading(3, 40, before)];
+    const pool = dashboard([changed], lite).pools.find((p) => p.provider === 'antigravity')!;
+    expect(pool.remainingPoints).toBe(200);
+    expect(pool.recorded.at(-1)?.remainingPoints).toBe(200);
+    expect(pool.forecastState).toBe('collecting');
+  });
+
   test('a downgrade mid-window is not consumption', () => {
     const downgraded: StoredAccount = {
       ...gemini,

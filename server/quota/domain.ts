@@ -397,15 +397,21 @@ function buildPool(
                     ? 'missing-window'
                     : 'ok';
     const rates = status === 'ok' ? pointRates(account.id, nowMs) : { burn: null, drain: null };
+    // A reading counts at the plan it was taken under. Until one is taken under the current plan
+    // there is nothing to forecast from (the pool stays collecting).
+    const readUnderCurrentPlan =
+      !!sample &&
+      weightOf(account, sample.observedAtMs).multiplier === weightOf(account, nowMs).multiplier;
     if (
       status === 'ok' &&
+      readUnderCurrentPlan &&
       sample?.resetAtMs &&
       sample.periodHours &&
       sample.periodHours > 0 &&
       rates.burn !== null
     ) {
       forecastInputs.push({
-        remaining: scale(account.id, sample.remainingPercent, nowMs)!,
+        remaining: scale(account.id, sample.remainingPercent, sample.observedAtMs)!,
         rate: rates.burn * multiplier,
         resetAtMs: sample.resetAtMs,
         periodHours: sample.periodHours,
@@ -415,7 +421,9 @@ function buildPool(
     const emptyAt =
       sample && rates.burn !== null && rates.burn * multiplier > 0
         ? nowMs +
-          (scale(account.id, sample.remainingPercent, nowMs)! / (rates.burn * multiplier)) * HOUR_MS
+          (scale(account.id, sample.remainingPercent, sample.observedAtMs)! /
+            (rates.burn * multiplier)) *
+            HOUR_MS
         : null;
     const plan = weightOf(account, nowMs);
     return {
@@ -462,15 +470,14 @@ function buildPool(
   // leaves the total unknown: there is nothing to stand in for it.
   let estimatedCount = 0;
   const balances = eligible.map((view) => {
-    if (view.status === 'ok') return scale(view.id, view.remainingPercent, nowMs);
+    if (view.status === 'ok') return scale(view.id, view.remainingPercent, view.observedAtMs!);
     if ((view.status !== 'stale' && view.status !== 'error') || view.remainingPercent === null)
       return null;
     estimatedCount += 1;
-    return scale(
-      view.id,
-      view.resetAtMs !== null && view.resetAtMs <= nowMs ? POINTS_PER_UNIT : view.remainingPercent,
-      nowMs
-    );
+    // A window reset since restores the current plan's capacity; a held reading keeps its plan.
+    return view.resetAtMs !== null && view.resetAtMs <= nowMs
+      ? scale(view.id, POINTS_PER_UNIT, nowMs)
+      : scale(view.id, view.remainingPercent, view.observedAtMs!);
   });
   const known = (values: (number | null)[]) => values.filter((v): v is number => v !== null);
   const sumAvailable = (values: (number | null)[]) =>
