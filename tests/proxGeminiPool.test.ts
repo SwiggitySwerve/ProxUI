@@ -266,7 +266,7 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     expect(JSON.stringify(weekly)).not.toContain(SENTINEL);
   });
 
-  test('an upgrade from Ultra Lite to Ultra is picked up within 30 minutes, or at once on a targeted refresh', async () => {
+  test('an upgrade from Ultra Lite to Ultra is picked up 30 minutes after the last plan read, or at once on a targeted refresh', async () => {
     const f = fixture();
     const plan = () => f.store.listAccounts().find((a) => a.provider === 'antigravity')!.plan;
     const tierReads = () =>
@@ -293,6 +293,15 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     expect(await f.collector.refreshAccount(account.id)).toBe(true);
     expect(tierReads()).toBe(3);
     expect(plan()).toBe('g1-ultra-lite-tier');
+
+    // A targeted refresh that fails before the plan read leaves the scheduled interval alone.
+    f.advance(5 * 60_000);
+    f.setQuota({});
+    expect(await f.collector.refreshAccount(account.id)).toBe(false);
+    f.setQuota(summary());
+    f.advance(MANUAL_REFRESH_INTERVAL_MS);
+    await f.collector.refresh();
+    expect(tierReads()).toBe(3);
   });
   test('a reading without the Gemini group records explicit missing windows, not zero', () => {
     const { samples } = quotaSamples(

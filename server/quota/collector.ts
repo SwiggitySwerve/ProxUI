@@ -74,8 +74,9 @@ import {
 /** A targeted read of one account starts at most this often. */
 const ACCOUNT_REFRESH_FLOOR_MS = 20_000;
 /**
- * Claude and Antigravity name the plan only in a separate profile read, asked at most this often,
- * so an upgrade or downgrade reweights the pool within half an hour.
+ * Claude and Antigravity name the plan only in a separate profile read. Scheduled collections ask
+ * again once this long has passed since the last ask, so an upgrade or downgrade reweights the
+ * pool at the first collection after it, without a restart.
  */
 const PLAN_REFRESH_MS = 30 * 60_000;
 /** A targeted read re-reads the plan too, but not more often than this. */
@@ -918,11 +919,6 @@ export class QuotaCollector {
       const current = this.store.listAccounts().find((account) => account.id === accountId);
       if (!current || current.disabled || current.retired) return false;
       this.accountAttempts.set(accountId, this.now());
-      // A targeted read (the row's Refresh) also re-reads the plan, so a changed subscription
-      // shows at once instead of at the next plan interval.
-      const planAttempt = this.profileAttempts.get(accountId);
-      if (planAttempt !== undefined && this.now() - planAttempt >= TARGETED_PLAN_FLOOR_MS)
-        this.profileAttempts.delete(accountId);
       try {
         const found = await this.inventoryEntry(source, current, signal);
         if (!found) return false;
@@ -935,7 +931,10 @@ export class QuotaCollector {
           signal,
           new Map([[accountId, current.planObservedAtMs ?? null]]),
           entry.chatgptAccountId,
-          entry.projectId
+          entry.projectId,
+          // A targeted read (the row's Refresh) re-reads the plan sooner, so a changed
+          // subscription shows at once.
+          TARGETED_PLAN_FLOOR_MS
         );
       } catch {
         if (!signal.aborted) this.addIssue(source, stored.provider, 'quota-unavailable');
@@ -988,18 +987,19 @@ export class QuotaCollector {
     key: string,
     signal: AbortSignal,
     usageBody: unknown,
-    storedPlans: Map<string, number | null>
+    storedPlans: Map<string, number | null>,
+    planIntervalMs: number
   ): Promise<void> {
     let plan: string | null = null;
     if (account.provider === 'codex') {
       plan = planFromCodexUsage(usageBody);
     } else {
       // Claude names the plan only in its profile and Antigravity only in loadCodeAssist, so they
-      // are asked separately, every PLAN_REFRESH_MS.
+      // are asked separately, at most every planIntervalMs.
       const observedAt = storedPlans.get(account.id) ?? null;
       const attemptedAt = this.profileAttempts.get(account.id) ?? null;
       const last = Math.max(observedAt ?? -Infinity, attemptedAt ?? -Infinity);
-      if (this.profileAttempts.has(account.id) && this.now() - last < PLAN_REFRESH_MS) return;
+      if (this.profileAttempts.has(account.id) && this.now() - last < planIntervalMs) return;
       this.profileAttempts.set(account.id, this.now());
       try {
         if (account.provider === 'antigravity') {
@@ -1178,7 +1178,8 @@ export class QuotaCollector {
     outerSignal: AbortSignal,
     storedPlans: Map<string, number | null>,
     chatgptAccountId: string | null,
-    projectId: string | null = null
+    projectId: string | null = null,
+    planIntervalMs = PLAN_REFRESH_MS
   ): Promise<boolean> {
     if (!this.store.isLive(account.id)) return false;
     const own = new AbortController();
@@ -1194,7 +1195,8 @@ export class QuotaCollector {
         AbortSignal.any([outerSignal, own.signal]),
         storedPlans,
         chatgptAccountId,
-        projectId
+        projectId,
+        planIntervalMs
       );
     } finally {
       controllers.delete(own);
@@ -1212,7 +1214,8 @@ export class QuotaCollector {
     signal: AbortSignal,
     storedPlans: Map<string, number | null>,
     chatgptAccountId: string | null,
-    projectId: string | null
+    projectId: string | null,
+    planIntervalMs: number
   ): Promise<boolean> {
     const provider = account.provider;
     if (!isBuiltInPoolProvider(provider)) {
@@ -1307,7 +1310,8 @@ export class QuotaCollector {
         key,
         signal,
         usageBody,
-        storedPlans
+        storedPlans,
+        planIntervalMs
       );
     }
     return !signal.aborted && this.store.isLive(account.id);
