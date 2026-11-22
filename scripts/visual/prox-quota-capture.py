@@ -885,7 +885,8 @@ const name = e => (e.getAttribute('aria-label') || '').trim();
 
 
 async def check_fact_wrap(page, state, width):
-    """I1: at 390/820/1100/1280/1440/1920 no Now/Forecast fact label, value or caption wraps, clips or shrinks."""
+    """I1: at 390/820/1100/1280/1440/1920 no Now/Forecast fact label, value or caption wraps, clips or shrinks; on a phone
+    a Forecast cell's label may take two lines (G12b), the gap to its value is held by the phone Forecast check."""
     if width not in C1_FACT_WIDTHS:
         return []
     return await page.evaluate("(cardless) => {" + C1_PRELUDE + r"""
@@ -900,8 +901,11 @@ async def check_fact_wrap(page, state, width):
         const tops = [];
         for (const q of range.getClientRects()) if (q.width > 0 && !tops.some(t => Math.abs(t - q.top) < line / 2)) tops.push(q.top);
         if (!shown(e) || !e.checkVisibility({checkOpacity: true})) why.push('hidden');
-        if (r.height > line * 1.5) why.push(`taller than 1.5 lines (${r.height.toFixed(1)} vs ${line.toFixed(1)})`);
-        if (tops.length > 1) why.push(`wraps onto ${tops.length} lines`);
+        // G12b: a phone Forecast cell's label (display grid, label | value) may wrap onto a second line rather than touch
+        // its value; that label alone, and never beyond two lines. Every value and caption still holds one line.
+        const phoneLabel = e.tagName === 'DT' && !!e.closest('[data-group="forecast"]') && innerWidth <= 640, lines = phoneLabel ? 2 : 1;
+        if (r.height > line * (lines + 0.5)) why.push(`taller than ${lines + 0.5} lines (${r.height.toFixed(1)} vs ${line.toFixed(1)})`);
+        if (tops.length > lines) why.push(`wraps onto ${tops.length} lines`);
         if (s.textOverflow === 'ellipsis') why.push('ellipsis');
         if (s.display !== 'inline' && e.scrollWidth > e.clientWidth + 1) why.push('clipped or overflowing its box');
         if (parseFloat(s.fontSize) < 12) why.push('type below 12px');
@@ -1903,8 +1907,9 @@ const g12Header = sb => { // the provider header's two cards
 
 
 async def check_panel_order(page, state, width):
-    """H3 (G12): an opened row is three cards. At 900px and below the DOM and the reading order are Manual resets,
-    Usage, Billing (Manual resets starting at or below the limits); above 900px they are Usage, Billing, Manual resets.
+    """H3 (G12): an opened row is three cards. At 900px and below the DOM order is Usage, Manual resets, Billing (Usage,
+    which leads with the burn rate, starting at or below the limits); above 900px it is Usage, Billing, Manual resets.
+    One column reads in DOM order; two or three columns read Usage, Billing, Manual resets.
     The cards' columns follow the drawer's width (three from 1000px, two from 660px with Manual resets across under
     Usage and Billing, one below); a stacked card spans the layout, Manual resets spans it in two columns, and Usage
     and Billing share a width there. Usage holds the burn rate in its strip and no Burn rate fact."""
@@ -1922,8 +1927,12 @@ async def check_panel_order(page, state, width):
         if (/Burn rate/.test([...usage.querySelectorAll('dt')].map(d => d.textContent).join())) fails.push({who, why: 'Usage repeats the burn rate'});
         if (!usage.querySelector(':scope > header [class*="__burnDock___"]')) fails.push({who, why: 'the burn rate is not in the Usage strip'});
         if (mode.cols !== mode.want) fails.push({who, why: `the cards are ${mode.cols} across in a ${mode.drawer}px drawer, expected ${mode.want}`});
-        const want = stacked ? [resets, usage, billing] : [usage, billing, resets], names = stacked ? 'Manual resets, Usage, Billing' : 'Usage, Billing, Manual resets';
-        if (secs.some((s, i) => s !== want[i])) fails.push({who, why: 'DOM order is not ' + names, got: secs.map(g12Kind)});
+        // DOM: Usage, Manual resets, Billing at 900px and below (phones read the burn rate first, then resets);
+        // Usage, Billing, Manual resets above. Visual: one column follows the DOM; two or three columns read Usage,
+        // Billing, then Manual resets (across under them in two columns).
+        const dom = stacked ? [usage, resets, billing] : [usage, billing, resets], domNames = stacked ? 'Usage, Manual resets, Billing' : 'Usage, Billing, Manual resets';
+        if (secs.some((s, i) => s !== dom[i])) fails.push({who, why: 'DOM order is not ' + domNames, got: secs.map(g12Kind)});
+        const want = mode.want === 1 ? dom : [usage, billing, resets], names = mode.want === 1 ? domNames : 'Usage, Billing, Manual resets';
         // Reading order: each card starts below the one before it, or level with it and to its right.
         for (let i = 1; i < want.length; i++) {
           const a = r(want[i - 1]), b = r(want[i]);
@@ -1931,7 +1940,7 @@ async def check_panel_order(page, state, width):
         }
         if (stacked) {
           const limits = row.querySelector('summary > ul[aria-label="Limits"]'), lim = limits ? [...limits.children].filter(shown) : [], last = lim[lim.length - 1] || limits;
-          if (last && r(resets).top < r(last).bottom - 1) fails.push({who, why: 'the first card starts above the limits end'});
+          if (last && r(usage).top < r(last).bottom - 1) fails.push({who, why: 'the first card starts above the limits end'});
         }
         const inner = mode.layout.clientWidth;
         if (mode.want === 1) {
@@ -2251,7 +2260,8 @@ async def check_search_label(page, name, state):
 async def check_rate_balance(page, name, state):
     """H1-C4, rewritten in h2-C and again for G12: a rate view's balance is the card's titled "Now" dock, the footer of
     the lead card (the same dock as the Remaining view's): the heading "Now", then one dt/dd fact with the label and the
-    value on one line (the heading, label and value tops within 4px, in that order), the number in the value style, and
+    value on one line (the heading, label and value tops within 4px, in that order; a value without room may drop under
+    its label, the heading and label still share a line), the number in the value style, and
     " of 300 points" in the same colour and weight as the headline's "points/h"."""
     if state not in ("drain", "burn"):
         return []
@@ -2273,7 +2283,12 @@ async def check_rate_balance(page, name, state):
         if (!/^[\d.,]+\s+of\s+[\d.,]+\s+points$/.test(dd.textContent.trim())) out.push({who, why: 'the Now value is not "N of M points"', text: dd.textContent});
         if (heading) {
           const ph = g12Paint(heading), pt = g12Paint(dt), pd = g12Paint(dd);
-          if (Math.max(ph.top, pt.top, pd.top) - Math.min(ph.top, pt.top, pd.top) > 4 || ph.right > pt.left + 1 || pt.right > pd.left + 1) out.push({who, why: 'the Now heading, label and value are not on one line in that order', tops: [ph.top, pt.top, pd.top].map(Math.round), lefts: [ph.left, pt.left, pd.left].map(Math.round)});
+          // G12b: heading, label, value in that order on one line, or (narrow cards) "Now" as a caption right above the
+          // label at its left edge; with no room the value drops under its label.
+          const dropped = pd.top >= pt.bottom - 2;
+          const inline = Math.abs(ph.top - pt.top) <= 4 && ph.right <= pt.left + 1;
+          const caption = ph.bottom <= pt.top + 2 && pt.top - ph.bottom <= 10 && Math.abs(ph.left - pt.left) <= 2;
+          if (!(inline || caption) || (dropped ? pd.right < pt.left : (Math.abs(pd.top - pt.top) > 4 || pt.right > pd.left + 1))) out.push({who, why: 'the Now heading is neither beside the label nor a caption right above it, or the value is neither beside the label nor under it', tops: [ph.top, pt.top, pd.top].map(Math.round), lefts: [ph.left, pt.left, pd.left].map(Math.round)});
         }
         const us = getComputedStyle(unit), ss = getComputedStyle(small), ds = getComputedStyle(dd);
         if (us.color !== ss.color || us.fontWeight !== ss.fontWeight) out.push({who, why: 'the balance unit style differs from "points/h"', headline: [us.color, us.fontWeight], balance: [ss.color, ss.fontWeight]});
@@ -2747,8 +2762,9 @@ async def check_phone_forecast_stack(page, name, width):
     dock inside it at its bottom (below the number, spanning the card, its label and value on one line, the value at the
     dock's right edge); every Forecast cell is inside the Forecast card, 12px off its sides. Under 960px of header the
     cards stack and span it, from 960px they sit side by side at one top. In a header of 600px or less a cell reads label
-    left, value right (a value without room drops under its label at the right edge; "+N points" under its value at
-    the right edge); above 600px it reads label over value, from the label's left edge. No text leaves its cell, and
+    left, value right, 8px apart (a long label wraps to two lines; a value without room drops under its label at the
+    right edge; "+N points" under its value at the right edge); above 600px it reads label over value, from the label's
+    left edge. The Now heading and label share a line, the value too or under the label. No text leaves its cell, and
     the cells share one label and one value size."""
     if name not in P_FORECAST_CASES:
         return []
@@ -2772,7 +2788,11 @@ async def check_phone_forecast_stack(page, name, width):
           if (!heading || !dt || !dd) fails.push({who, why: 'the Now dock lacks its heading, label or value'});
           else {
             const ph = g12Paint(heading), pt = g12Paint(dt), pd = g12Paint(dd), edge = dr.right - 1 - parseFloat(ds.paddingRight);
-            if (Math.max(ph.top, pt.top, pd.top) - Math.min(ph.top, pt.top, pd.top) > 4) fails.push({who, why: 'the Now heading, label and value are not on one line', tops: [ph.top, pt.top, pd.top].map(Math.round)});
+            // G12b: the heading shares the label's line, or (narrow cards) is a caption right above it at its left edge;
+            // the value shares the label's line, or (no room) drops under the label.
+            const dropped = pd.top >= pt.bottom - 2;
+            const caption = ph.bottom <= pt.top + 2 && pt.top - ph.bottom <= 10 && Math.abs(ph.left - pt.left) <= 2;
+            if (!(Math.abs(ph.top - pt.top) <= 4 || caption) || (!dropped && Math.abs(pd.top - pt.top) > 4)) fails.push({who, why: 'the Now heading is neither on the label\'s line nor a caption right above it, or the value is neither on the label\'s line nor under it', tops: [ph.top, pt.top, pd.top].map(Math.round)});
             if (Math.abs(pd.right - edge) > 2) fails.push({who, why: 'the Now value is not at the dock\'s right edge', value_right: px(pd.right), edge: px(edge)});
           }
           if (g12Out(dock, dr) > 0.5) fails.push({who, why: 'text leaves the Now dock'});
@@ -2789,7 +2809,8 @@ async def check_phone_forecast_stack(page, name, width):
           const pt = g12Paint(dt), pd = g12Paint(dd), ps = sm ? g12Paint(sm) : null, edge = cr.right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight);
           if (h.phone) {
             const wrapped = pd.top >= pt.bottom - 2;
-            if (!wrapped && (pd.left < pt.right + 4 || Math.abs(pd.top - pt.top) > 3)) fails.push({...at, why: 'the label and value are neither on one line nor stacked'});
+            // G12b: label | value is a grid with an 8px gap; a long label wraps to two lines before it touches its value.
+            if (!wrapped && (pd.left < pt.right + 7.5 || Math.abs(pd.top - pt.top) > 3)) fails.push({...at, why: 'the label and value are neither on one line (8px apart) nor stacked', gap: px(pd.left - pt.right)});
             if (Math.abs(pd.right - edge) > 2) fails.push({...at, why: wrapped ? 'a value under its label is not at the right edge' : 'the value is not at the right edge', value_right: px(pd.right), edge: px(edge)});
             if (ps && (ps.top < pd.bottom - 2 || Math.abs(ps.right - edge) > 2)) fails.push({...at, why: 'the note is not under the value at the right edge'});
           } else {
@@ -2846,8 +2867,9 @@ const textRight = el => { // the right edge of the painted text, not of its box
 
 async def check_fact_panel_gap(page, state, width):
     """D1, rewritten for G12: in every opened row of the expanded cases the facts are three cards (Usage, Billing,
-    Manual resets) in as many columns as the drawer's width calls for. Cards in one row share their top and height,
-    and their title strips share a top and a height (all within 1px, no strip under 52px); the burn rate figure sits at
+    Manual resets) in as many columns as the drawer's width calls for. Cards in one row share their top and end at
+    their own content (G12b: heights may differ, none runs more than 24px below its text), and their title strips share
+    a top and a height (within 1px), each exactly 52px (60px with a coarse pointer or at 640px and below); the burn rate figure sits at
     the right of Usage's strip, Use reset inside Manual resets' strip at its right; no card's painted text leaves it
     or comes within 12px of its sides; every fact reads label left, value right, on one line, or the value drops under
     its label at the right edge (the expiry lines, left under theirs); a caption sits under its value at the right
@@ -2897,14 +2919,18 @@ async def check_fact_panel_gap(page, state, width):
         // Cards and strips: one row shares a top and a height, and so do their strips; no strip is under 52px.
         const lines = [];
         for (const c of secs) { const top = r(c).top, g = lines.find(g => Math.abs(g.top - top) <= 1); if (g) g.cards.push(c); else lines.push({top, cards: [c]}); }
+        // G12b: cards share their top and end at their own content (no blank run under a shorter card).
+        if (lines.length !== Math.ceil(secs.length / mode.cols)) fails.push({who, why: `the cards do not share a top: ${lines.length} rows for ${mode.cols} across`, tops: lines.map(g => Math.round(g.top))});
+        for (const c of secs) { const room = r(c).bottom - g12Paint(c).bottom; if (room > 24) fails.push({who, card: g12Kind(c), why: `the card runs ${room.toFixed(1)}px below its content, at most 24 (cards end at their own content)`}); }
         for (const g of lines) {
-          const hs = g.cards.map(c => r(c).height), strips = g.cards.map(c => c.querySelector(':scope > header')).filter(Boolean);
-          if (Math.max(...hs) - Math.min(...hs) > 1) fails.push({who, why: 'cards in one row differ in height', heights: hs.map(px)});
+          const strips = g.cards.map(c => c.querySelector(':scope > header')).filter(Boolean);
           const sh = strips.map(s => r(s).height), st = strips.map(s => r(s).top);
           if (strips.length !== g.cards.length) fails.push({who, why: 'a card has no title strip'});
           else if (Math.max(...sh) - Math.min(...sh) > 1 || Math.max(...st) - Math.min(...st) > 1) fails.push({who, why: 'title strips in one row differ in height or top', heights: sh.map(px), tops: st.map(Math.round), parts: strips.map(s => [...s.querySelectorAll(':scope > *')].map(k => [k.tagName.toLowerCase(), px(r(k).height), px(r(k).width)]))});
         }
-        for (const c of secs) { const s = c.querySelector(':scope > header'); if (s && r(s).height < 51.5) fails.push({who, card: g12Kind(c), why: `the title strip is ${r(s).height.toFixed(1)}px, at least 52`}); }
+        // Every title strip is exactly 52px (60px with a coarse pointer or at 640px and below).
+        const stripHeight = matchMedia('(pointer: coarse), (max-width: 640px)').matches ? 60 : 52;
+        for (const c of secs) { const s = c.querySelector(':scope > header'); if (s && Math.abs(r(s).height - stripHeight) > 0.5) fails.push({who, card: g12Kind(c), why: `the title strip is ${r(s).height.toFixed(1)}px, exactly ${stripHeight} expected`}); }
         for (let i = 0; i < secs.length; i++) for (let j = i + 1; j < secs.length; j++) {
           const a = r(secs[i]), b = r(secs[j]);
           if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) fails.push({who, why: `${g12Kind(secs[i])} and ${g12Kind(secs[j])} overlap`});
@@ -4451,15 +4477,16 @@ UNIVERSAL_CHECKS_JS = "(width) => {" + C3_HELPERS + r"""
     }
   }
 
-  // D3c: FactPanel Usage->Billing vertical stretch bound across all open drawers.
+  // D3c: no vertical stretch between cards that stack in one column of an open drawer (G12: any two cards, the
+  // nearer one above, wherever the reset card sits between Usage and Billing).
   for (const facts of document.querySelectorAll('article details[open] [class*="__accountFacts___"]')) {
     if (!shown(facts)) continue;
-    const secs = [...facts.querySelectorAll('section')].filter(s => shown(s) && s.dataset.tone !== 'accent');
-    if (secs.length >= 2) {
-      const a = r(secs[0]), b = r(secs[1]);
-      if (Math.abs(a.left - b.left) < 4 && b.top - a.bottom > 48) {
-        d3.push({why: `FactPanel vertical section gap ${(b.top - a.bottom).toFixed(0)}px exceeds 48px`});
-      }
+    const secs = [...facts.querySelectorAll('section')].filter(shown).map(r).sort((x, y) => x.top - y.top);
+    for (let i = 1; i < secs.length; i++) {
+      const b = secs[i], above = secs.slice(0, i).filter(a => Math.abs(a.left - b.left) < 4 && a.bottom <= b.top + 1);
+      if (!above.length) continue;
+      const gap = b.top - Math.max(...above.map(a => a.bottom));
+      if (gap > 48) d3.push({why: `FactPanel vertical section gap ${gap.toFixed(0)}px exceeds 48px`});
     }
   }
 

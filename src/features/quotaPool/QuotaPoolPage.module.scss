@@ -4823,7 +4823,8 @@ $table-tiers: (
 }
 .pool .poolHeader .leadCard > .headline {
   flex: 1 1 auto;
-  justify-content: center;
+  // Top-aligned, so a withheld number ("Withheld", no Now strip) sits on the ready number's baseline.
+  justify-content: flex-start;
   min-width: 0;
   max-width: none;
   margin: 0;
@@ -5220,5 +5221,20 @@ $table-tiers: (
         padding: 7px 10px;
       }
     }
+  }
+}
+// Phones: the forecast cells give the label the room to sit beside its date at 390px; below that the label
+// may take two lines, never running under its value.
+@container poolHeader (max-width: 600px) {
+  .pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] {
+    padding-inline: 11px;
+    .stats > div {
+      padding-inline: 7px;
+    }
+  }
+}
+@container poolHeader (max-width: 340px) {
+  .pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] .stats dt {
+    white-space: normal;
   }
 }
