@@ -757,9 +757,9 @@ export class QuotaStore {
         'SELECT plan FROM quota_plan_history WHERE accountId = ? ORDER BY fromMs DESC LIMIT 1'
       )
       .get(accountId);
-    // Nothing to end before the first plan; that plan is in force from the start, since an
-    // account's first samples precede its first plan read.
-    if (!latest && plan === '') return;
+    // An account's first entry holds from the start: its first samples precede its first plan
+    // read. A provider that first names no plan records that (''), so a plan it names later starts
+    // when it is first reported instead of reaching back over the earlier readings.
     if (latest?.plan === plan) return;
     this.db
       .query('INSERT OR REPLACE INTO quota_plan_history (accountId, plan, fromMs) VALUES (?, ?, ?)')

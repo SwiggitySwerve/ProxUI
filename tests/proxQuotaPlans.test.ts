@@ -329,6 +329,17 @@ describe('plan persistence', () => {
       'twenty',
     ]);
   });
+  test('a discovered account that first names no plan keeps its early readings unknown', () => {
+    const store = new QuotaStore(':memory:');
+    stores.push(store);
+    store.recordInventory('codex', [account('x', 'codex')], now);
+    store.recordDiscoveredReading('x', now, null, []);
+    store.recordDiscoveredReading('x', now + 1, 'five', []);
+    expect(store.listAccounts()[0].planHistory).toEqual([
+      { plan: '', fromMs: 0 },
+      { plan: 'five', fromMs: now + 1 },
+    ]);
+  });
   test('a plan stored before the history existed holds from the start', () => {
     const dir = mkdtempSync(join(tmpdir(), 'prox-plan-history-'));
     try {
