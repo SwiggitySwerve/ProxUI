@@ -76,9 +76,11 @@ credential UI. The store owns persistence; the collector uses only public APIs.
   An unknown plan counts as one unit and is shown as unknown. Points are not tokens.
 - Plans come from provider responses only: Codex's usage `plan_type`, Claude's
   OAuth profile tier and Antigravity's `loadCodeAssist` tier id (the paid tier
-  first). The last two are separate reads, asked at most every 30 minutes, and a
-  targeted refresh asks again when the last ask is at least 5 minutes old, so an
-  upgrade or downgrade reweights the pool without a restart. A failed plan read
+  first). The last two are separate reads, asked at most every 30 minutes. A
+  targeted refresh, or a poll whose windows suggest a plan change
+  (`planChangeSuspected`: a window in use restarted before its reset, or moved 20+
+  points within one cycle), asks again when the last ask is at least 5 minutes old,
+  so an upgrade or downgrade reweights the pool at the poll that shows it. A failed plan read
   changes nothing else.
 - A plan change applies from when it is first seen (`quota_plan_history`). Each sample
   keeps the weight of the plan in force when it was recorded (`planAt`), so an upgrade

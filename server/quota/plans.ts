@@ -1,6 +1,10 @@
 import type { PoolProfile } from '../../src/domain/providerCatalog';
 import { isBuiltInPoolProvider } from '../../src/domain/quotaPool/providers';
-import type { BuiltInPoolProviderId, PoolProviderId } from '../../src/domain/quotaPool/types';
+import type {
+  AccountQuotaWindow,
+  BuiltInPoolProviderId,
+  PoolProviderId,
+} from '../../src/domain/quotaPool/types';
 import { isRecord } from '../../src/utils/helpers';
 import { normalizePlanType, parseCodexUsagePayload } from '../../src/utils/quota/parsers';
 import { parseAntigravitySubscriptionSummary } from '../../src/services/api/antigravitySubscription';
@@ -72,6 +76,42 @@ export function planAt(
   for (const entry of history) if (entry.fromMs <= atMs) plan = entry.plan;
   // An empty entry marks a time the provider named no plan.
   return plan || undefined;
+}
+
+/** Reset times this close are the same cycle (providers round them). */
+const SAME_CYCLE_MS = 60_000;
+/** A move this large within one cycle is a capacity change, not usage between two polls. */
+const PLAN_SIGNAL_PERCENT = 20;
+
+/**
+ * Whether a poll's windows suggest the plan changed since the previous poll, so the plan is read
+ * now rather than at the next plan interval. An upgrade can open fresh windows before the old ones
+ * reset (Google AI Ultra Lite to Ultra did), and a capacity change rescales the used share of a
+ * window it keeps. So: a window in use restarted before its reset, or moved by at least
+ * PLAN_SIGNAL_PERCENT points within one cycle. A window idle at 100% may slide its reset each
+ * poll and never counts.
+ */
+export function planChangeSuspected(
+  previous: readonly AccountQuotaWindow[] | undefined,
+  next: readonly AccountQuotaWindow[],
+  nowMs: number
+): boolean {
+  return next.some((window) => {
+    const before = previous?.find((candidate) => candidate.id === window.id);
+    if (
+      !before ||
+      before.remainingPercent === null ||
+      window.remainingPercent === null ||
+      before.resetAtMs === null ||
+      window.resetAtMs === null
+    ) {
+      return false;
+    }
+    if (Math.abs(window.resetAtMs - before.resetAtMs) > SAME_CYCLE_MS) {
+      return before.remainingPercent < 100 && before.resetAtMs - nowMs > SAME_CYCLE_MS;
+    }
+    return Math.abs(window.remainingPercent - before.remainingPercent) >= PLAN_SIGNAL_PERCENT;
+  });
 }
 
 /** ChatGPT's usage response names the plan, e.g. "pro" or "promax". */

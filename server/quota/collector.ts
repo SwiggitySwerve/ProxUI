@@ -50,7 +50,12 @@ import {
 import { normalizeClaudeUsageSnapshot } from '../../src/services/api/claudeUsage';
 import type { ClaudeUsageSnapshot } from '../../src/types/quota';
 import { isRecord } from '../../src/utils/helpers';
-import { planFromAntigravityCodeAssist, planFromClaudeProfile, planFromCodexUsage } from './plans';
+import {
+  planChangeSuspected,
+  planFromAntigravityCodeAssist,
+  planFromClaudeProfile,
+  planFromCodexUsage,
+} from './plans';
 import { CODE_ASSIST_REQUEST_BODY } from '../../src/services/api/antigravitySubscription';
 import { QuotaStore } from './store';
 import type { InventorySourceState, InventorySourceStatus } from './inventory';
@@ -79,7 +84,10 @@ const ACCOUNT_REFRESH_FLOOR_MS = 20_000;
  * pool at the first collection after it, without a restart.
  */
 const PLAN_REFRESH_MS = 30 * 60_000;
-/** A targeted read re-reads the plan too, but not more often than this. */
+/**
+ * A targeted read, or a poll whose windows suggest a plan change (`planChangeSuspected`), re-reads
+ * the plan too, but not more often than this.
+ */
 const TARGETED_PLAN_FLOOR_MS = 5 * 60_000;
 const BILLING_REFRESH_MS = 6 * 60 * 60 * 1000;
 /** Codex credit details are re-read at most this often while their count is unchanged. */
@@ -1270,6 +1278,11 @@ export class QuotaCollector {
     // The account may have left its inventory while the request was in flight. Its rows can be
     // gone, so writing a sample would fail the whole collection; nothing may be stored for it.
     if (!signal.aborted && this.store.isLive(account.id)) {
+      const planSuspect = planChangeSuspected(
+        this.latestWindows.get(account.id),
+        windows,
+        this.now()
+      );
       try {
         this.store.recordSamples(samples);
         this.latestWindows.set(account.id, windows);
@@ -1313,7 +1326,7 @@ export class QuotaCollector {
         signal,
         usageBody,
         storedPlans,
-        planIntervalMs,
+        planSuspect ? Math.min(planIntervalMs, TARGETED_PLAN_FLOOR_MS) : planIntervalMs,
         // Antigravity may fill one window from a later endpoint: the poll began at the earliest.
         samples.length ? Math.min(...samples.map((sample) => sample.observedAtMs)) : undefined
       );
