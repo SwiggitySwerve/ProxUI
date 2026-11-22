@@ -5052,18 +5052,6 @@ $table-tiers: (
     margin-left: auto;
   }
 }
-// Narrow cards: "Now" is a small caption over the strip's label and value, so a wrapping value never
-// strands "Now ·" with its separator on a line of its own.
-@container poolHeader (max-width: 600px) {
-  .pool .poolHeader .leadCard > .statsGroup[data-group='now'] {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 2px;
-    .statsHeading::after {
-      content: none;
-    }
-  }
-}
 // The skeleton draws the loaded header's two cards, so nothing reflows when data arrives (G12).
 .page .loading > .loadingStats {
   display: grid;
@@ -5168,7 +5156,7 @@ $table-tiers: (
   line-height: 1.08;
   letter-spacing: -0.04em;
 }
-@container poolHeader (max-width: 600px) {
+@media (max-width: 640px) {
   .pool.combined > .headline strong {
     font-size: 32px;
   }
@@ -5275,5 +5263,21 @@ $table-tiers: (
 @container poolHeader (min-width: 1000px) {
   .pool .poolHeader > .statsBlock {
     grid-template-columns: minmax(280px, 0.85fr) minmax(480px, 1.6fr);
+  }
+}
+
+// Combined usage: the rate definition sits in the number card, under the figure it defines (G12b).
+.pool.combined > .headline .rateDefinition {
+  margin: 6px 0 0;
+  max-width: 34ch;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+// Phones: a tighter Combined number card, so its chart starts sooner.
+@media (max-width: 640px) {
+  .pool.combined > .headline {
+    margin-top: 0;
+    padding: 12px 13px;
   }
 }
