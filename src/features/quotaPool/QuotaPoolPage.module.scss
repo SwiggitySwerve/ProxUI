@@ -2185,17 +2185,17 @@ $table-tiers: (
 }
 
 /* G12 */
-// An opened row's facts are section tiles in one recessed tray (the user's pick, Neon's option 2):
-// the burn rate figure, Usage, Billing and Manual resets, each a tile that fills its share of the
-// row. Every tile centres its content on both axes, labels right-aligned against values so a list
-// meets at its centre line, so nothing hangs on a tile's edge or leaves an empty run beside it.
-// Tiles share one row from a 1080px drawer, a 2 × 2 grid from 640px, and stack below that (Manual
-// resets right after the figure on phones, where PoolCard puts it first in the DOM).
+// An opened row's facts are three cards (Neon's option 3, the user's pick): Usage, with the burn rate
+// as the figure in its title strip; Billing; and Manual resets, the one accent card, with Use reset in
+// its strip. Every strip is one height, so the titles and the first rows line up; facts are label-left,
+// value-right rows split by hairlines. One row from a 960px drawer; from 600px, Usage beside Billing
+// with Manual resets across under them; stacked below (Manual resets first on phones, where PoolCard
+// puts it first in the DOM).
 .pool {
-  --tray-bg: #080808;
-  --tray-border: rgba(255, 255, 255, 0.08);
-  --tile-bg: #121212;
-  --tile-border: rgba(255, 255, 255, 0.06);
+  --card-bg: #121212;
+  --card-strip: #0c0c0c;
+  --card-cell: #0a0a0a;
+  --card-hairline: rgba(255, 255, 255, 0.055);
 }
 .accountFacts {
   container: drawer-facts / inline-size;
@@ -2204,138 +2204,198 @@ $table-tiers: (
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
-  gap: 6px;
-  padding: 5px;
-  border: 1px solid var(--tray-border);
-  border-radius: 14px;
-  background: var(--tray-bg);
-  > .burnLead,
-  > section,
-  > section[data-tone='accent'] {
-    grid-column: auto;
-    grid-row: auto;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-width: 0;
-    margin: 0;
-    padding: 14px 16px;
-    border: 1px solid var(--tile-border);
-    border-radius: 9px;
-    background: var(--tile-bg);
-    text-align: center;
-  }
-  // Manual resets keeps the one accent: the provider tint on its tile.
-  > section[data-tone='accent'] {
-    border-color: color-mix(in srgb, var(--pool-accent) 30%, transparent);
-    background:
-      radial-gradient(
-        120% 90% at 50% 0%,
-        color-mix(in srgb, var(--pool-accent) 10%, transparent),
-        transparent 72%
-      ),
-      var(--tile-bg);
-  }
-  // A tile's title (and Use reset beside it) centres over its body; the body takes the rest of the
-  // tile and sits in its middle.
-  > section > header,
-  > section[data-action] > header {
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 8px 12px;
-    margin: 0 0 10px;
-  }
-  > section > header h4 {
-    color: var(--text-primary);
-  }
-  > section > p {
-    margin: 0 0 10px;
-    text-align: center;
-  }
-  // Facts read label over value (the page's fact pattern), centred, so a tile is only as wide as its
-  // longest value and every tile fits one drawer row.
-  > section > dl {
-    width: 100%;
-    grid-template-columns: minmax(0, 1fr);
-    justify-items: center;
-    gap: 0;
-    text-align: center;
-  }
-  > section > dl > div {
-    display: contents;
-  }
-  > section > dl > div > dt {
-    padding-top: 10px;
-  }
-  > section > dl > div > dt:first-child {
-    padding-top: 0;
-  }
-  > section > dl > div > dd {
-    margin: 2px 0 0;
-    text-align: center;
-  }
-  // A value never breaks; its caption (an estimate's basis, a reason) wraps under it instead.
-  > section > dl > div > dd:not([class*='detail']) span {
-    white-space: nowrap;
-  }
-  > section[data-tone='accent'] > dl > div > dd span {
-    white-space: normal;
-  }
+  gap: 12px;
 }
-// The burn rate: label over the figure, centred in its tile.
-.burnLead {
-  justify-content: center;
-  > div {
+.pool .factsLayout > section,
+.pool .factsLayout > section[data-tone='accent'] {
+  grid-column: auto;
+  grid-row: auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--card-bg);
+  > header {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 2px;
+    justify-content: space-between;
+    gap: 6px 12px;
+    min-height: 52px;
+    margin: 0;
+    padding: 9px 15px;
+    background: var(--card-strip);
+    border-bottom: 1px solid var(--card-hairline);
   }
-  dt {
+  > header > h4 {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px 12px;
+    flex-wrap: wrap;
+    margin: 0;
     color: var(--text-primary);
     font-size: 13px;
     line-height: 18px;
     font-weight: 600;
   }
-  dd {
+  > p {
     margin: 0;
+    padding: 12px 15px 0;
     color: var(--text-secondary);
-    font-size: 14px;
-    line-height: 20px;
+    font-size: 13px;
+    line-height: 18px;
   }
-  strong {
+  > dl {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    margin: 0;
+    padding: 12px 15px 15px;
+  }
+  // Label left, value right; a value without room drops under its label, still at the right edge.
+  > dl > div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 2px 16px;
+    padding: 7px 0;
+  }
+  > dl > div:first-child {
+    padding-top: 0;
+  }
+  > dl > div:last-child {
+    padding-bottom: 0;
+  }
+  > dl > div + div {
+    border-top: 1px solid var(--card-hairline);
+  }
+  > dl > div > dt {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 19px;
+  }
+  > dl > div > dd {
+    margin: 0 0 0 auto;
     color: var(--text-primary);
-    font-size: 30px;
-    line-height: 36px;
-    font-weight: 600;
-    letter-spacing: -0.02em;
+    font-size: 13.5px;
+    line-height: 19px;
+    font-weight: 500;
+    text-align: right;
     font-variant-numeric: tabular-nums;
   }
-  dd[data-state='notReported'] {
+  // A caption (an estimate's basis, a reason) sits under its value, at the right edge with it.
+  > dl > div > dd[class*='detail'] {
+    flex-basis: 100%;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 400;
+  }
+}
+// Manual resets: the accent card, its strip tinted, Use reset at the strip's right end.
+.pool .factsLayout > section[data-tone='accent'] {
+  border-color: color-mix(in srgb, var(--pool-accent) 30%, transparent);
+  background:
+    radial-gradient(
+      110% 80% at 0% 0%,
+      color-mix(in srgb, var(--pool-accent) 12%, transparent),
+      transparent 72%
+    ),
+    var(--card-bg);
+  > header {
+    background: color-mix(in srgb, var(--pool-accent) 8%, var(--card-strip));
+    border-bottom-color: color-mix(in srgb, var(--pool-accent) 20%, transparent);
+  }
+  > header > h4 {
+    flex: 0 1 auto;
+  }
+}
+// Usage's strip: "Usage · Burn rate (3h)" on the left, the figure on the right.
+.cardTitle {
+  min-width: 0;
+}
+.cardTitleAside {
+  color: var(--text-secondary);
+}
+.burnDock {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  strong {
     color: var(--text-primary);
-    font-size: 17px;
-    line-height: 24px;
+    font-size: 24px;
+    line-height: 28px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  span {
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    font-weight: 400;
+  }
+  [data-state='notReported'] {
+    color: var(--text-primary);
+    font-size: 13px;
     font-weight: 600;
   }
 }
-.burnLeadReason {
-  max-width: 220px;
-  font-size: 13px;
-  line-height: 18px;
+// Expires: the label, then the expiry lines under it across the card, one line each (badge, date,
+// time left).
+.pool .factsLayout > section > dl > div:has(.resetExpiries) > dd {
+  flex-basis: 100%;
+  margin: 6px 0 0;
+  text-align: left;
 }
-@container drawer-facts (min-width: 560px) {
-  .factsLayout {
+.pool .factsLayout .resetExpiries {
+  gap: 6px;
+  li {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    align-items: baseline;
+    column-gap: 8px;
+  }
+}
+// The list cards are never narrower than a label beside a date (about 350px for Usage, 290px for
+// Billing), so values keep their line and their edge.
+@container drawer-facts (min-width: 660px) {
+  .pool .factsLayout {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    > section[data-tone='accent'] {
+      grid-column: 1 / -1;
+    }
   }
 }
-@container drawer-facts (min-width: 900px) {
-  .factsLayout {
-    grid-template-columns: minmax(140px, 0.7fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.8fr);
+// Usage holds "Predicted empty (weekly)" beside its date (about 370px), Billing "Active since"
+// beside one (about 282px).
+@container drawer-facts (min-width: 1000px) {
+  .pool .factsLayout {
+    grid-template-columns: minmax(372px, 1.2fr) minmax(282px, 0.85fr) minmax(320px, 1fr);
+    > section[data-tone='accent'] {
+      grid-column: auto;
+    }
   }
-  // Each expiry stays one line (badge, date, time left) where the tile has the room.
-  .resetExpiries[data-kinds] li {
-    flex-wrap: nowrap;
-    white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .pool .factsLayout > section,
+  .pool .factsLayout > section[data-tone='accent'] {
+    > header {
+      padding: 8px 13px;
+    }
+    > p {
+      padding: 10px 13px 0;
+    }
+    > dl {
+      padding: 10px 13px 13px;
+    }
   }
 }
 
@@ -4734,105 +4794,175 @@ $table-tiers: (
 }
 
 /* G12 */
-// Section tiles: every tile header has one height (the Use reset button's), so titles and the rows
-// under them line up across neighbouring tiles.
-.pool .factsLayout > section > header {
-  min-height: 32px;
-  align-items: center;
-}
-@media (pointer: coarse) {
-  .pool .factsLayout > section > header {
-    min-height: 44px;
-  }
-}
-// The provider header: the remaining number stays unboxed as the card's anchor; Now and Forecast are
-// tiles in one recessed tray beside it, sharing row lines, so "Burn rate (3h)" sits level with
-// "Pool empty" and each value level with its neighbours'. Everything centres in its tile.
+// The provider header (Neon's option 3, the user's pick): two cards. The first holds the remaining
+// number, with Now docked as its footer strip ("Now · Burn rate (3h)" left, the value right); the
+// second is Forecast, each fact a small cell. Side by side from a 960px header, stacked below; on
+// phones the forecast cells read label-left, value-right.
 .pool .poolHeader > .statsBlock {
-  gap: 6px;
-  padding: 5px;
-  border: 1px solid var(--tray-border);
+  display: grid;
+  flex: 1 0 100%;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.pool .poolHeader .leadCard,
+.pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
   border-radius: 14px;
-  background: var(--tray-bg);
-  > .statsGroup,
-  > .statsGroup:last-child {
-    min-width: 0;
-    padding: 12px 16px;
-    border: 1px solid var(--tile-border);
-    border-radius: 9px;
-    background: var(--tile-bg);
-    text-align: center;
-  }
+  background: var(--card-bg);
+}
+.pool .poolHeader .leadCard > .headline {
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+  padding: 15px 17px;
+}
+// Now, docked under the number.
+.pool .poolHeader .leadCard > .statsGroup[data-group='now'] {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin: 0;
+  padding: 11px 17px;
+  border: 0;
+  border-top: 1px solid var(--card-hairline);
+  background: var(--card-strip);
   .statsHeading {
-    margin: 0 0 10px !important;
-    color: var(--text-primary);
-    text-align: center;
+    flex: none;
+    margin: 0 !important;
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    font-weight: 400;
+    &::after {
+      content: ' ·';
+    }
   }
   .stats {
-    justify-content: center;
-    justify-items: center;
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 0;
     > div {
-      text-align: center;
+      display: flex;
+      flex: 1 1 auto;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
     }
-    dd,
-    small {
-      text-align: center;
+    dt {
+      margin: 0;
+      color: var(--text-secondary);
+      font-size: 12.5px;
+    }
+    dd {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+      text-align: right;
+      white-space: nowrap;
     }
   }
 }
-@container poolHeader (min-width: 672px) {
-  .pool .poolHeader {
-    align-items: center;
+// Forecast: the title, then one cell per fact.
+.pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] {
+  padding: 15px 17px;
+  gap: 10px;
+  .statsHeading {
+    margin: 0 !important;
+    color: var(--text-primary);
+    font-size: 12.5px;
+    font-weight: 600;
   }
-  .pool .poolHeader > .statsBlock {
+  .stats {
     display: grid;
-    flex: 1 1 520px;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: repeat(4, auto);
-    row-gap: 0;
-    column-gap: 6px;
-    &[data-split] {
-      grid-template-columns: minmax(max-content, 0.34fr) minmax(0, 1fr);
+    flex: 1 1 auto;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    align-items: stretch;
+    gap: 10px;
+    > div {
+      display: block;
+      min-width: 0;
+      padding: 11px 13px;
+      border: 1px solid var(--card-hairline);
+      border-radius: 9px;
+      background: var(--card-cell);
     }
-    > .statsGroup,
-    > .statsGroup:last-child {
-      grid-row: 1 / -1;
-      display: grid;
-      grid-template-rows: subgrid;
-      row-gap: 0;
+    dt {
+      margin: 0 0 4px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      white-space: nowrap;
     }
-    .statsHeading {
-      grid-row: 1;
+    dd {
+      margin: 0;
+      font-size: 14.5px;
+      font-weight: 500;
+      text-align: left;
+      white-space: nowrap;
     }
+    small {
+      display: block;
+      grid-column: auto;
+      margin-top: 3px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      text-align: left;
+    }
+  }
+}
+@container poolHeader (min-width: 960px) {
+  .pool .poolHeader > .statsBlock {
+    grid-template-columns: minmax(300px, 0.9fr) minmax(480px, 1.5fr);
+    &:not(:has(.leadCard + .statsGroup)) {
+      grid-template-columns: minmax(300px, 0.9fr) minmax(480px, 1.5fr);
+    }
+  }
+}
+// Phones: forecast cells read label-left, value-right, one per line.
+@container poolHeader (max-width: 600px) {
+  .pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] {
+    padding: 13px;
     .stats {
-      grid-row: 2 / -1;
-      display: grid;
-      grid-template-rows: subgrid;
-      grid-auto-flow: column;
-      grid-auto-columns: minmax(max-content, 1fr);
-      row-gap: 0;
-      column-gap: 24px;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 6px;
       > div {
-        grid-row: 1 / -1;
-        display: grid;
-        grid-template-columns: max-content;
-        grid-template-rows: subgrid;
-        row-gap: 0;
-        justify-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 2px 12px;
+        padding: 9px 11px;
       }
       dt {
-        grid-row: 1;
-        margin: 0 0 4px;
+        margin: 0;
       }
       dd {
-        grid-row: 2;
+        margin-left: auto;
+        font-size: 13.5px;
+        text-align: right;
       }
-      > div > small {
-        grid-row: 3;
-        grid-column: 1;
-        margin-top: 2px;
-        text-align: center;
+      small {
+        flex-basis: 100%;
+        margin-top: 1px;
+        text-align: right;
       }
     }
+  }
+  .pool .poolHeader .leadCard > .headline {
+    padding: 13px;
+  }
+  .pool .poolHeader .leadCard > .statsGroup[data-group='now'] {
+    padding: 10px 13px;
   }
 }

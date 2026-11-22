@@ -592,41 +592,44 @@ export function PoolCard({
             )}
           </span>
         </div>
-        <div
-          className={styles.headline}
-          data-unavailable={pool[metricField[mode]] === null}
-          data-rate={mode !== 'remaining'}
-          data-no-limit={pool.forecastState === 'no-limit'}
-        >
-          {/* Unified label-above-value hero across Remaining and Rate views: metric label on top,
-              figure + baseline unit/capacity below. */}
-          {pool.forecastState !== 'no-limit' && headlineContext}
-          <strong>
-            {pool.forecastState === 'no-limit' ? (
-              <span className={styles.unavailableValue}>{noLimitLabel}</span>
-            ) : pool[metricField[mode]] === null ? (
-              // A muted word in the number slot, so a withheld total never passes for a value.
-              <span className={styles.unavailableValue}>{t('quota_pool.value_withheld')}</span>
-            ) : (
-              <>
-                {number(pool[metricField[mode]])}
-                {mode !== 'remaining' ? (
-                  <small> {t('quota_pool.points_hour')}</small>
-                ) : (
-                  <small>
-                    {' '}
-                    {t('quota_pool.of_capacity', { capacity: number(pool.capacityPoints) })}
-                  </small>
-                )}
-              </>
-            )}
-          </strong>
-        </div>
         {/* Every view has the same two groups: "Now" holds the one measured fact the headline
             doesn't show (the burn rate, or in rate views the balance), "Forecast" the projections. */}
         <div className={styles.statsBlock} data-split={showNow || undefined}>
+          {/* G12: one card holds the remaining number with Now docked as its footer; Forecast is the
+              second card, its facts as small cells (Neon's option 3, the user's pick). */}
+          <div className={styles.leadCard}>
+            <div
+              className={styles.headline}
+              data-unavailable={pool[metricField[mode]] === null}
+              data-rate={mode !== 'remaining'}
+              data-no-limit={pool.forecastState === 'no-limit'}
+            >
+              {/* Unified label-above-value hero across Remaining and Rate views: metric label on top,
+                  figure + baseline unit/capacity below. */}
+              {pool.forecastState !== 'no-limit' && headlineContext}
+              <strong>
+                {pool.forecastState === 'no-limit' ? (
+                  <span className={styles.unavailableValue}>{noLimitLabel}</span>
+                ) : pool[metricField[mode]] === null ? (
+                  // A muted word in the number slot, so a withheld total never passes for a value.
+                  <span className={styles.unavailableValue}>{t('quota_pool.value_withheld')}</span>
+                ) : (
+                  <>
+                    {number(pool[metricField[mode]])}
+                    {mode !== 'remaining' ? (
+                      <small> {t('quota_pool.points_hour')}</small>
+                    ) : (
+                      <small>
+                        {' '}
+                        {t('quota_pool.of_capacity', { capacity: number(pool.capacityPoints) })}
+                      </small>
+                    )}
+                  </>
+                )}
+              </strong>
+            </div>
           {showNow && (
-            <div className={styles.statsGroup}>
+            <div className={styles.statsGroup} data-group="now">
               <p className={styles.statsHeading}>{t('quota_pool.now_group')}</p>
               <dl className={styles.stats}>
                 {mode === 'remaining' ? (
@@ -658,7 +661,8 @@ export function PoolCard({
               </dl>
             </div>
           )}
-          <div className={styles.statsGroup}>
+          </div>
+          <div className={styles.statsGroup} data-group="forecast">
             {/* The 5-hour view names its window once, over every forecast fact (G11); weekly is the default. */}
             <p className={styles.statsHeading}>
               {t(`quota_pool.remaining_forecast${dashboard.window === 'five-hour' ? '_five_hour' : ''}`)}
@@ -1135,31 +1139,36 @@ export function PoolCard({
                   )}
                 </summary>
                 <div className={styles.accountFacts}>
-                  {/* The page lays out its own sections: the burn rate leads as one large figure,
-                      Usage and Billing read as label/value lists beside it, and Manual resets
-                      stays the one accent block (FactPanel's shared grid would override this). */}
+                  {/* The page lays out its own sections as three cards: Usage (with the burn rate
+                      in its title strip), Billing and Manual resets, the one accent card (G12). */}
                   <div className={styles.factsLayout}>
-                    <dl className={styles.burnLead}>
-                      <div>
-                        <dt>{t('quota_pool.burn_last', { hours: dashboard.lookbackHours })}</dt>
-                        {account.burnPointsPerHour !== null ? (
-                          <dd>
-                            <strong>{number(account.burnPointsPerHour)}</strong>{' '}
-                            <span>{t('quota_pool.points_hour')}</span>
-                          </dd>
-                        ) : (
-                          <>
-                            <dd data-state="notReported">{t('quota_pool.not_reported')}</dd>
-                            <dd className={styles.burnLeadReason}>
-                              {t('quota_pool.forecast_not_reported_reason')}
-                            </dd>
-                          </>
-                        )}
-                      </div>
-                    </dl>
                     {/* One reset section per open row; the keys let it move without remounting. */}
                     {stackedFacts && resetSection(account)}
-                    <FactSection key="usage" title={t('quota_pool.facts_usage')}>
+                    {/* Usage carries the burn rate in its title strip, as its lead figure (G12). */}
+                    <FactSection
+                      key="usage"
+                      title={
+                        <>
+                          <span className={styles.cardTitle}>
+                            {t('quota_pool.facts_usage')}
+                            <span className={styles.cardTitleAside}>
+                              {' · '}
+                              {t('quota_pool.burn_last', { hours: dashboard.lookbackHours })}
+                            </span>
+                          </span>
+                          <span className={styles.burnDock}>
+                            {account.burnPointsPerHour !== null ? (
+                              <>
+                                <strong>{number(account.burnPointsPerHour)}</strong>{' '}
+                                <span>{t('quota_pool.points_hour')}</span>
+                              </>
+                            ) : (
+                              <span data-state="notReported">{t('quota_pool.not_reported')}</span>
+                            )}
+                          </span>
+                        </>
+                      }
+                    >
                       <Fact
                         label={t('quota_pool.observed')}
                         {...(account.observedAtMs !== null
