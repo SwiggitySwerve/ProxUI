@@ -659,7 +659,7 @@ describe('QuotaCollector', () => {
     expect(calls.filter((call) => !call.body)).toHaveLength(2);
     expect(calls.filter((call) => call.body).every((call) => call.init.signal?.aborted)).toBe(true);
   });
-  test('records each account plan; the Claude profile is asked at most every six hours', async () => {
+  test('records each account plan; the Claude profile is asked at most every 30 minutes', async () => {
     const { collector, store, calls, advance } = harness((request) => {
       if (request.body?.url === CLAUDE_PROFILE_URL) {
         return Response.json({
@@ -680,7 +680,7 @@ describe('QuotaCollector', () => {
     advance(MANUAL_REFRESH_INTERVAL_MS);
     await collector.refresh();
     expect(profileCalls()).toHaveLength(1);
-    advance(6 * 60 * 60 * 1000);
+    advance(30 * 60_000 - MANUAL_REFRESH_INTERVAL_MS);
     await collector.refresh();
     expect(profileCalls()).toHaveLength(2);
   });

@@ -73,7 +73,14 @@ import {
 
 /** A targeted read of one account starts at most this often. */
 const ACCOUNT_REFRESH_FLOOR_MS = 20_000;
-const PLAN_REFRESH_MS = 6 * 60 * 60 * 1000;
+/**
+ * Claude and Antigravity name the plan only in a separate profile read, asked at most this often,
+ * so an upgrade or downgrade reweights the pool within half an hour.
+ */
+const PLAN_REFRESH_MS = 30 * 60_000;
+/** A targeted read re-reads the plan too, but not more often than this. */
+const TARGETED_PLAN_FLOOR_MS = 5 * 60_000;
+const BILLING_REFRESH_MS = 6 * 60 * 60 * 1000;
 /** Codex credit details are re-read at most this often while their count is unchanged. */
 const RESET_CREDITS_REFRESH_MS = 60 * 60 * 1000;
 /** Floor between credit-detail attempts, so a failing endpoint is not hit every collection. */
@@ -911,6 +918,11 @@ export class QuotaCollector {
       const current = this.store.listAccounts().find((account) => account.id === accountId);
       if (!current || current.disabled || current.retired) return false;
       this.accountAttempts.set(accountId, this.now());
+      // A targeted read (the row's Refresh) also re-reads the plan, so a changed subscription
+      // shows at once instead of at the next plan interval.
+      const planAttempt = this.profileAttempts.get(accountId);
+      if (planAttempt !== undefined && this.now() - planAttempt >= TARGETED_PLAN_FLOOR_MS)
+        this.profileAttempts.delete(accountId);
       try {
         const found = await this.inventoryEntry(source, current, signal);
         if (!found) return false;
@@ -982,8 +994,8 @@ export class QuotaCollector {
     if (account.provider === 'codex') {
       plan = planFromCodexUsage(usageBody);
     } else {
-      // Claude names the plan only in its profile and Antigravity only in loadCodeAssist; plans
-      // change rarely, so ask every few hours.
+      // Claude names the plan only in its profile and Antigravity only in loadCodeAssist, so they
+      // are asked separately, every PLAN_REFRESH_MS.
       const observedAt = storedPlans.get(account.id) ?? null;
       const attemptedAt = this.profileAttempts.get(account.id) ?? null;
       const last = Math.max(observedAt ?? -Infinity, attemptedAt ?? -Infinity);
@@ -1037,7 +1049,7 @@ export class QuotaCollector {
   ): Promise<void> {
     if (!chatgptAccountId) return;
     const last = this.billingAttempts.get(accountId);
-    if (last !== undefined && this.now() - last < PLAN_REFRESH_MS) return;
+    if (last !== undefined && this.now() - last < BILLING_REFRESH_MS) return;
     this.billingAttempts.set(accountId, this.now());
     try {
       const response = await this.request(source, 'requests/api-call', key, signal, {
