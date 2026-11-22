@@ -286,8 +286,7 @@ describe('plan history', () => {
 
 describe('plan change signal', () => {
   const window = (remainingPercent: number, resetAtMs: number) => ({
-    id: 'five-hour',
-    labelKey: 'five-hour',
+    window: 'five-hour' as const,
     remainingPercent,
     resetAtMs,
   });
@@ -297,10 +296,11 @@ describe('plan change signal', () => {
       true
     );
   });
-  test('a move of 20 points within one cycle suggests a plan change, usage does not', () => {
-    expect(planChangeSuspected([window(40, later)], [window(85, later)], now)).toBe(true);
-    expect(planChangeSuspected([window(90, later)], [window(30, later + 30_000)], now)).toBe(true);
-    expect(planChangeSuspected([window(90, later)], [window(82, later)], now)).toBe(false);
+  test('a rise of 20 points within one cycle suggests a plan change; usage, however heavy, does not', () => {
+    expect(planChangeSuspected([window(40, later)], [window(85, later + 30_000)], now)).toBe(true);
+    expect(planChangeSuspected([window(40, later)], [window(50, later)], now)).toBe(false);
+    // 25 points of use between two polls is a drop, never a signal.
+    expect(planChangeSuspected([window(90, later)], [window(65, later)], now)).toBe(false);
   });
   test('scheduled resets, idle windows and first readings do not', () => {
     // The window reset on time.

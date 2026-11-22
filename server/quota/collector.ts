@@ -453,6 +453,13 @@ export class QuotaCollector {
   private readonly billingAttempts = new Map<string, number>();
   private readonly latestBilling = new Map<string, AccountBilling>();
   private readonly latestWindows = new Map<string, AccountQuotaWindow[]>();
+  /** Each account's last pool samples, compared with the next poll's (`planChangeSuspected`). */
+  private readonly latestPoolSamples = new Map<string, QuotaSample[]>();
+  /**
+   * Accounts whose readings suggested a plan change that no plan read has followed yet, with the
+   * earliest such reading: the next eligible poll reads the plan, and a change starts there.
+   */
+  private readonly suspectedPlanChanges = new Map<string, number>();
   /** Claude's extra usage and dollar balances from the usage payload; memory-only, never pooled. */
   private readonly latestBalances = new Map<
     string,
@@ -750,6 +757,8 @@ export class QuotaCollector {
       this.billingAttempts.delete(id);
       this.latestBilling.delete(id);
       this.latestWindows.delete(id);
+      this.latestPoolSamples.delete(id);
+      this.suspectedPlanChanges.delete(id);
       this.latestBalances.delete(id);
       this.latestCredits.delete(id);
       this.latestReadingAt.delete(id);
@@ -1010,6 +1019,7 @@ export class QuotaCollector {
       const last = Math.max(observedAt ?? -Infinity, attemptedAt ?? -Infinity);
       if (this.profileAttempts.has(account.id) && this.now() - last < planIntervalMs) return;
       this.profileAttempts.set(account.id, this.now());
+      this.suspectedPlanChanges.delete(account.id);
       try {
         if (account.provider === 'antigravity') {
           const response = await this.request(source, 'requests/api-call', key, signal, {
@@ -1278,14 +1288,22 @@ export class QuotaCollector {
     // The account may have left its inventory while the request was in flight. Its rows can be
     // gone, so writing a sample would fail the whole collection; nothing may be stored for it.
     if (!signal.aborted && this.store.isLive(account.id)) {
-      const planSuspect = planChangeSuspected(
-        this.latestWindows.get(account.id),
-        windows,
-        this.now()
-      );
+      const readingAtMs = samples.length
+        ? // Antigravity may fill one window from a later endpoint: the poll began at the earliest.
+          Math.min(...samples.map((sample) => sample.observedAtMs))
+        : undefined;
+      if (
+        provider !== 'codex' &&
+        readingAtMs !== undefined &&
+        !this.suspectedPlanChanges.has(account.id) &&
+        planChangeSuspected(this.latestPoolSamples.get(account.id), samples, this.now())
+      ) {
+        this.suspectedPlanChanges.set(account.id, readingAtMs);
+      }
       try {
         this.store.recordSamples(samples);
         this.latestWindows.set(account.id, windows);
+        this.latestPoolSamples.set(account.id, samples);
         this.latestReadingAt.set(account.id, this.now());
         const resets = readAccountResets(provider, usageBody, this.now());
         if (resets) this.latestResets.set(account.id, resets);
@@ -1326,9 +1344,10 @@ export class QuotaCollector {
         signal,
         usageBody,
         storedPlans,
-        planSuspect ? Math.min(planIntervalMs, TARGETED_PLAN_FLOOR_MS) : planIntervalMs,
-        // Antigravity may fill one window from a later endpoint: the poll began at the earliest.
-        samples.length ? Math.min(...samples.map((sample) => sample.observedAtMs)) : undefined
+        this.suspectedPlanChanges.has(account.id)
+          ? Math.min(planIntervalMs, TARGETED_PLAN_FLOOR_MS)
+          : planIntervalMs,
+        this.suspectedPlanChanges.get(account.id) ?? readingAtMs
       );
     }
     return !signal.aborted && this.store.isLive(account.id);

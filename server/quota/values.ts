@@ -1,3 +1,8 @@
+/** Whether two reset times are one cycle: providers round them, by up to a minute. */
+export function sameResetCycle(a: number, b: number): boolean {
+  return Math.abs(a - b) <= 60_000;
+}
+
 export function sumKnown(values: (number | null)[]): number | null {
   return values.some((value) => value === null)
     ? null

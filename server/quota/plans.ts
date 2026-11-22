@@ -1,13 +1,11 @@
 import type { PoolProfile } from '../../src/domain/providerCatalog';
 import { isBuiltInPoolProvider } from '../../src/domain/quotaPool/providers';
-import type {
-  AccountQuotaWindow,
-  BuiltInPoolProviderId,
-  PoolProviderId,
-} from '../../src/domain/quotaPool/types';
+import type { BuiltInPoolProviderId, PoolProviderId } from '../../src/domain/quotaPool/types';
 import { isRecord } from '../../src/utils/helpers';
 import { normalizePlanType, parseCodexUsagePayload } from '../../src/utils/quota/parsers';
 import { parseAntigravitySubscriptionSummary } from '../../src/services/api/antigravitySubscription';
+import type { QuotaSample } from './types';
+import { sameResetCycle } from './values';
 
 /**
  * Subscription weight in base-plan units: one unit is the provider's $20 plan (Claude Pro,
@@ -78,26 +76,27 @@ export function planAt(
   return plan || undefined;
 }
 
-/** Reset times this close are the same cycle (providers round them). */
-const SAME_CYCLE_MS = 60_000;
-/** A move this large within one cycle is a capacity change, not usage between two polls. */
+/** A rise this large within one cycle is a capacity change: usage only lowers what is left. */
 const PLAN_SIGNAL_PERCENT = 20;
 
+type PoolReading = Pick<QuotaSample, 'window' | 'remainingPercent' | 'resetAtMs'>;
+
 /**
- * Whether a poll's windows suggest the plan changed since the previous poll, so the plan is read
- * now rather than at the next plan interval. An upgrade can open fresh windows before the old ones
- * reset (Google AI Ultra Lite to Ultra did), and a capacity change rescales the used share of a
- * window it keeps. So: a window in use restarted before its reset, or moved by at least
- * PLAN_SIGNAL_PERCENT points within one cycle. A window idle at 100% may slide its reset each
- * poll and never counts.
+ * Whether a poll's pool readings (the account-wide five-hour and weekly samples, never per-model
+ * limits) suggest the plan changed since the previous poll, so the plan is read now rather than at
+ * the next plan interval. An upgrade can open fresh windows before the old ones reset (Google AI
+ * Ultra Lite to Ultra did), or keep them and shrink the used share, so what is left rises. So: a
+ * window in use restarted before its reset, or rose by at least PLAN_SIGNAL_PERCENT points within
+ * one cycle. A drop is never a signal on its own: heavy use looks the same. A window idle at 100%
+ * may slide its reset each poll and never counts.
  */
 export function planChangeSuspected(
-  previous: readonly AccountQuotaWindow[] | undefined,
-  next: readonly AccountQuotaWindow[],
+  previous: readonly PoolReading[] | undefined,
+  next: readonly PoolReading[],
   nowMs: number
 ): boolean {
   return next.some((window) => {
-    const before = previous?.find((candidate) => candidate.id === window.id);
+    const before = previous?.find((candidate) => candidate.window === window.window);
     if (
       !before ||
       before.remainingPercent === null ||
@@ -107,10 +106,14 @@ export function planChangeSuspected(
     ) {
       return false;
     }
-    if (Math.abs(window.resetAtMs - before.resetAtMs) > SAME_CYCLE_MS) {
-      return before.remainingPercent < 100 && before.resetAtMs - nowMs > SAME_CYCLE_MS;
+    if (!sameResetCycle(window.resetAtMs, before.resetAtMs)) {
+      return (
+        before.remainingPercent < 100 &&
+        before.resetAtMs > nowMs &&
+        !sameResetCycle(before.resetAtMs, nowMs)
+      );
     }
-    return Math.abs(window.remainingPercent - before.remainingPercent) >= PLAN_SIGNAL_PERCENT;
+    return window.remainingPercent - before.remainingPercent >= PLAN_SIGNAL_PERCENT;
   });
 }
 
