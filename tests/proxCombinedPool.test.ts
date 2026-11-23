@@ -237,6 +237,61 @@ describe('combined provider totals', () => {
     expect(total.recorded).toEqual(claude.recorded);
   });
 
+  // The Gemini source was retired with its only account disabled; its stored readings stay.
+  const retiredGemini: StoredAccount = {
+    ...accounts[0],
+    id: 'g',
+    instanceId: 'gemini',
+    provider: 'antigravity',
+    disabled: true,
+  };
+  const geminiReading = (window: 'weekly' | 'five-hour', at: number): QuotaSample => ({
+    accountId: 'g',
+    window,
+    observedAtMs: at,
+    remainingPercent: 90,
+    resetAtMs: now + 2 * HOUR_MS,
+    periodHours: window === 'weekly' ? 168 : 5,
+  });
+
+  test('a dormant pool keeps its history in the 5-hour total when the live pools have no limit', () => {
+    // Claude Ultra and Codex both answer without a 5-hour window.
+    const claudeUltra = { ...accounts[0], plan: 'default_claude_max_20x' };
+    const at = now - 300000;
+    const fiveHour: QuotaSample[] = [
+      { accountId: 'a0', window: 'five-hour', observedAtMs: at, remainingPercent: null, resetAtMs: null, periodHours: null },
+      { accountId: 'a0', window: 'weekly', observedAtMs: at, remainingPercent: 80, resetAtMs: now + 100 * HOUR_MS, periodHours: 168 },
+      { accountId: 'a1', window: 'weekly', observedAtMs: at, remainingPercent: 50, resetAtMs: now + 100 * HOUR_MS, periodHours: 168 },
+      { accountId: 'a1', window: 'five-hour', observedAtMs: at, remainingPercent: null, resetAtMs: null, periodHours: null },
+      geminiReading('five-hour', at),
+    ];
+    const total = buildDashboard(
+      [claudeUltra, accounts[1], retiredGemini],
+      fiveHour,
+      { ...options, window: 'five-hour' },
+      collection
+    ).combined!.all.series!;
+    // Gemini Ultra Lite is unknown here (no plan): one unit, 90 points.
+    expect(total.recorded.find((point) => point.atMs === at)?.remainingPoints).toBe(90);
+  });
+
+  test("a dormant pool's layer stacks under the live forecast with nothing ahead of it", () => {
+    const data = buildDashboard(
+      [...accounts, retiredGemini],
+      [...samples, geminiReading('weekly', now - 600000)],
+      options,
+      collection
+    );
+    const all = data.combined!.all;
+    expect(all.series!.forecastState).toBe('ready');
+    expect(all.series!.projected.length).toBeGreaterThan(0);
+    const gemini = all.layers!.find((layer) => layer.provider === 'antigravity')!;
+    for (const layer of all.layers!) {
+      expect(layer.projected.map((p) => p.atMs)).toEqual(all.series!.projected.map((p) => p.atMs));
+    }
+    expect(gemini.projected.every((p) => p.remainingPoints === 0)).toBe(true);
+  });
+
   test('plan weights, scenarios and both windows use the same authoritative total', () => {
     for (const window of ['weekly', 'five-hour'] as const)
       for (const multiplier of [0, 0.5, 1, 2] as const) {

@@ -99,7 +99,13 @@ export function combinedPools(
   const projectedLayers =
     forecastState === 'ready' ? alignProjections(eligible.map((pool) => pool.projected)) : [];
   const projected = sumProjections(projectedLayers);
-  const recorded = eligible.some((pool) => pool.eligibleCount === 0) ? [] : readRecorded(charted);
+  // A live pool with no accounts to read (failed or empty inventory) leaves the total unknown; a
+  // pool with no limit in this window has nothing to add and never does.
+  const recorded = eligible.some(
+    (pool) => pool.eligibleCount === 0 && pool.forecastState !== 'no-limit'
+  )
+    ? []
+    : readRecorded(charted);
   const recordedLayers = readLayers?.(
     charted,
     recorded.map((point) => point.atMs)
@@ -127,7 +133,12 @@ export function combinedPools(
             resets: pool.resets,
             poolEmptyAtMs: pool.poolEmptyAtMs,
             recorded: recordedLayers[index],
-            projected: projectedLayers[index] ?? [],
+            // A dormant pool has nothing ahead of it: zero on the live forecast's events, so the
+            // stacked chart lines every layer up.
+            projected:
+              index < eligible.length
+                ? (projectedLayers[index] ?? [])
+                : projected.map((point) => ({ ...point, remainingPoints: 0 })),
           })),
         }
       : {}),
