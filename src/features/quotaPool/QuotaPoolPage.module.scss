@@ -5360,3 +5360,11 @@ $table-tiers: (
     white-space: nowrap;
   }
 }
+
+// Wide screens: the rate definition holds one line inside the Combined number card, so the chart
+// doesn't start lower in rate views (G12c).
+@media (min-width: 641px) {
+  .pool.combined > .headline .rateDefinition {
+    max-width: none;
+  }
+}
