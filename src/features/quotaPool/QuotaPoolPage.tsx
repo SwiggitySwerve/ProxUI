@@ -574,8 +574,8 @@ export function QuotaPoolPage() {
               <Skeleton className={styles.loadingToggle} rounded={999} inert />
               <Skeleton className={styles.loadingSelect} rounded={999} inert />
             </div>
-            {/* The combined card has a label-above-value headline matching loaded cards. */}
-            <div className={styles.loadingHero}>
+            {/* The combined card has a label-above-value headline in a number card, matching loaded cards. */}
+            <div className={`${styles.loadingHero} ${styles.loadingHeroCard}`}>
               <span className={styles.loadingNumber}>
                 <Skeleton width={150} height={14} rounded={4} />
                 <Skeleton width={180} height={42} rounded={8} />

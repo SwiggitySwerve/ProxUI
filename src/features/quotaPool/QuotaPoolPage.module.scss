@@ -5086,9 +5086,9 @@ $table-tiers: (
   border: 0;
   background: none;
 }
-// 740–899px headers (a 1100px screen): the number card and Forecast share one row, so Now sits next
+// 620–899px headers (952–1230px screens): the number card and Forecast share one row, so Now sits next
 // to its figure; Forecast reads label-left, value-right rows in its narrower card.
-@container poolHeader (min-width: 740px) and (max-width: 899px) {
+@container poolHeader (min-width: 620px) and (max-width: 899px) {
   .pool .poolHeader > .statsBlock {
     grid-template-columns: minmax(250px, 0.8fr) minmax(0, 1.2fr);
   }
@@ -5129,16 +5129,6 @@ $table-tiers: (
   }
 }
 
-// 601–739px headers (901–1000px screens): the stacked number card hugs its number and the Now strip,
-// so neither leaves an empty run across the card (G12b).
-@container poolHeader (min-width: 601px) and (max-width: 739px) {
-  .pool .poolHeader .leadCard {
-    justify-self: start;
-    width: max-content;
-    min-width: 320px;
-    max-width: 100%;
-  }
-}
 // Combined usage: its number sits in the same card as a provider's, hugging the figure, so every
 // headline on the page reads as a card (G12b).
 .pool.combined > .headline {
@@ -5293,10 +5283,68 @@ $table-tiers: (
     min-width: 0;
   }
 }
-// 740–899px headers: the number card stretches to Forecast's three rows, so its number centres in the
+// 620–899px headers: the number card stretches to Forecast's three rows, so its number centres in the
 // space above the Now strip instead of leaving a gap under it.
-@container poolHeader (min-width: 740px) and (max-width: 899px) {
+@container poolHeader (min-width: 620px) and (max-width: 899px) {
   .pool .poolHeader .leadCard > .headline {
     justify-content: center;
+  }
+}
+
+// 620–739px headers (952–1070px screens): the number card keeps the width its number and Now strip need,
+// and Forecast's rows take the rest, so neither card leaves a half-empty row (G12c).
+@container poolHeader (min-width: 620px) and (max-width: 739px) {
+  .pool .poolHeader > .statsBlock {
+    grid-template-columns: 272px minmax(0, 1fr);
+  }
+  .pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] {
+    padding: 13px;
+    .stats > div {
+      padding: 7px 10px;
+    }
+  }
+}
+
+// Rate views from a 740px header (1100px screens and up): the number card takes the 340px its
+// "Now · Weekly remaining 248.4 of 300 points" strip needs to hold one line (G12c).
+@container poolHeader (min-width: 740px) and (max-width: 899px) {
+  .pool .poolHeader > .statsBlock:has(.headline[data-rate='true']) {
+    grid-template-columns: minmax(340px, 0.8fr) minmax(0, 1.2fr);
+  }
+}
+@container poolHeader (min-width: 900px) and (max-width: 999px) {
+  .pool .poolHeader > .statsBlock:has(.headline[data-rate='true']) {
+    grid-template-columns: minmax(340px, 0.75fr) minmax(480px, 1.6fr);
+    > .statsGroup[data-group='forecast'] {
+      padding-inline: 13px;
+      .stats > div {
+        padding-inline: 11px;
+      }
+      .stats dd {
+        font-size: 13.5px;
+      }
+    }
+  }
+}
+
+// The Combined skeleton draws its number card like the loaded one, so the provider cards below don't
+// move when data arrives (G12c).
+.loadingHeroCard {
+  align-self: flex-start;
+  justify-self: start;
+  width: max-content;
+  min-width: 280px;
+  max-width: 100%;
+  padding: 15px 17px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: #121212;
+}
+@media (max-width: 640px) {
+  .loadingHeroCard {
+    align-self: stretch;
+    width: auto;
+    min-width: 0;
+    padding: 12px 13px;
   }
 }
