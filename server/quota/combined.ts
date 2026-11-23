@@ -121,6 +121,7 @@ export function combinedPools(
     ...(recordedLayers
       ? {
           layers: charted.map((pool, index) => ({
+            ...(index < eligible.length ? {} : { historyOnly: true as const }),
             provider: pool.provider,
             ...(pool.displayName ? { displayName: pool.displayName } : {}),
             instanceId: pool.instanceId,

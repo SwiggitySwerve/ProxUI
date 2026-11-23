@@ -290,6 +290,8 @@ describe('combined provider totals', () => {
       expect(layer.projected.map((p) => p.atMs)).toEqual(all.series!.projected.map((p) => p.atMs));
     }
     expect(gemini.projected.every((p) => p.remainingPoints === 0)).toBe(true);
+    expect(gemini.historyOnly).toBe(true);
+    expect(all.layers!.filter((layer) => layer.historyOnly)).toHaveLength(1);
   });
 
   test('plan weights, scenarios and both windows use the same authoritative total', () => {
