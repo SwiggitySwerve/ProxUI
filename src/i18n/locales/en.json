@@ -2968,6 +2968,7 @@
     "reset_unavailable": "Not usable now",
     "reset_source_unavailable": "Connect to this source to use one",
     "reset_lookup_failed": "No active credential for this account, so it can't be used here. Sign it in again under Auth Files.",
+    "reset_credentials_unreadable": "Could not read this source's credentials. Try again shortly.",
     "reset_loading": "Checking…",
     "reset_checking_credential": "Checking credential…",
     "reset_spent": "The next collection shows whether it was used",

@@ -2529,20 +2529,18 @@ $table-tiers: (
 }
 @media (max-width: 640px) {
   // Phones: name row, count and chip row, then the actions, from the left.
-  .poolIdentity > .reorder {
+  .poolIdentity > .reorder,
+  .pool > .poolHeader > .reorder {
     flex-basis: 100%;
     justify-content: flex-start;
     margin-left: 0;
   }
-  // The actions follow the headline and facts, right above the chart, so a card's title and its number
-  // read together (G11). The identity row lends its children to the header for that.
+  // The actions follow the headline, facts and status note, right above the chart, so a card's title
+  // and its number read together (G11). The identity row lends its title to the header for that.
   .pool > .poolHeader > .poolIdentity {
     display: contents;
     > .poolTitle {
       flex: 1 0 100%;
-    }
-    > .reorder {
-      order: 1;
     }
   }
 }
@@ -4830,18 +4828,20 @@ $table-tiers: (
   margin: 0;
   padding: 15px 17px;
 }
-// Now, docked under the number.
+// Now, docked under the number: one row at every width, "Now ·", the label, the value at the right.
+// A long label ("Weekly remaining" in rate views) wraps in its own column, so "Now ·" never strands on
+// a line, and "of 8,000 points" moves under the number as one piece when the strip is narrow (G12b).
 .pool .poolHeader .leadCard > .statsGroup[data-group='now'] {
-  display: flex;
+  display: grid;
+  grid-template-columns: max-content minmax(min-content, 1fr) minmax(min-content, max-content);
   align-items: baseline;
-  gap: 4px;
+  column-gap: 4px;
   margin: 0;
   padding: 11px 17px;
   border: 0;
   border-top: 1px solid var(--card-hairline);
   background: var(--card-strip);
   .statsHeading {
-    flex: none;
     margin: 0 !important;
     color: var(--text-secondary);
     font-size: 12.5px;
@@ -4850,30 +4850,29 @@ $table-tiers: (
       content: ' ·';
     }
   }
-  .stats {
-    display: flex;
-    flex: 1 1 auto;
-    min-width: 0;
-    gap: 0;
-    > div {
-      display: flex;
-      flex: 1 1 auto;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: 12px;
-    }
-    dt {
-      margin: 0;
-      color: var(--text-secondary);
-      font-size: 12.5px;
-    }
-    dd {
-      margin: 0;
-      font-size: 15px;
-      font-weight: 600;
-      text-align: right;
-      white-space: nowrap;
-    }
+  .stats,
+  .stats > div {
+    display: contents;
+  }
+  .stats dt {
+    margin: 0;
+    padding-right: 8px;
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    white-space: normal;
+  }
+  .stats dd {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    text-align: right;
+    white-space: normal;
+  }
+  .stats dd small {
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    font-weight: 400;
+    white-space: nowrap;
   }
 }
 // Forecast: the title, then one cell per fact.
@@ -4927,9 +4926,6 @@ $table-tiers: (
 @container poolHeader (min-width: 900px) {
   .pool .poolHeader > .statsBlock {
     grid-template-columns: minmax(260px, 0.75fr) minmax(480px, 1.6fr);
-    &:not(:has(.leadCard + .statsGroup)) {
-      grid-template-columns: minmax(300px, 0.9fr) minmax(480px, 1.5fr);
-    }
   }
 }
 // Phones: forecast cells read label-left, value-right, one per line.
@@ -5004,16 +5000,11 @@ $table-tiers: (
 .pool .poolHeader > .statsBlock {
   align-items: stretch;
 }
-// The mockup's type: the remaining number at 38px (32px on phones); the Now unit muted and light.
+// The mockup's type: the remaining number at 38px (32px on phones).
 .pool .poolHeader .leadCard > .headline strong {
   font-size: 38px;
   line-height: 1.08;
   letter-spacing: -0.04em;
-}
-.pool .poolHeader .leadCard > .statsGroup[data-group='now'] .stats dd small {
-  color: var(--text-secondary);
-  font-size: 12.5px;
-  font-weight: 400;
 }
 @container poolHeader (max-width: 600px) {
   .pool .poolHeader .leadCard > .headline strong {
@@ -5039,19 +5030,6 @@ $table-tiers: (
     flex: none;
   }
 }
-// The Now strip's value drops under its label at the right edge when the card has no room for both
-// ("248.4 of 300 points" on a phone), instead of running past the card's padding.
-.pool .poolHeader .leadCard > .statsGroup[data-group='now'] {
-  flex-wrap: wrap;
-  .stats,
-  .stats > div {
-    flex-wrap: wrap;
-    min-width: 0;
-  }
-  .stats dd {
-    margin-left: auto;
-  }
-}
 // The skeleton draws the loaded header's two cards, so nothing reflows when data arrives (G12).
 .page .loading > .loadingStats {
   display: grid;
@@ -5069,10 +5047,6 @@ $table-tiers: (
   border: 1px solid var(--hairline);
   border-radius: 14px;
   background: #121212;
-  > .loadingFact {
-    padding-left: 0 !important;
-    border-left: 0 !important;
-  }
 }
 @media (min-width: 1100px) {
   .page .loading > .loadingStats {
@@ -5217,37 +5191,6 @@ $table-tiers: (
     white-space: normal;
   }
 }
-// The Now strip is one row at every width: "Now ·", the label, the value at the right. A long label
-// ("Weekly remaining" in rate views) wraps in its own column, so "Now ·" never strands on a line (G12b).
-.pool .poolHeader .leadCard > .statsGroup[data-group='now'],
-.pool .poolHeader .leadCard > .statsGroup[data-group='now'][data-group] {
-  display: grid;
-  grid-template-columns: max-content minmax(min-content, 1fr) minmax(min-content, max-content);
-  flex-direction: row;
-  align-items: baseline;
-  column-gap: 4px;
-  .statsHeading::after {
-    content: ' ·';
-  }
-  .stats,
-  .stats > div {
-    display: contents;
-  }
-  .stats dt {
-    padding-right: 8px;
-    white-space: normal;
-  }
-  .stats dd {
-    margin: 0;
-    text-align: right;
-    white-space: normal;
-  }
-  // "of 8,000 points" moves under the number as one piece when the strip is narrow.
-  .stats dd small {
-    white-space: nowrap;
-  }
-}
-
 // From a 1000px header (a 1440px screen) the number card takes a little more, so the Now strip's
 // "Now · Weekly remaining 248.4 of 300 points" holds one line in rate views (G12b).
 @container poolHeader (min-width: 1000px) {
@@ -5366,5 +5309,101 @@ $table-tiers: (
 @media (min-width: 641px) {
   .pool.combined > .headline .rateDefinition {
     max-width: none;
+  }
+}
+
+// The provider skeleton follows the loaded header: the same container breakpoints (the card's content
+// box is as wide as the loaded header), a number card with its Now strip docked under it, and a
+// Forecast card with a title over three rows, or three cells from a 900px header (G12d).
+.page .loading {
+  container: loadingCard / inline-size;
+}
+.page .loading > .loadingStats {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+  > .loadingCard {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  > .loadingCard:first-child {
+    > .loadingNumber {
+      flex: 1 0 auto;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 8px;
+      padding: 15px 17px;
+    }
+    > .loadingFact {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 13px 17px;
+      border-top: 1px solid rgba(255, 255, 255, 0.055);
+      background: #0c0c0c;
+    }
+  }
+  > .loadingCard:last-child {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    padding: 15px 17px;
+    > .loadingCardTitle {
+      margin-bottom: 4px;
+    }
+    > .loadingFact {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 38px;
+      padding: 0 11px;
+      border: 1px solid rgba(255, 255, 255, 0.055);
+      border-radius: 9px;
+      background: #0a0a0a;
+    }
+  }
+}
+@container loadingCard (min-width: 620px) and (max-width: 739px) {
+  .page .loading > .loadingStats {
+    grid-template-columns: 272px minmax(0, 1fr);
+  }
+}
+@container loadingCard (min-width: 740px) and (max-width: 899px) {
+  .page .loading > .loadingStats {
+    grid-template-columns: minmax(250px, 0.8fr) minmax(0, 1.2fr);
+  }
+}
+@container loadingCard (min-width: 620px) and (max-width: 899px) {
+  .page .loading > .loadingStats > .loadingCard:last-child > .loadingFact {
+    min-height: 44px;
+  }
+}
+@container loadingCard (min-width: 900px) {
+  .page .loading > .loadingStats {
+    grid-template-columns: minmax(260px, 0.75fr) minmax(480px, 1.6fr);
+    > .loadingCard:last-child {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      > .loadingCardTitle {
+        grid-column: 1 / -1;
+      }
+      > .loadingFact {
+        display: grid;
+        align-content: start;
+        gap: 8px;
+        min-height: 89px;
+        padding: 12px 13px;
+      }
+    }
+  }
+}
+@container loadingCard (min-width: 1000px) {
+  .page .loading > .loadingStats {
+    grid-template-columns: minmax(280px, 0.85fr) minmax(480px, 1.6fr);
   }
 }

@@ -26,6 +26,7 @@ import { poolProviderLabel, poolProviderStyle } from './providerPresentation';
 import { DiscoveredQuota } from './DiscoveredQuota';
 import { viewRange } from './chartGeometry';
 import {
+  forecastMultiplier,
   readViewState,
   resolveViewProvider,
   sameView,
@@ -85,7 +86,7 @@ export function QuotaPoolPage() {
   const query: PoolQuery = {
     window: view.window,
     lookback: view.lookback,
-    multiplier: view.future,
+    multiplier: forecastMultiplier(view),
     ...local,
   };
   const state = usePoolDashboard(query);
@@ -613,6 +614,7 @@ export function QuotaPoolPage() {
                   </span>
                 </span>
                 <span className={styles.loadingCard}>
+                  <Skeleton className={styles.loadingCardTitle} width={64} height={12} rounded={4} />
                   {[0, 1, 2].map((index) => (
                     <span key={index} className={styles.loadingFact}>
                       <Skeleton width={84} height={10} rounded={4} />

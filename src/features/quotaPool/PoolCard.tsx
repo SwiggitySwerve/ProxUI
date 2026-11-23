@@ -493,6 +493,43 @@ export function PoolCard({
   const providerLabel = poolProviderLabel(t, pool.provider, pool.displayName);
   const appearance = poolProviderStyle(pool.provider);
   const slotCount = limitColumns.filter((column) => columnStatus.has(column.id)).length;
+  // Phones put the actions after the facts and the status note, right above the chart, in reading and
+  // focus order as well as on screen.
+  const reorder = (
+    <span className={styles.reorder}>
+      {pool.forecastState !== 'no-limit' && (
+        <PoolGraphToggle
+          minimized={minimized}
+          onToggle={() => setMinimized((value) => !value)}
+          label={`${providerLabel}${pool.sourceLabel ? ` · ${pool.sourceLabel}` : ''}`}
+          controls={`${id}-plot`}
+        />
+      )}
+      {/* A move that can't happen (first or last card) isn't drawn. */}
+      {move?.up && (
+        <button
+          type="button"
+          onClick={move.up}
+          aria-label={t('quota_pool.move_up', { pool: providerLabel })}
+          title={t('quota_pool.move_up', { pool: providerLabel })}
+        >
+          <IconArrowUp size={16} aria-hidden="true" />
+          {t('quota_pool.move_up_short')}
+        </button>
+      )}
+      {move?.down && (
+        <button
+          type="button"
+          onClick={move.down}
+          aria-label={t('quota_pool.move_down', { pool: providerLabel })}
+          title={t('quota_pool.move_down', { pool: providerLabel })}
+        >
+          <IconArrowDown size={16} aria-hidden="true" />
+          {t('quota_pool.move_down_short')}
+        </button>
+      )}
+    </span>
+  );
   // Why the forecast or total is limited, across the card under its summary. On phones it sits in the
   // header after the facts, so the action pills that follow it stay right above the chart (G11).
   const stateBanner = pool.forecastState !== 'ready' && (
@@ -558,39 +595,7 @@ export function PoolCard({
               </span>
             </div>
           </div>
-          <span className={styles.reorder}>
-            {pool.forecastState !== 'no-limit' && (
-              <PoolGraphToggle
-                minimized={minimized}
-                onToggle={() => setMinimized((value) => !value)}
-                label={`${providerLabel}${pool.sourceLabel ? ` · ${pool.sourceLabel}` : ''}`}
-                controls={`${id}-plot`}
-              />
-            )}
-            {/* A move that can't happen (first or last card) isn't drawn. */}
-            {move?.up && (
-              <button
-                type="button"
-                onClick={move.up}
-                aria-label={t('quota_pool.move_up', { pool: providerLabel })}
-                title={t('quota_pool.move_up', { pool: providerLabel })}
-              >
-                <IconArrowUp size={16} aria-hidden="true" />
-                {t('quota_pool.move_up_short')}
-              </button>
-            )}
-            {move?.down && (
-              <button
-                type="button"
-                onClick={move.down}
-                aria-label={t('quota_pool.move_down', { pool: providerLabel })}
-                title={t('quota_pool.move_down', { pool: providerLabel })}
-              >
-                <IconArrowDown size={16} aria-hidden="true" />
-                {t('quota_pool.move_down_short')}
-              </button>
-            )}
-          </span>
+          {!phone && reorder}
         </div>
         {/* Every view has the same two groups: "Now" holds the one measured fact the headline
             doesn't show (the burn rate, or in rate views the balance), "Forecast" the projections. */}
@@ -694,6 +699,7 @@ export function PoolCard({
           </div>
         </div>
         {phone && stateBanner}
+        {phone && reorder}
       </div>
       {!phone && stateBanner}
       {/* No limit in this window means nothing to chart; the note above already says so. */}

@@ -2994,6 +2994,7 @@
     "reset_unavailable": "目前無法使用",
     "reset_source_unavailable": "連線至此來源以使用一次重設",
     "reset_lookup_failed": "此帳號沒有有效憑證，無法在此使用。請在驗證檔案中重新登入。",
+    "reset_credentials_unreadable": "無法讀取此來源的憑證，請稍後再試。",
     "reset_loading": "檢查中…",
     "reset_checking_credential": "正在檢查憑證…",
     "reset_spent": "下次收集將顯示是否已使用",

@@ -2005,16 +2005,17 @@ async def check_skeleton_shape(browser, url, page, name, state, width):
     for p in rows["provider"]:
         if max(p["title"], p["count"], p["chip"]) - min(p["title"], p["count"], p["chip"]) > 4 or p["pills"] is None or p["factsBottom"] is None or p["pills"] < p["factsBottom"] - 1 or min(p["sizes"]) < 20 or not (p["inert"] and p["hidden"]):
             fails.append(dict(why="provider skeleton lacks a title/count/chip row and a pill row after its facts, or is not inert and aria-hidden", provider=p))
-    # H2-D4: each fact placeholder stacks its label bar over its value bar (the loaded Forecast facts do), inside its card.
+    # H2-D4 (G12d): on phones each fact placeholder reads label left, value right on one row, as the loaded
+    # Now strip and Forecast rows do, inside its card.
     facts = await page.evaluate("""() => [...document.querySelectorAll('[class*="__loadingFact___"]')].map(f => {
       const [label, value] = [...f.children].map(c => c.getBoundingClientRect()), card = f.closest('[class*="__loading___"]').getBoundingClientRect();
-      return {labelBottom: label.bottom, valueTop: value.top, dx: Math.abs(label.left - value.left), right: Math.max(label.right, value.right), cardRight: card.right};
+      return {labelRight: label.right, valueLeft: value.left, dy: Math.abs((label.top + label.bottom) / 2 - (value.top + value.bottom) / 2), right: Math.max(label.right, value.right), cardRight: card.right};
     })""")
     if len(facts) < 8:
         fails.append(dict(why="expected at least 8 fact placeholders (4 in each provider card)", found=len(facts)))
     for fact in facts:
-        if fact["valueTop"] < fact["labelBottom"] - 1 or fact["dx"] > 1:
-            fails.append(dict(why="a fact placeholder's value is not stacked under its label", fact=fact))
+        if fact["valueLeft"] < fact["labelRight"] or fact["dy"] > 2:
+            fails.append(dict(why="a fact placeholder's value is not on its label's row, to its right", fact=fact))
         if fact["right"] > fact["cardRight"]:
             fails.append(dict(why="a fact placeholder runs past its card", fact=fact))
     loaded, context = await h_open_ready_page(browser, url, 390, 844)

@@ -2966,6 +2966,7 @@
     "reset_unavailable": "目前不可用",
     "reset_source_unavailable": "连接到此来源以使用一次重置",
     "reset_lookup_failed": "此账号没有有效凭据，无法在此使用。请在认证文件中重新登录。",
+    "reset_credentials_unreadable": "无法读取此来源的凭据，请稍后重试。",
     "reset_loading": "检查中…",
     "reset_checking_credential": "正在检查凭据…",
     "reset_spent": "下次采集将显示是否已使用",

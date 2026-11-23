@@ -7,6 +7,7 @@ import type { AuthFileItem } from '@/types';
 import { sourceOwnerKey, type SourceSession } from '@/services/api/sourceSession';
 import { useProviderSources } from '@/stores/useProviderSources';
 import { useCredentialInventoryStore, useSourceFiles } from '@/stores/useCredentialInventoryStore';
+import { credentialLookupReason } from './model/credentialReason';
 import { sourceQuotaStore } from '@/stores/sourceQuotaStores';
 import { useSourceLease } from '@/hooks/useSourceLease';
 import { useServedByServer } from './useServerQuota';
@@ -288,17 +289,9 @@ function SourceResetAction({
     [files, session.owner.instanceId, provider, account.sourceAccountId]
   );
   const file: AuthFileItem | null = match && !match.disabled ? match : null;
-  const error = files ? !file : status === 'error';
   const fact = { account, name, provider, onRefresh, spent };
   if (!file)
-    return (
-      <ResetFact
-        {...fact}
-        reason={t(
-          error ? 'quota_pool.reset_lookup_failed' : 'quota_pool.reset_checking_credential'
-        )}
-      />
-    );
+    return <ResetFact {...fact} reason={t(credentialLookupReason(Boolean(files), status))} />;
   return provider === 'claude' ? (
     <ClaudeResetAction
       {...fact}
@@ -399,7 +392,7 @@ function ClaudeResetAction({
               ? // A finished read with nothing usable is not still loading; a running claim is neither.
                 t(
                   reset.count === null
-                    ? 'quota_pool.reset_checking_credential'
+                    ? 'quota_pool.reset_loading'
                     : 'quota_pool.reset_claude_unavailable'
                 )
               : undefined

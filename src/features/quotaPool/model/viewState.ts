@@ -65,6 +65,11 @@ export function writeViewState(previous: URLSearchParams, view: QuotaViewState):
   return next;
 }
 
+/** The Future scenario shapes the Remaining forecast only; rate views forecast at the current rate. */
+export function forecastMultiplier(view: QuotaViewState): QuotaViewState['future'] {
+  return view.mode === 'remaining' ? view.future : DEFAULT_VIEW_STATE.future;
+}
+
 export function sameView(a: QuotaViewState, b: QuotaViewState): boolean {
   return KEYS.every((key) => a[key] === b[key]);
 }

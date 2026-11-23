@@ -2974,6 +2974,7 @@
     "reset_unavailable": "Hiện chưa dùng được",
     "reset_source_unavailable": "Kết nối với nguồn này để dùng một lượt",
     "reset_lookup_failed": "Tài khoản này không có thông tin xác thực đang hoạt động nên không dùng được ở đây. Hãy đăng nhập lại trong File xác thực.",
+    "reset_credentials_unreadable": "Không thể đọc thông tin xác thực của nguồn này. Hãy thử lại sau.",
     "reset_loading": "Đang kiểm tra…",
     "reset_checking_credential": "Đang kiểm tra thông tin xác thực…",
     "reset_spent": "Lần thu thập tiếp theo sẽ cho biết lượt này đã được dùng hay chưa",

@@ -2968,6 +2968,7 @@
     "reset_unavailable": "지금은 사용 불가",
     "reset_source_unavailable": "사용하려면 이 소스에 연결하세요",
     "reset_lookup_failed": "이 계정의 활성 인증 정보가 없어 여기서 사용할 수 없습니다. 인증 파일에서 다시 로그인하세요.",
+    "reset_credentials_unreadable": "이 소스의 자격 증명을 읽을 수 없습니다. 잠시 후 다시 시도하세요.",
     "reset_loading": "확인 중…",
     "reset_checking_credential": "인증 정보 확인 중…",
     "reset_spent": "다음 수집 시 사용 여부가 표시됩니다",
