@@ -68,11 +68,14 @@ After Authentik sign-in, use the existing proxy management key at the UI's login
 | --- | --- |
 | `https://prox.swervelab.xyz` or `https://prox.swervelab.xyz/codex` | GPT/Codex, port 8317 |
 | `https://prox.swervelab.xyz/claude` | Claude, port 8319 |
-| `https://prox.swervelab.xyz/gemini` | Gemini / Antigravity, port 8321 |
 
-The Gemini / Antigravity source declares only `antigravity`, so prox-history reads
-it for Antigravity alone: its credentials form the Gemini pool on Quota Management,
-and it never gets Claude or Codex cards.
+There is no Gemini / Antigravity source. The ProxD Gemini hub (port 8321) was taken
+down for good on 2026-11-23: Google suspended the account for a Terms of Service
+violation, and the Antigravity and Gemini CLI terms bar third-party tools from using
+their OAuth sign-in, so no hub may hold that login and prox-history may not read
+Google's quota endpoints with it. The Gemini history recorded until then stays
+readable on Quota Management (prox-history keeps a pool for stored accounts whose
+source is no longer configured).
 
 The checked-in source manifest, `deploy/provider-sources.json`, owns instance
 membership, ports, paths, aliases, and explicit authentication-sharing scopes.

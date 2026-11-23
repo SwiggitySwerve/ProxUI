@@ -65,10 +65,11 @@ describe('credential provider ownership in the manifest', () => {
     const owners = Object.fromEntries(
       deployed.sources.flatMap((s) => (s.providers ?? []).map((p) => [p, s.instanceId]))
     );
+    // Gemini (Antigravity) is no longer a hub source: Google's terms bar its OAuth in third-party
+    // tools (2026-11-23). Its stored history stays readable.
     expect(owners).toEqual({
       claude: 'claude-primary',
       codex: 'codex-primary',
-      antigravity: 'gemini-primary',
     });
   });
 });
