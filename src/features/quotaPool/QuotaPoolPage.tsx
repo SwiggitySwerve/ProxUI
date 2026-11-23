@@ -602,7 +602,7 @@ export function QuotaPoolPage() {
                 </span>
               </div>
               {/* The loaded header's two cards: the number with Now docked under it, then Forecast (G12). */}
-              <div className={styles.loadingStats}>
+              <div className={styles.loadingStats} data-rate={mode !== 'remaining' || undefined}>
                 <span className={styles.loadingCard}>
                   <span className={styles.loadingNumber}>
                     <Skeleton width={140} height={14} rounded={4} />

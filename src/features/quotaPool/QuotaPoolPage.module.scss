@@ -5386,6 +5386,27 @@ $table-tiers: (
 @container loadingCard (min-width: 900px) {
   .page .loading > .loadingStats {
     grid-template-columns: minmax(260px, 0.75fr) minmax(480px, 1.6fr);
+  }
+}
+// Forecast reads as three cells where the loaded card does: 601–619px stacked headers and from 900px.
+@container loadingCard (min-width: 601px) and (max-width: 619px) {
+  .page .loading > .loadingStats > .loadingCard:last-child {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    > .loadingCardTitle {
+      grid-column: 1 / -1;
+    }
+    > .loadingFact {
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      min-height: 89px;
+      padding: 12px 13px;
+    }
+  }
+}
+@container loadingCard (min-width: 900px) {
+  .page .loading > .loadingStats {
     > .loadingCard:last-child {
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 10px;
@@ -5405,5 +5426,16 @@ $table-tiers: (
 @container loadingCard (min-width: 1000px) {
   .page .loading > .loadingStats {
     grid-template-columns: minmax(280px, 0.85fr) minmax(480px, 1.6fr);
+  }
+}
+// Rate views give the number card the 340px its Now strip needs, as the loaded header does.
+@container loadingCard (min-width: 740px) and (max-width: 899px) {
+  .page .loading > .loadingStats[data-rate] {
+    grid-template-columns: minmax(340px, 0.8fr) minmax(0, 1.2fr);
+  }
+}
+@container loadingCard (min-width: 900px) and (max-width: 999px) {
+  .page .loading > .loadingStats[data-rate] {
+    grid-template-columns: minmax(340px, 0.75fr) minmax(480px, 1.6fr);
   }
 }
