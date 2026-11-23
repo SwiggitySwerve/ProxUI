@@ -7,6 +7,7 @@ import type { AuthFileItem } from '@/types';
 import { sourceOwnerKey, type SourceSession } from '@/services/api/sourceSession';
 import { useProviderSources } from '@/stores/useProviderSources';
 import { useCredentialInventoryStore, useSourceFiles } from '@/stores/useCredentialInventoryStore';
+import { credentialLookupReason } from './model/credentialReason';
 import { sourceQuotaStore } from '@/stores/sourceQuotaStores';
 import { useSourceLease } from '@/hooks/useSourceLease';
 import { useServedByServer } from './useServerQuota';
@@ -166,15 +167,20 @@ function ResetFact({
         label={t('quota_pool.reset_held_label')}
         state="known"
         value={
-          <>
-            {t(status.valueKey, { count: resets.available })}
-            {kinds && (
-              <span className={styles.resetKindTotals}>
-                {' · '}
-                <ResetKindCounts kinds={kinds} />
-              </span>
-            )}
-          </>
+          // One kind reads as its count alone ("1 Fable"), never "1 · 1 Fable" (G11).
+          kinds?.length === 1 ? (
+            <ResetKindCounts kinds={kinds} />
+          ) : (
+            <>
+              {t(status.valueKey, { count: resets.available })}
+              {kinds && (
+                <span className={styles.resetKindTotals}>
+                  {' · '}
+                  <ResetKindCounts kinds={kinds} />
+                </span>
+              )}
+            </>
+          )
         }
       />
       {/* Its own fact, so the dates read as values instead of wrapping inside the status. */}
@@ -283,15 +289,9 @@ function SourceResetAction({
     [files, session.owner.instanceId, provider, account.sourceAccountId]
   );
   const file: AuthFileItem | null = match && !match.disabled ? match : null;
-  const error = files ? !file : status === 'error';
   const fact = { account, name, provider, onRefresh, spent };
   if (!file)
-    return (
-      <ResetFact
-        {...fact}
-        reason={t(error ? 'quota_pool.reset_lookup_failed' : 'quota_pool.reset_loading')}
-      />
-    );
+    return <ResetFact {...fact} reason={t(credentialLookupReason(Boolean(files), status))} />;
   return provider === 'claude' ? (
     <ClaudeResetAction
       {...fact}

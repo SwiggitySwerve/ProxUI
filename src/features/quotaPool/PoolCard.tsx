@@ -33,7 +33,7 @@ import type { AccountResets } from '@/domain/quotaPool/types';
 import { laneOf, poolWindowId } from '@/domain/quotaWindows/lanes';
 import { profileWindowId } from '@/domain/quotaWindows/normalized';
 import { isBuiltInPoolProvider } from '@/domain/quotaPool/providers';
-import { heldResetKinds, sumResetKinds, wasSpent, type ResetKindCount } from './resetAccounts';
+import { heldResetKinds, wasSpent, type ResetKindCount } from './resetAccounts';
 import { PoolAccountResets, ResetKindCounts } from './PoolAccountResets';
 import { PoolChart } from './PoolChart';
 import { PoolGraph } from './PoolGraph';
@@ -60,10 +60,24 @@ const CHIP_ICONS: Record<PoolChipIcon, typeof IconCheck> = {
   info: IconInfo,
 };
 
+/** What is held, by kind, in the language's own word order: "1 weekly · 2 Fable held" (G11). */
+function HeldKinds({ kinds }: { kinds: ResetKindCount[] }) {
+  const { t } = useTranslation();
+  const [before, after] = t('quota_pool.reset_kinds_held', { kinds: '\u0000' }).split('\u0000');
+  return (
+    <>
+      {before}
+      <ResetKindCounts kinds={kinds} />
+      {after}
+    </>
+  );
+}
+
 /**
  * The stacked rows' reset chip, in the wide cell's order: "Manual resets · 3 usable" over what is held
- * ("1 weekly · 2 Fable", or "2 held" when the kinds are unknown). It always breaks after the usable
- * count, so no row strands a lone kind or a dangling separator (G10).
+ * ("1 weekly · 2 Fable held", or "2 held" when the kinds are unknown), so the held line always says
+ * "held" (G11). It always breaks after the usable count, so no row strands a lone kind or a dangling
+ * separator (G10).
  */
 function ResetChip({ resets, now }: { resets: AccountResets; now: number }) {
   const { t } = useTranslation();
@@ -75,7 +89,7 @@ function ResetChip({ resets, now }: { resets: AccountResets; now: number }) {
       </span>
       <span className={styles.resetChipPart}>
         {kinds ? (
-          <ResetKindCounts kinds={kinds} />
+          <HeldKinds kinds={kinds} />
         ) : (
           t('quota_pool.reset_held_part', { count: resets.available })
         )}
@@ -142,14 +156,14 @@ function HeldLine({ kinds, available }: { kinds: ResetKindCount[] | null; availa
     <>
       <small ref={lineRef}>
         {kinds && fits ? (
-          <ResetKindCounts kinds={kinds} />
+          <HeldKinds kinds={kinds} />
         ) : (
           t('quota_pool.reset_held_part', { count: available })
         )}
       </small>
       {kinds && (
         <span ref={probeRef} className={styles.heldProbe} aria-hidden="true">
-          <ResetKindCounts kinds={kinds} />
+          <HeldKinds kinds={kinds} />
         </span>
       )}
     </>
@@ -166,16 +180,19 @@ function SummaryFact({ label, children }: { label: string; children: ReactNode }
   );
 }
 
+/** At 900px and below an opened row reads: limits, Manual resets, Usage, Billing. */
 const STACKED_FACTS = '(max-width: 900px)';
-/** At 900px and below an opened row reads: limits, Manual resets, Usage, Billing. Rendered on the server, rows are wide. */
-function useStackedFacts() {
+/** Phones put a card's state note after its facts, ahead of the action pills (G11). */
+const PHONE = '(max-width: 640px)';
+/** Whether a media query matches, following changes. Rendered on the server it never does: the wide layout. */
+function useMedia(query: string) {
   return useSyncExternalStore(
     (notify) => {
-      const query = window.matchMedia(STACKED_FACTS);
-      query.addEventListener('change', notify);
-      return () => query.removeEventListener('change', notify);
+      const list = window.matchMedia(query);
+      list.addEventListener('change', notify);
+      return () => list.removeEventListener('change', notify);
     },
-    () => window.matchMedia(STACKED_FACTS).matches,
+    () => window.matchMedia(query).matches,
     () => false
   );
 }
@@ -200,7 +217,8 @@ export function PoolCard({
 }) {
   const { t, i18n } = useTranslation();
   const id = useId();
-  const stackedFacts = useStackedFacts();
+  const stackedFacts = useMedia(STACKED_FACTS);
+  const phone = useMedia(PHONE);
   const [minimized, setMinimized] = useState(false);
   const [rosterQuery, setRosterQuery] = useState('');
   const [rosterSort, setRosterSort] = useState<AccountSort>('name');
@@ -358,6 +376,9 @@ export function PoolCard({
   const countedLimitId = isBuiltInPoolProvider(pool.provider)
     ? poolWindowId(pool.provider, dashboard.window)
     : profile && profileWindowId(profile, dashboard.window);
+  // The counted limit leads, as it does in the stacked rows, so every width reads the limits in one
+  // order (G11); the rest keep the provider's order.
+  limitColumns.sort((a, b) => Number(b.id === countedLimitId) - Number(a.id === countedLimitId));
   const balanceHasColumn = limitColumns.some((column) => column.id === countedLimitId);
   // A wide column that shows a Low mark on any row reserves a status slot after its bar, so the
   // values and bars of the whole column start and end at one x. Unavailable cells span their own
@@ -439,16 +460,6 @@ export function PoolCard({
       ? pool.accounts.filter((account) => account.noFiveHourLimit).length
       : 0;
   const now = useNow();
-  // Accounts whose resets count toward the totals: not spent from this tab since the reading.
-  const resetAccounts = pool.accounts.filter(
-    (account) =>
-      account.resets &&
-      account.resets.available > 0 &&
-      !wasSpent(account.id, account.resets.observedAtMs)
-  );
-  const resetKindTotals = sumResetKinds(
-    resetAccounts.map((account) => heldResetKinds(account.resets!, now))
-  );
   const resetTotals = pool.accounts.reduce(
     (sum, account) =>
       account.resets && wasSpent(account.id, account.resets.observedAtMs)
@@ -459,12 +470,12 @@ export function PoolCard({
           },
     { available: 0, usable: 0 }
   );
-  // A lone holder's row already states its resets, but only while that row is on this page.
-  const showResetSummary =
-    resetTotals.available > 0 &&
-    !(resetAccounts.length === 1 && pageAccounts.some((account) => account.id === resetAccounts[0].id));
   const coverageMissing =
     pool.loadedCount !== pool.accountCount || pool.eligibleCount !== pool.accountCount;
+  // Accounts without a 5-hour limit are not missing: with all the rest reporting there is no coverage fact.
+  const showCoverage =
+    coverageMissing &&
+    !(staleAccounts.length === 0 && noLimitCount > 0 && pool.loadedCount >= pool.eligibleCount);
   const chip = poolChip(pool.forecastState, savedData);
   const ChipIcon = CHIP_ICONS[chip.icon];
   const headlineContext = (
@@ -482,6 +493,61 @@ export function PoolCard({
   const providerLabel = poolProviderLabel(t, pool.provider, pool.displayName);
   const appearance = poolProviderStyle(pool.provider);
   const slotCount = limitColumns.filter((column) => columnStatus.has(column.id)).length;
+  // Phones put the actions after the facts and the status note, right above the chart, in reading and
+  // focus order as well as on screen.
+  const reorder = (
+    <span className={styles.reorder}>
+      {pool.forecastState !== 'no-limit' && (
+        <PoolGraphToggle
+          minimized={minimized}
+          onToggle={() => setMinimized((value) => !value)}
+          label={`${providerLabel}${pool.sourceLabel ? ` · ${pool.sourceLabel}` : ''}`}
+          controls={`${id}-plot`}
+        />
+      )}
+      {/* A move that can't happen (first or last card) isn't drawn. */}
+      {move?.up && (
+        <button
+          type="button"
+          onClick={move.up}
+          aria-label={t('quota_pool.move_up', { pool: providerLabel })}
+          title={t('quota_pool.move_up', { pool: providerLabel })}
+        >
+          <IconArrowUp size={16} aria-hidden="true" />
+          {t('quota_pool.move_up_short')}
+        </button>
+      )}
+      {move?.down && (
+        <button
+          type="button"
+          onClick={move.down}
+          aria-label={t('quota_pool.move_down', { pool: providerLabel })}
+          title={t('quota_pool.move_down', { pool: providerLabel })}
+        >
+          <IconArrowDown size={16} aria-hidden="true" />
+          {t('quota_pool.move_down_short')}
+        </button>
+      )}
+    </span>
+  );
+  // Why the forecast or total is limited, across the card under its summary. On phones it sits in the
+  // header after the facts, so the action pills that follow it stay right above the chart (G11).
+  const stateBanner = pool.forecastState !== 'ready' && (
+    <p className={styles.stateNote} role="status" data-state={pool.forecastState}>
+      {/* The page's one "Refresh now" sits in the combined card's notice above. */}
+      <span>{stateNote}</span>
+      {affectedAccounts.length > 0 && (
+        // Once the list is filtered, the same button puts every account back.
+        <button
+          type="button"
+          className={styles.noteAction}
+          onClick={affectedOnly ? () => setAffectedOnly(false) : showAffected}
+        >
+          {t(affectedOnly ? 'quota_pool.show_all_accounts' : 'quota_pool.show_affected')}
+        </button>
+      )}
+    </p>
+  );
   return (
     <article
       className={`${styles.pool} ${appearance.className ?? ''}`}
@@ -529,75 +595,46 @@ export function PoolCard({
               </span>
             </div>
           </div>
-          <span className={styles.reorder}>
-            {pool.forecastState !== 'no-limit' && (
-              <PoolGraphToggle
-                minimized={minimized}
-                onToggle={() => setMinimized((value) => !value)}
-                label={`${providerLabel}${pool.sourceLabel ? ` · ${pool.sourceLabel}` : ''}`}
-                controls={`${id}-plot`}
-              />
-            )}
-            {/* A move that can't happen (first or last card) isn't drawn. */}
-            {move?.up && (
-              <button
-                type="button"
-                onClick={move.up}
-                aria-label={t('quota_pool.move_up', { pool: providerLabel })}
-                title={t('quota_pool.move_up', { pool: providerLabel })}
-              >
-                <IconArrowUp size={16} aria-hidden="true" />
-                {t('quota_pool.move_up_short')}
-              </button>
-            )}
-            {move?.down && (
-              <button
-                type="button"
-                onClick={move.down}
-                aria-label={t('quota_pool.move_down', { pool: providerLabel })}
-                title={t('quota_pool.move_down', { pool: providerLabel })}
-              >
-                <IconArrowDown size={16} aria-hidden="true" />
-                {t('quota_pool.move_down_short')}
-              </button>
-            )}
-          </span>
-        </div>
-        <div
-          className={styles.headline}
-          data-unavailable={pool[metricField[mode]] === null}
-          data-rate={mode !== 'remaining'}
-          data-no-limit={pool.forecastState === 'no-limit'}
-        >
-          {/* Unified label-above-value hero across Remaining and Rate views: metric label on top,
-              figure + baseline unit/capacity below. */}
-          {pool.forecastState !== 'no-limit' && headlineContext}
-          <strong>
-            {pool.forecastState === 'no-limit' ? (
-              <span className={styles.unavailableValue}>{noLimitLabel}</span>
-            ) : pool[metricField[mode]] === null ? (
-              // A muted word in the number slot, so a withheld total never passes for a value.
-              <span className={styles.unavailableValue}>{t('quota_pool.value_withheld')}</span>
-            ) : (
-              <>
-                {number(pool[metricField[mode]])}
-                {mode !== 'remaining' ? (
-                  <small> {t('quota_pool.points_hour')}</small>
-                ) : (
-                  <small>
-                    {' '}
-                    {t('quota_pool.of_capacity', { capacity: number(pool.capacityPoints) })}
-                  </small>
-                )}
-              </>
-            )}
-          </strong>
+          {!phone && reorder}
         </div>
         {/* Every view has the same two groups: "Now" holds the one measured fact the headline
             doesn't show (the burn rate, or in rate views the balance), "Forecast" the projections. */}
         <div className={styles.statsBlock} data-split={showNow || undefined}>
+          {/* G12: one card holds the remaining number with Now docked as its footer; Forecast is the
+              second card, its facts as small cells (Neon's option 3, the user's pick). */}
+          <div className={styles.leadCard}>
+            <div
+              className={styles.headline}
+              data-unavailable={pool[metricField[mode]] === null}
+              data-rate={mode !== 'remaining'}
+              data-no-limit={pool.forecastState === 'no-limit'}
+            >
+              {/* Unified label-above-value hero across Remaining and Rate views: metric label on top,
+                  figure + baseline unit/capacity below. */}
+              {pool.forecastState !== 'no-limit' && headlineContext}
+              <strong>
+                {pool.forecastState === 'no-limit' ? (
+                  <span className={styles.unavailableValue}>{noLimitLabel}</span>
+                ) : pool[metricField[mode]] === null ? (
+                  // A muted word in the number slot, so a withheld total never passes for a value.
+                  <span className={styles.unavailableValue}>{t('quota_pool.value_withheld')}</span>
+                ) : (
+                  <>
+                    {number(pool[metricField[mode]])}
+                    {mode !== 'remaining' ? (
+                      <small> {t('quota_pool.points_hour')}</small>
+                    ) : (
+                      <small>
+                        {' '}
+                        {t('quota_pool.of_capacity', { capacity: number(pool.capacityPoints) })}
+                      </small>
+                    )}
+                  </>
+                )}
+              </strong>
+            </div>
           {showNow && (
-            <div className={styles.statsGroup}>
+            <div className={styles.statsGroup} data-group="now">
               <p className={styles.statsHeading}>{t('quota_pool.now_group')}</p>
               <dl className={styles.stats}>
                 {mode === 'remaining' ? (
@@ -605,7 +642,7 @@ export function PoolCard({
                     <dt>{t('quota_pool.burn_last', { hours: dashboard.lookbackHours })}</dt>
                     <dd>
                       {number(pool.burnPointsPerHour)}
-                      {pool.burnPointsPerHour !== null && ` ${t('quota_pool.points_hour')}`}
+                      {pool.burnPointsPerHour !== null && <small> {t('quota_pool.points_hour')}</small>}
                     </dd>
                   </div>
                 ) : (
@@ -629,8 +666,12 @@ export function PoolCard({
               </dl>
             </div>
           )}
-          <div className={styles.statsGroup}>
-            <p className={styles.statsHeading}>{t('quota_pool.remaining_forecast')}</p>
+          </div>
+          <div className={styles.statsGroup} data-group="forecast">
+            {/* The 5-hour view names its window once, over every forecast fact (G11); weekly is the default. */}
+            <p className={styles.statsHeading}>
+              {t(`quota_pool.remaining_forecast${dashboard.window === 'five-hour' ? '_five_hour' : ''}`)}
+            </p>
             <dl className={styles.stats}>
               {/* A withheld forecast is explained by the notice; its empty facts aren't repeated. */}
               {!(forecastWithheld && pool.poolEmptyAtMs === null) && (
@@ -657,24 +698,10 @@ export function PoolCard({
             </dl>
           </div>
         </div>
+        {phone && stateBanner}
+        {phone && reorder}
       </div>
-      {/* Why the forecast or total is limited, across the card under its summary. */}
-      {pool.forecastState !== 'ready' && (
-        <p className={styles.stateNote} role="status" data-state={pool.forecastState}>
-          {/* The page's one "Refresh now" sits in the combined card's notice above. */}
-          <span>{stateNote}</span>
-          {affectedAccounts.length > 0 && (
-            // Once the list is filtered, the same button puts every account back.
-            <button
-              type="button"
-              className={styles.noteAction}
-              onClick={affectedOnly ? () => setAffectedOnly(false) : showAffected}
-            >
-              {t(affectedOnly ? 'quota_pool.show_all_accounts' : 'quota_pool.show_affected')}
-            </button>
-          )}
-        </p>
-      )}
+      {!phone && stateBanner}
       {/* No limit in this window means nothing to chart; the note above already says so. */}
       {pool.forecastState !== 'no-limit' && (
         <PoolGraph title={t('quota_pool.history_forecast')} id={`${id}-plot`} minimized={minimized}>
@@ -705,24 +732,17 @@ export function PoolCard({
                 </span>
               )}
             </span>
-            {/* Pool-level reset totals, unless one shown row already states them. Coverage facts
-                always show when partial. */}
-            {(showResetSummary || coverageMissing) && (
+            {/* The pool's resets as one fact in every card that holds any ("8 usable of 8 held"; the rows
+                give the kinds), so cards never differ in whether it shows (G11). Coverage facts always
+                show when partial. */}
+            {(resetTotals.available > 0 || showCoverage) && (
               <span className={styles.accountSummary}>
-                {showResetSummary && (
+                {resetTotals.available > 0 && (
                   <SummaryFact label={t('quota_pool.resets')}>
-                    {resetTotals.available}
-                    {resetKindTotals && (
-                      <span className={styles.resetKindTotals}>
-                        {' · '}
-                        <ResetKindCounts kinds={resetKindTotals} />
-                      </span>
-                    )}
-                  </SummaryFact>
-                )}
-                {showResetSummary && resetTotals.usable > 0 && (
-                  <SummaryFact label={t('quota_pool.reset_usable_summary')}>
-                    {resetTotals.usable}
+                    {t('quota_pool.reset_summary_value', {
+                      usable: resetTotals.usable,
+                      held: resetTotals.available,
+                    })}
                   </SummaryFact>
                 )}
                 {/* The card header already counts the accounts; say coverage only when some are missing.
@@ -737,22 +757,16 @@ export function PoolCard({
                     </SummaryFact>
                   </>
                 ) : coverageMissing && noLimitCount > 0 ? (
-                  <>
-                    <SummaryFact label={t('quota_pool.summary_five_hour_limit')}>
+                  // Each account without a 5-hour limit says so in its row, so only a missing reading
+                  // among the rest is a pool fact (G11).
+                  pool.loadedCount < pool.eligibleCount && (
+                    <SummaryFact label={t('quota_pool.summary_reporting')}>
                       {t('quota_pool.summary_x_of_y', {
-                        x: pool.eligibleCount,
-                        y: pool.accountCount,
+                        x: pool.loadedCount,
+                        y: pool.eligibleCount,
                       })}
                     </SummaryFact>
-                    {pool.loadedCount < pool.eligibleCount && (
-                      <SummaryFact label={t('quota_pool.summary_reporting')}>
-                        {t('quota_pool.summary_x_of_y', {
-                          x: pool.loadedCount,
-                          y: pool.eligibleCount,
-                        })}
-                      </SummaryFact>
-                    )}
-                  </>
+                  )
                 ) : (
                   coverageMissing && (
                     <SummaryFact label={t('quota_pool.summary_reporting')}>
@@ -903,7 +917,7 @@ export function PoolCard({
               <span className={styles.resetHead}>
                 {t('quota_pool.resets')}
                 {pageAccounts.some((account) => !account.resets) && (
-                  <small>– {t('quota_pool.not_reported')}</small>
+                  <small>{t('quota_pool.reset_dash_key')}</small>
                 )}
               </span>
               {limitColumns.map((limit) =>
@@ -1131,31 +1145,34 @@ export function PoolCard({
                   )}
                 </summary>
                 <div className={styles.accountFacts}>
-                  {/* The page lays out its own sections: the burn rate leads as one large figure,
-                      Usage and Billing read as label/value lists beside it, and Manual resets
-                      stays the one accent block (FactPanel's shared grid would override this). */}
+                  {/* The page lays out its own sections as three cards: Usage (with the burn rate
+                      in its title strip), Billing and Manual resets, the one accent card (G12). */}
                   <div className={styles.factsLayout}>
-                    <dl className={styles.burnLead}>
-                      <div>
-                        <dt>{t('quota_pool.burn_last', { hours: dashboard.lookbackHours })}</dt>
-                        {account.burnPointsPerHour !== null ? (
-                          <dd>
-                            <strong>{number(account.burnPointsPerHour)}</strong>{' '}
-                            <span>{t('quota_pool.points_hour')}</span>
-                          </dd>
-                        ) : (
-                          <>
-                            <dd data-state="notReported">{t('quota_pool.not_reported')}</dd>
-                            <dd className={styles.burnLeadReason}>
-                              {t('quota_pool.forecast_not_reported_reason')}
-                            </dd>
-                          </>
-                        )}
-                      </div>
-                    </dl>
-                    {/* One reset section per open row; the keys let it move without remounting. */}
-                    {stackedFacts && resetSection(account)}
-                    <FactSection key="usage" title={t('quota_pool.facts_usage')}>
+                    {/* Usage carries the burn rate in its title strip, as its lead figure (G12). */}
+                    <FactSection
+                      key="usage"
+                      title={
+                        <>
+                          <span className={styles.cardTitle}>
+                            {t('quota_pool.facts_usage')}
+                            <span className={styles.cardTitleAside}>
+                              {' · '}
+                              {t('quota_pool.burn_last', { hours: dashboard.lookbackHours })}
+                            </span>
+                          </span>
+                          <span className={styles.burnDock}>
+                            {account.burnPointsPerHour !== null ? (
+                              <>
+                                <strong>{number(account.burnPointsPerHour)}</strong>{' '}
+                                <span>{t('quota_pool.points_hour')}</span>
+                              </>
+                            ) : (
+                              <span data-state="notReported">{t('quota_pool.not_reported')}</span>
+                            )}
+                          </span>
+                        </>
+                      }
+                    >
                       <Fact
                         label={t('quota_pool.observed')}
                         {...(account.observedAtMs !== null
@@ -1193,6 +1210,9 @@ export function PoolCard({
                             })}
                       />
                     </FactSection>
+                    {/* Phones: Usage (which leads with the burn rate) first, then Manual resets, then
+                        Billing. One reset section per open row; the keys let it move without remounting. */}
+                    {stackedFacts && resetSection(account)}
                     <FactSection key="billing" title={t('quota_pool.facts_billing')}>
                       <BillingFacts
                         billing={account.billing ?? null}

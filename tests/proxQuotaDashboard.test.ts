@@ -1239,7 +1239,7 @@ describe('pool presentation', () => {
     );
     expect(markup).toMatch(/<strong data-low="true">.*?<span>Low<\/span>.*?12.0%/);
   });
-  test('accounts without a 5-hour limit are counted as such, not as missing', async () => {
+  test('accounts without a 5-hour limit say so in their rows and are not counted as missing', async () => {
     await i18n.changeLanguage('en');
     const ultra = {
       ...pool.accounts[0],
@@ -1261,7 +1261,10 @@ describe('pool presentation', () => {
         reveal: false,
       })
     );
-    expect(markup).toMatch(/>With a 5-hour limit<\/span> <b[^>]*>1 of 2<\/b>/);
+    // The row carries it (G11): no pool fact repeats it, and the account is not "missing".
+    expect(markup).toContain('<span>No 5-hour limit</span>');
+    expect(markup).not.toContain('With a 5-hour limit');
+    expect(markup).not.toContain('Reporting');
     expect(markup).not.toContain('loaded ·');
   });
   test('a pool with no 5-hour limit at all says so, without a points scale or an empty chart', async () => {

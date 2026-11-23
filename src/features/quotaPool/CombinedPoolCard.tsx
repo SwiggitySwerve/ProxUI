@@ -138,10 +138,12 @@ export function CombinedPoolCard({
             </>
           )}
         </strong>
+        {/* The selected rate's definition, inside the number card it defines (G12b). */}
+        {mode !== 'remaining' && (
+          <p className={styles.rateDefinition}>{t(`quota_pool.${mode}_definition`)}</p>
+        )}
       </div>
-      {mode !== 'remaining' && (
-        <p className={styles.rateDefinition}>{t(`quota_pool.${mode}_definition`)}</p>
-      )}
+
       {total?.series && estimatedPlanAccounts.length > 0 && (
         <p className={styles.stateNote}>
           {t('quota_pool.account_count', { count: estimatedPlanAccounts.length })} ·{' '}

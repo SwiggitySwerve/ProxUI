@@ -612,6 +612,13 @@ $pool-error: #ff5252;
   margin: 14px 0 4px !important;
   padding: 8px 12px;
 }
+// Phones: the note sits in the card header after the facts and before the action pills (G11), at the
+// same 14px from the facts (the header's 10px row gap and 4px).
+.poolHeader > .stateNote {
+  flex: 1 0 100%;
+  margin: 4px 0 0 !important;
+  padding: 8px 12px;
+}
 .forecast {
   margin-top: 14px;
 }
@@ -2177,168 +2184,218 @@ $table-tiers: (
   padding: 12px 10px 16px 38px;
 }
 
-/* G9 */
-// An opened row's facts. The burn rate leads as the row's one large figure; Usage and Billing are
-// label/value lists, and Manual resets stays the one accent block. The sections are the page's own
-// grid items, so the shared FactPanel grid never applies here. Tiers, by the drawer's width:
-// - under 360px (phones): stacked, label above value;
-// - 360px and up: stacked label/value lists (Manual resets right after the figure at 900px and
-//   below, where PoolCard puts it first in the DOM);
-// - wide screens, 600px drawers: the figure over Usage over Billing, Manual resets on the right;
-// - 860px: the figure gets its own first column, set off by a hairline;
-// - 1160px: Usage and Billing side by side.
+/* G12 */
+// An opened row's facts are three cards (Neon's option 3, the user's pick): Usage, with the burn rate
+// as the figure in its title strip; Billing; and Manual resets, the one accent card, with Use reset in
+// its strip. Every strip is one height, so the titles and the first rows line up; facts are label-left,
+// value-right rows split by hairlines. One row from a 960px drawer; from 600px, Usage beside Billing
+// with Manual resets across under them; stacked below (Manual resets first on phones, where PoolCard
+// puts it first in the DOM).
+.pool {
+  --card-bg: #121212;
+  --card-strip: #0c0c0c;
+  --card-cell: #0a0a0a;
+  --card-hairline: rgba(255, 255, 255, 0.055);
+}
 .accountFacts {
   container: drawer-facts / inline-size;
 }
 .factsLayout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 20px 32px;
-  align-items: start;
-  > section,
-  > section[data-tone='accent'] {
-    grid-column: auto;
-    display: block;
-  }
-  > section dl {
-    grid-column: auto;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px 24px;
-  }
+  align-items: stretch;
+  gap: 12px;
 }
-.burnLead {
+.pool .factsLayout > section,
+.pool .factsLayout > section[data-tone='accent'] {
+  grid-column: auto;
+  grid-row: auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   margin: 0;
-  dt {
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--card-bg);
+  > header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px 12px;
+    min-height: 52px;
+    margin: 0;
+    padding: 9px 15px;
+    background: var(--card-strip);
+    border-bottom: 1px solid var(--card-hairline);
+  }
+  > header > h4 {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px 12px;
+    flex-wrap: wrap;
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 18px;
+    font-weight: 600;
+  }
+  > p {
+    margin: 0;
+    padding: 12px 15px 0;
     color: var(--text-secondary);
     font-size: 13px;
     line-height: 18px;
   }
-  dd {
-    margin: 2px 0 0;
-    color: var(--text-secondary);
-    font-size: 14px;
-    line-height: 20px;
+  > dl {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    margin: 0;
+    padding: 12px 15px 15px;
   }
-  strong {
+  // Label left, value right; a value without room drops under its label, still at the right edge.
+  > dl > div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 2px 16px;
+    padding: 7px 0;
+  }
+  > dl > div:first-child {
+    padding-top: 0;
+  }
+  > dl > div:last-child {
+    padding-bottom: 0;
+  }
+  > dl > div + div {
+    border-top: 1px solid var(--card-hairline);
+  }
+  > dl > div > dt {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 19px;
+  }
+  > dl > div > dd {
+    margin: 0 0 0 auto;
     color: var(--text-primary);
-    font-size: 28px;
-    line-height: 34px;
-    font-weight: 600;
-    letter-spacing: -0.02em;
+    font-size: 13.5px;
+    line-height: 19px;
+    font-weight: 500;
+    text-align: right;
     font-variant-numeric: tabular-nums;
   }
-  dd[data-state='notReported'] {
+  // A caption (an estimate's basis, a reason) sits under its value, at the right edge with it.
+  > dl > div > dd[class*='detail'] {
+    flex-basis: 100%;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 400;
+  }
+}
+// Manual resets: the accent card, its strip tinted, Use reset at the strip's right end.
+.pool .factsLayout > section[data-tone='accent'] {
+  border-color: color-mix(in srgb, var(--pool-accent) 30%, transparent);
+  background:
+    radial-gradient(
+      110% 80% at 0% 0%,
+      color-mix(in srgb, var(--pool-accent) 12%, transparent),
+      transparent 72%
+    ),
+    var(--card-bg);
+  > header {
+    background: color-mix(in srgb, var(--pool-accent) 8%, var(--card-strip));
+    border-bottom-color: color-mix(in srgb, var(--pool-accent) 20%, transparent);
+  }
+  > header > h4 {
+    flex: 0 1 auto;
+  }
+}
+// Usage's strip: "Usage · Burn rate (3h)" on the left, the figure on the right.
+.cardTitle {
+  min-width: 0;
+}
+.cardTitleAside {
+  color: var(--text-secondary);
+}
+.burnDock {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  strong {
     color: var(--text-primary);
-    font-size: 17px;
-    line-height: 24px;
+    font-size: 24px;
+    line-height: 28px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  span {
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    font-weight: 400;
+  }
+  [data-state='notReported'] {
+    color: var(--text-primary);
+    font-size: 13px;
     font-weight: 600;
   }
 }
-.burnLeadReason {
-  font-size: 13px;
-  line-height: 18px;
+// Expires: the label, then the expiry lines under it across the card, one line each (badge, date,
+// time left).
+.pool .factsLayout > section > dl > div:has(.resetExpiries) > dd {
+  flex-basis: 100%;
+  margin: 6px 0 0;
+  text-align: left;
 }
-// Label/value lists: each fact's label sits in a label track and its value (with any caption under
-// it) in a value track, so values line up. Manual resets is the narrowest list, so its values (a
-// kind and a date) may wrap in place; the other values never break.
-@mixin fact-lists {
-  > section dl {
+.pool .factsLayout .resetExpiries {
+  gap: 6px;
+  li {
+    flex-wrap: wrap;
+    justify-content: flex-start;
     align-items: baseline;
-    gap: 6px 16px;
-  }
-  // A value never breaks (min-content is its width); a caption under it wraps instead of widening it.
-  > section:not([data-tone='accent']) dl {
-    grid-template-columns: minmax(min-content, max-content) minmax(min-content, 1fr);
-  }
-  > section[data-tone='accent'] dl {
-    grid-template-columns: minmax(min-content, max-content) minmax(0, 1fr);
-  }
-  > section[data-tone='accent'] dd span {
-    white-space: normal;
-  }
-  > section dl > div {
-    display: contents;
-  }
-  > section dl > div > dt {
-    grid-column: 1;
-  }
-  > section dl > div > dd {
-    grid-column: 2;
-    margin: 0;
+    column-gap: 8px;
   }
 }
-// The page grid owns the list tracks: Usage and Billing each span a label track and a value track
-// through subgrid, so their values line up in one column wherever the lists stack.
-@container drawer-facts (min-width: 360px) {
-  .factsLayout {
-    @include fact-lists;
-    // A trailing filler track takes the spare width: with a flexible value track instead, Chrome
-    // leaves the label track at its min-content and wraps labels that fit.
-    grid-template-columns: minmax(min-content, max-content) minmax(min-content, max-content) 1fr;
-    > section,
+// The list cards are never narrower than a label beside a date (about 350px for Usage, 290px for
+// Billing), so values keep their line and their edge.
+@container drawer-facts (min-width: 660px) {
+  .pool .factsLayout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     > section[data-tone='accent'] {
       grid-column: 1 / -1;
+      order: 1;
     }
-    > section:not([data-tone='accent']) {
-      display: grid;
-      grid-template-columns: subgrid;
-      > header {
-        grid-column: 1 / -1;
-      }
-    }
-    > section:not([data-tone='accent']) dl {
-      grid-column: 1 / -1;
-      grid-template-columns: subgrid;
-    }
-  }
-  .burnLead {
-    grid-column: 1 / -1;
   }
 }
-// Side-by-side tiers. The lists auto-place after the figure; Manual resets is pinned to the last
-// track across every row, and the trailing 1fr row takes any extra height it has, so Billing stays
-// right under Usage.
-@media (min-width: 901px) {
-  @container drawer-facts (min-width: 600px) {
-    .factsLayout {
-      grid-template-columns:
-        minmax(min-content, max-content) minmax(min-content, 1fr)
-        clamp(240px, 38cqi, 320px);
-      grid-template-rows: auto auto auto 1fr;
-      row-gap: 16px;
-      > section:not([data-tone='accent']) {
-        grid-column: span 2;
-      }
-      > section[data-tone='accent'] {
-        grid-column: -2;
-        grid-row: 1 / -1;
-      }
-    }
-    .burnLead {
-      grid-column: 1 / span 2;
+// Usage holds "Predicted empty (weekly)" beside its date (about 370px), Billing "Active since"
+// beside one (about 282px).
+@container drawer-facts (min-width: 1000px) {
+  .pool .factsLayout {
+    grid-template-columns: minmax(372px, 1.2fr) minmax(282px, 0.85fr) minmax(320px, 1fr);
+    > section[data-tone='accent'] {
+      grid-column: auto;
     }
   }
-  @container drawer-facts (min-width: 860px) {
-    .factsLayout {
-      grid-template-columns:
-        max-content minmax(min-content, max-content) minmax(min-content, 1fr)
-        clamp(320px, 36cqi, 440px);
-      grid-template-rows: auto auto 1fr;
+}
+@media (max-width: 640px) {
+  .pool .factsLayout > section,
+  .pool .factsLayout > section[data-tone='accent'] {
+    > header {
+      padding: 8px 13px;
     }
-    .burnLead {
-      grid-column: 1;
-      grid-row: 1 / -1;
-      align-self: stretch;
-      padding-right: 32px;
-      border-right: 1px solid var(--hairline);
+    > p {
+      padding: 10px 13px 0;
     }
-  }
-  @container drawer-facts (min-width: 1160px) {
-    .factsLayout {
-      grid-template-columns:
-        max-content minmax(min-content, max-content) minmax(min-content, 1fr)
-        minmax(min-content, max-content) minmax(min-content, 1fr) clamp(320px, 32cqi, 440px);
-      grid-template-rows: auto;
+    > dl {
+      padding: 10px 13px 13px;
     }
   }
 }
@@ -2472,10 +2529,19 @@ $table-tiers: (
 }
 @media (max-width: 640px) {
   // Phones: name row, count and chip row, then the actions, from the left.
-  .poolIdentity > .reorder {
+  .poolIdentity > .reorder,
+  .pool > .poolHeader > .reorder {
     flex-basis: 100%;
     justify-content: flex-start;
     margin-left: 0;
+  }
+  // The actions follow the headline, facts and status note, right above the chart, so a card's title
+  // and its number read together (G11). The identity row lends its title to the header for that.
+  .pool > .poolHeader > .poolIdentity {
+    display: contents;
+    > .poolTitle {
+      flex: 1 0 100%;
+    }
   }
 }
 
@@ -2827,9 +2893,12 @@ $table-tiers: (
       width: 128px;
       height: 26px;
     }
+    // The pills follow the facts on phones (G11), so the title row holds only the title, count and chip.
     .loadingPills {
+      display: none;
+    }
+    .loadingPillsBelow {
       display: flex;
-      flex-basis: 100%;
       gap: 8px;
     }
     .loadingPill {
@@ -2837,6 +2906,10 @@ $table-tiers: (
       height: 44px;
     }
   }
+}
+// The phone-only pill row after the skeleton facts; wider screens keep their pills on the title row.
+.loadingPillsBelow {
+  display: none;
 }
 
 /* R */
@@ -3641,13 +3714,15 @@ $table-tiers: (
   flex-wrap: wrap;
   column-gap: 8px;
 }
-// With kinds, each reset reads as its kind badge over its date, at every width, so lines stay
-// aligned and a date never breaks beside a badge.
+// With kinds, each reset reads on one line: its kind badge, its date and the time left (G12), so a
+// tile of three resets is three lines, not six; a narrow tile wraps between the parts.
 .resetExpiries[data-kinds] {
-  gap: 8px;
+  gap: 6px;
   li {
-    flex-direction: column;
-    align-items: flex-start;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: baseline;
     row-gap: 2px;
   }
 }
@@ -3967,6 +4042,14 @@ $table-tiers: (
     --name-cap: 360px;
   }
 }
+// G11: when no card has more than two limit columns, from 1100px the Manual resets column fits two
+// kinds with "held" ("1 weekly · 2 Fable held", about 149px). Three-limit cards keep 120px, so their bars
+// keep the 1280px floor; every card on the page shares the width, so the columns still line up.
+@media (min-width: 1100px) {
+  .pools[data-wide-resets] .pool {
+    --plan-track: 152px;
+  }
+}
 
 // Align wide table chevrons, rows, and right edges flush with the card's inner content rails;
 // start expanded facts cleanly under the Account column text while keeping Manual resets flush right.
@@ -4105,7 +4188,7 @@ $table-tiers: (
 // consecutive opened accounts clearly.
 @include block-rows {
   .accountFacts {
-    padding: 12px 10px 16px 38px;
+    padding: 8px 0 12px;
   }
   .account[open] + .account {
     margin-top: 8px;
@@ -4212,6 +4295,17 @@ $table-tiers: (
   padding-inline: 14px 10px;
   select {
     padding-inline: 6px 10px;
+  }
+}
+// Future, off in rate views (G11b): its reason reads at secondary contrast; the off state is the dashed
+// outline (the disabled Use reset's) and the missing chevron, so it never invites a click.
+.page .selectLabel:has(select:disabled) {
+  border-style: dashed;
+  select:disabled {
+    appearance: none;
+    padding-inline-end: 4px;
+    color: var(--text-secondary);
+    cursor: default;
   }
 }
 .page .combinedOptions select {
@@ -4568,6 +4662,13 @@ $table-tiers: (
         grid-column: 1 / -1;
       }
     }
+    // A status slot starts 12px into its cell, so a Low mark never reads as the end of the bar or the
+    // reset line before it (G11b); a missing or unavailable cell in that column starts with it.
+    .limitStatus,
+    &[data-missing='true'] .missingSlot > .statusGhost,
+    &[data-unavailable='true'] strong:has(.unavailableWord) {
+      margin-inline-start: 12px;
+    }
     &[data-missing='true'] {
       .missingSlot {
         display: grid;
@@ -4617,6 +4718,10 @@ $table-tiers: (
     min-width: 0;
     font-weight: inherit;
   }
+  // A slotted column indents its header by the same extra 12px as its rows (G11b).
+  .pool .accountHead > span[data-slotted] > .statusGhost {
+    margin-inline-start: 12px;
+  }
 }
 
 // Stacked rows write a missing limit's reason in the value position; the wide table's empty slot is off.
@@ -4646,9 +4751,6 @@ $table-tiers: (
 
 // In-page refresh-error warning banner spans the full card column width (640px cap stays on
 // standalone empty and initial-error cards only).
-.errorNotice:not([data-alone]) {
-  max-width: none;
-}
 
 // Full-width desktop roster toolbar: Search flexes to meet the table's right edge while keeping
 // Search, Sort, and the filter chip cleanly grouped (wrapping flush-left at 1000px).
@@ -4688,4 +4790,635 @@ $table-tiers: (
   margin-top: 24px;
   padding-top: 20px;
   border-top: 1px solid var(--hairline-soft);
+}
+
+/* G12 */
+// The provider header (Neon's option 3, the user's pick): two cards. The first holds the remaining
+// number, with Now docked as its footer strip ("Now · Burn rate (3h)" left, the value right); the
+// second is Forecast, each fact a small cell. Side by side from a 960px header, stacked below; on
+// phones the forecast cells read label-left, value-right.
+.pool .poolHeader > .statsBlock {
+  display: grid;
+  flex: 1 0 100%;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.pool .poolHeader .leadCard,
+.pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--card-bg);
+}
+.pool .poolHeader .leadCard > .headline {
+  flex: 1 1 auto;
+  // Top-aligned, so a withheld number ("Withheld", no Now strip) sits on the ready number's baseline.
+  justify-content: flex-start;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+  padding: 15px 17px;
+}
+// Now, docked under the number: one row at every width, "Now ·", the label, the value at the right.
+// A long label ("Weekly remaining" in rate views) wraps in its own column, so "Now ·" never strands on
+// a line, and "of 8,000 points" moves under the number as one piece when the strip is narrow (G12b).
+.pool .poolHeader .leadCard > .statsGroup[data-group='now'] {
+  display: grid;
+  grid-template-columns: max-content minmax(min-content, 1fr) minmax(min-content, max-content);
+  align-items: baseline;
+  column-gap: 4px;
+  margin: 0;
+  padding: 11px 17px;
+  border: 0;
+  border-top: 1px solid var(--card-hairline);
+  background: var(--card-strip);
+  .statsHeading {
+    margin: 0 !important;
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    font-weight: 400;
+    &::after {
+      content: ' ·';
+    }
+  }
+  .stats,
+  .stats > div {
+    display: contents;
+  }
+  .stats dt {
+    margin: 0;
+    padding-right: 8px;
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    white-space: normal;
+  }
+  .stats dd {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    text-align: right;
+    white-space: normal;
+  }
+  .stats dd small {
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    font-weight: 400;
+    white-space: nowrap;
+  }
+}
+// Forecast: the title, then one cell per fact.
+.pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] {
+  padding: 15px 17px;
+  gap: 10px;
+  .statsHeading {
+    margin: 0 !important;
+    color: var(--text-primary);
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .stats {
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    align-items: stretch;
+    gap: 10px;
+    > div {
+      display: block;
+      min-width: 0;
+      padding: 11px 13px;
+      border: 1px solid var(--card-hairline);
+      border-radius: 9px;
+      background: var(--card-cell);
+    }
+    dt {
+      margin: 0 0 4px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    dd {
+      margin: 0;
+      font-size: 14.5px;
+      font-weight: 500;
+      text-align: left;
+      white-space: nowrap;
+    }
+    small {
+      display: block;
+      grid-column: auto;
+      margin-top: 3px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      text-align: left;
+    }
+  }
+}
+// From a 900px header (a 1280px screen) the two cards share a row and Forecast's three cells one row (P1.2).
+@container poolHeader (min-width: 900px) {
+  .pool .poolHeader > .statsBlock {
+    grid-template-columns: minmax(260px, 0.75fr) minmax(480px, 1.6fr);
+  }
+}
+// Phones: forecast cells read label-left, value-right, one per line.
+@container poolHeader (max-width: 600px) {
+  .pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] {
+    padding: 13px;
+    .stats {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 6px;
+      > div {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 2px 12px;
+        padding: 9px 11px;
+      }
+      dt {
+        margin: 0;
+      }
+      dd {
+        margin-left: auto;
+        font-size: 13.5px;
+        text-align: right;
+      }
+      small {
+        flex-basis: 100%;
+        margin-top: 1px;
+        text-align: right;
+      }
+    }
+  }
+  .pool .poolHeader .leadCard > .headline {
+    padding: 13px;
+  }
+  .pool .poolHeader .leadCard > .statsGroup[data-group='now'] {
+    padding: 10px 13px;
+  }
+}
+
+/* G12b */
+// Alignment pass on the option 3 cards (Sol's measurements).
+// Cards end at their own content, sharing their top edge, so a long Manual resets card leaves no
+// blank run under Usage and Billing.
+.pool .factsLayout {
+  align-items: start;
+}
+// Every title strip is exactly one height, Use reset included.
+.pool .factsLayout > section > header,
+.pool .factsLayout > section[data-tone='accent'] > header {
+  box-sizing: border-box;
+  height: 52px;
+  min-height: 0;
+  flex-wrap: nowrap;
+}
+.pool .factsLayout > section > header > button {
+  height: 32px;
+  min-height: 0;
+}
+@media (pointer: coarse), (max-width: 640px) {
+  .pool .factsLayout > section > header,
+  .pool .factsLayout > section[data-tone='accent'] > header {
+    height: 60px;
+  }
+  .pool .factsLayout > section > header > button {
+    height: 44px;
+  }
+}
+// Manual resets: the status or reason sits directly under the strip that holds Use reset (K7); the
+// equal strips keep every card's first line at one height.
+// The header's two cards share one height.
+.pool .poolHeader > .statsBlock {
+  align-items: stretch;
+}
+// The mockup's type: the remaining number at 38px (32px on phones).
+.pool .poolHeader .leadCard > .headline strong {
+  font-size: 38px;
+  line-height: 1.08;
+  letter-spacing: -0.04em;
+}
+@container poolHeader (max-width: 600px) {
+  .pool .poolHeader .leadCard > .headline strong {
+    font-size: 32px;
+  }
+  // Label | value on one line, an 8px gap, the value at the right edge; a caption under the value.
+  .pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] .stats > div {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2px 8px;
+    dd {
+      margin: 0;
+    }
+    small {
+      grid-column: 2;
+    }
+  }
+}
+// An expiry keeps its badge and date together; only the time left may wrap, under the date.
+.pool .factsLayout .resetExpiries li {
+  flex-wrap: nowrap;
+  > .resetKind {
+    flex: none;
+  }
+}
+// The skeleton draws the loaded header's two cards, so nothing reflows when data arrives (G12).
+.page .loading > .loadingStats {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  border: 0;
+}
+.loadingCard {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 24px;
+  min-width: 0;
+  padding: 15px 17px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: #121212;
+}
+@media (min-width: 1100px) {
+  .page .loading > .loadingStats {
+    grid-template-columns: minmax(300px, 0.9fr) minmax(480px, 1.5fr);
+  }
+}
+// A forecast with one fact (withheld or collecting) shows it plainly in the Forecast card, not as a box
+// inside a box.
+.pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] .stats > div:only-child {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+// 620–899px headers (952–1230px screens): the number card and Forecast share one row, so Now sits next
+// to its figure; Forecast reads label-left, value-right rows in its narrower card.
+@container poolHeader (min-width: 620px) and (max-width: 899px) {
+  .pool .poolHeader > .statsBlock {
+    grid-template-columns: minmax(250px, 0.8fr) minmax(0, 1.2fr);
+  }
+  .pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] .stats {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    > div {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: baseline;
+      gap: 2px 8px;
+      padding: 7px 11px;
+    }
+    dt {
+      margin: 0;
+    }
+    dd {
+      text-align: right;
+      font-size: 13.5px;
+    }
+    small {
+      grid-column: 2;
+      text-align: right;
+    }
+  }
+}
+// Phones: forecast cells keep every label on one line (the card and cell insets give it the room).
+@container poolHeader (max-width: 600px) {
+  .pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] {
+    padding: 12px;
+    .stats > div {
+      padding: 9px 10px;
+      gap: 2px 8px;
+    }
+    .stats dt {
+      white-space: nowrap;
+    }
+  }
+}
+
+// Combined usage: its number sits in the same card as a provider's, hugging the figure, so every
+// headline on the page reads as a card (G12b).
+.pool.combined > .headline {
+  justify-self: start;
+  width: max-content;
+  max-width: 100%;
+  margin-top: 4px;
+  padding: 15px 17px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--card-bg);
+}
+.pool.combined > .headline strong {
+  font-size: 38px;
+  line-height: 1.08;
+  letter-spacing: -0.04em;
+}
+@media (max-width: 640px) {
+  .pool.combined > .headline strong {
+    font-size: 32px;
+  }
+}
+// Phones: in an opened row a long label wraps beside its value, so the value stays on the label's
+// first line at the right edge.
+@media (max-width: 640px) {
+  .pool .factsLayout > section > dl > div:not(:has(.resetExpiries)) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    > dd {
+      margin: 0;
+    }
+    > dd[class*='detail'] {
+      grid-column: 1 / -1;
+      text-align: right;
+    }
+  }
+}
+// Expiries: the kind badge is one fixed column, so dates start at one x; a slightly smaller badge
+// leaves the date and the time left on one line at 1440px.
+.pool .factsLayout .resetExpiries[data-kinds] {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 8px;
+  li {
+    display: contents;
+  }
+  .resetKind {
+    justify-self: start;
+    align-self: start;
+    padding: 0 5px;
+    font-size: 12px;
+    line-height: 19px;
+  }
+  [class*='resetExpiryWhen'] {
+    column-gap: 6px;
+  }
+}
+// Phones: a compact Forecast card (tighter cells and gaps), so the chart and the roster follow sooner.
+@container poolHeader (max-width: 600px) {
+  .pool .poolHeader > .statsBlock {
+    gap: 8px;
+  }
+  .pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] {
+    gap: 8px;
+    padding: 10px 12px 12px;
+    .stats {
+      gap: 4px;
+      > div {
+        padding: 7px 10px;
+      }
+    }
+  }
+}
+// Phones: the forecast cells give the label the room to sit beside its date at 390px; below that the label
+// may take two lines, never running under its value.
+@container poolHeader (max-width: 600px) {
+  .pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] {
+    padding-inline: 11px;
+    .stats > div {
+      padding-inline: 7px;
+    }
+  }
+}
+@container poolHeader (max-width: 340px) {
+  .pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] .stats dt {
+    white-space: normal;
+  }
+}
+// From a 1000px header (a 1440px screen) the number card takes a little more, so the Now strip's
+// "Now · Weekly remaining 248.4 of 300 points" holds one line in rate views (G12b).
+@container poolHeader (min-width: 1000px) {
+  .pool .poolHeader > .statsBlock {
+    grid-template-columns: minmax(280px, 0.85fr) minmax(480px, 1.6fr);
+  }
+}
+
+// Combined usage: the rate definition sits in the number card, under the figure it defines (G12b).
+.pool.combined > .headline .rateDefinition {
+  margin: 6px 0 0;
+  max-width: 34ch;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+// Phones: a tighter Combined number card, so its chart starts sooner.
+@media (max-width: 640px) {
+  .pool.combined > .headline {
+    margin-top: 0;
+    padding: 12px 13px;
+  }
+}
+// The Combined number card matches the provider number cards: at least their 280px on wide screens, so
+// it doesn't change width between views, and the card's full width on phones.
+.pool.combined > .headline {
+  min-width: 280px;
+}
+@media (max-width: 640px) {
+  .pool.combined > .headline {
+    justify-self: stretch;
+    width: auto;
+    min-width: 0;
+  }
+}
+// 620–899px headers: the number card stretches to Forecast's three rows, so its number centres in the
+// space above the Now strip instead of leaving a gap under it.
+@container poolHeader (min-width: 620px) and (max-width: 899px) {
+  .pool .poolHeader .leadCard > .headline {
+    justify-content: center;
+  }
+}
+
+// 620–739px headers (952–1070px screens): the number card keeps the width its number and Now strip need,
+// and Forecast's rows take the rest, so neither card leaves a half-empty row (G12c).
+@container poolHeader (min-width: 620px) and (max-width: 739px) {
+  .pool .poolHeader > .statsBlock {
+    grid-template-columns: 272px minmax(0, 1fr);
+  }
+  .pool .poolHeader > .statsBlock > .statsGroup[data-group='forecast'] {
+    padding: 13px;
+    .stats > div {
+      padding: 7px 10px;
+    }
+  }
+}
+
+// Rate views from a 740px header (1100px screens and up): the number card takes the 340px its
+// "Now · Weekly remaining 248.4 of 300 points" strip needs to hold one line (G12c).
+@container poolHeader (min-width: 740px) and (max-width: 899px) {
+  .pool .poolHeader > .statsBlock:has(.headline[data-rate='true']) {
+    grid-template-columns: minmax(340px, 0.8fr) minmax(0, 1.2fr);
+  }
+}
+@container poolHeader (min-width: 900px) and (max-width: 999px) {
+  .pool .poolHeader > .statsBlock:has(.headline[data-rate='true']) {
+    grid-template-columns: minmax(340px, 0.75fr) minmax(480px, 1.6fr);
+    > .statsGroup[data-group='forecast'] {
+      padding-inline: 13px;
+      .stats > div {
+        padding-inline: 11px;
+      }
+      .stats dd {
+        font-size: 13.5px;
+      }
+    }
+  }
+}
+
+// The Combined skeleton draws its number card like the loaded one, so the provider cards below don't
+// move when data arrives (G12c).
+.loadingHeroCard {
+  align-self: flex-start;
+  justify-self: start;
+  width: max-content;
+  min-width: 280px;
+  max-width: 100%;
+  padding: 15px 17px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: #121212;
+}
+@media (max-width: 640px) {
+  .loadingHeroCard {
+    align-self: stretch;
+    width: auto;
+    min-width: 0;
+    padding: 12px 13px;
+  }
+}
+
+// "of 12,000 points" stays one phrase: when it can't fit beside the number it moves under it whole,
+// never leaving "points" alone on a line (G12c).
+.pool .poolHeader .leadCard > .headline strong:has(> small) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 5px;
+  > small {
+    white-space: nowrap;
+  }
+}
+
+// Wide screens: the rate definition holds one line inside the Combined number card, so the chart
+// doesn't start lower in rate views (G12c).
+@media (min-width: 641px) {
+  .pool.combined > .headline .rateDefinition {
+    max-width: none;
+  }
+}
+
+// The provider skeleton follows the loaded header: the same container breakpoints (the card's content
+// box is as wide as the loaded header), a number card with its Now strip docked under it, and a
+// Forecast card with a title over three rows, or three cells from a 900px header (G12d).
+.page .loading {
+  container: loadingCard / inline-size;
+}
+.page .loading > .loadingStats {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+  > .loadingCard {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  > .loadingCard:first-child {
+    > .loadingNumber {
+      flex: 1 0 auto;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 8px;
+      padding: 15px 17px;
+    }
+    > .loadingFact {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 13px 17px;
+      border-top: 1px solid rgba(255, 255, 255, 0.055);
+      background: #0c0c0c;
+    }
+  }
+  > .loadingCard:last-child {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    padding: 15px 17px;
+    > .loadingCardTitle {
+      margin-bottom: 4px;
+    }
+    > .loadingFact {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 38px;
+      padding: 0 11px;
+      border: 1px solid rgba(255, 255, 255, 0.055);
+      border-radius: 9px;
+      background: #0a0a0a;
+    }
+  }
+}
+@container loadingCard (min-width: 620px) and (max-width: 739px) {
+  .page .loading > .loadingStats {
+    grid-template-columns: 272px minmax(0, 1fr);
+  }
+}
+@container loadingCard (min-width: 740px) and (max-width: 899px) {
+  .page .loading > .loadingStats {
+    grid-template-columns: minmax(250px, 0.8fr) minmax(0, 1.2fr);
+  }
+}
+@container loadingCard (min-width: 620px) and (max-width: 899px) {
+  .page .loading > .loadingStats > .loadingCard:last-child > .loadingFact {
+    min-height: 44px;
+  }
+}
+@container loadingCard (min-width: 900px) {
+  .page .loading > .loadingStats {
+    grid-template-columns: minmax(260px, 0.75fr) minmax(480px, 1.6fr);
+  }
+}
+// Forecast reads as three cells where the loaded card does: between its phone rows (600px and under)
+// and its side-by-side rows (620–899px), and from 900px. Ranges match fractional widths too.
+@container loadingCard ((width > 600px) and (width < 620px)) or (width >= 900px) {
+  .page .loading > .loadingStats > .loadingCard:last-child {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    > .loadingCardTitle {
+      grid-column: 1 / -1;
+    }
+    > .loadingFact {
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      min-height: 89px;
+      padding: 12px 13px;
+    }
+  }
+}
+@container loadingCard (min-width: 1000px) {
+  .page .loading > .loadingStats {
+    grid-template-columns: minmax(280px, 0.85fr) minmax(480px, 1.6fr);
+  }
+}
+// Rate views give the number card the 340px its Now strip needs, as the loaded header does.
+@container loadingCard (min-width: 740px) and (max-width: 899px) {
+  .page .loading > .loadingStats[data-rate] {
+    grid-template-columns: minmax(340px, 0.8fr) minmax(0, 1.2fr);
+  }
+}
+@container loadingCard (min-width: 900px) and (max-width: 999px) {
+  .page .loading > .loadingStats[data-rate] {
+    grid-template-columns: minmax(340px, 0.75fr) minmax(480px, 1.6fr);
+  }
 }

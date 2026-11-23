@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   DEFAULT_VIEW_STATE,
+  forecastMultiplier,
   readViewState,
   writeViewState,
 } from '../src/features/quotaPool/model/viewState';
@@ -46,5 +47,15 @@ describe('quota view state in the address', () => {
       future: 0,
     } as const;
     expect(readViewState(writeViewState(new URLSearchParams(), view))).toEqual(view);
+  });
+});
+
+describe('the Future scenario', () => {
+  test('shapes the Remaining forecast', () => {
+    expect(forecastMultiplier({ ...DEFAULT_VIEW_STATE, future: 0 })).toBe(0);
+  });
+  test('is off in rate views, which forecast at the current rate', () => {
+    expect(forecastMultiplier({ ...DEFAULT_VIEW_STATE, mode: 'burn', future: 0 })).toBe(1);
+    expect(forecastMultiplier({ ...DEFAULT_VIEW_STATE, mode: 'drain', future: 2 })).toBe(1);
   });
 });

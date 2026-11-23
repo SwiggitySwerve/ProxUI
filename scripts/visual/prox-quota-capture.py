@@ -189,18 +189,19 @@ def fixture(state):
                 expiries = [NOW + (4 + 3 * k) * DAY for k in range(len(kinds))]
                 accounts[0]["resets"].update(available=4, usable=2, kinds=kinds, expiries=expiries,
                                              nextExpiryAtMs=expiries[0])
-                # A pair whose Vietnamese line ("1 5 giờ · 1 toàn bộ") passes 18 characters yet fits the column,
-                # so the fit is measured, not counted.
-                pair = ["session", "full"]
-                accounts[2]["resets"].update(available=2, usable=1, kinds=pair, expiries=expiries[:2],
+                # One kind ("2 full held") fits the column, so its line names it; the four-kind line counts.
+                accounts[2]["resets"].update(available=2, usable=1, kinds=["full", "full"], expiries=expiries[:2],
                                              nextExpiryAtMs=expiries[0])
             # The pool holds what its Ultra accounts hold: 72% of one 2,000-point account across four.
             f = 1440 / remaining
             pool.update(capacityPoints=8000, remainingPoints=1440,
                         nextResetGainPoints=round(pool["nextResetGainPoints"] * f),
                         resets=[dict(r, gainPoints=round(r["gainPoints"] * f)) for r in pool["resets"]])
+            # Rounded as the server's are, so the latest reading equals the 1,440 headline exactly (a float
+            # left at 1440.0000001 kept a "Latest reading · … · 1,440 points" line that no live card shows).
             for series in ("recorded", "projected"):
-                pool[series] = [dict(item, remainingPoints=item["remainingPoints"] * f) for item in pool[series]]
+                pool[series] = [dict(item, remainingPoints=None if item["remainingPoints"] is None else round(item["remainingPoints"] * f, 1))
+                                for item in pool[series]]
         if state == "long-name":
             # A name beyond 28ch, beside a (usable) reset chip: it wraps in its Account cell, minimized or not.
             accounts[0]["identifier"] = "a.deliberately.long.credential.name.for.a.shared.workstation@example-corporate.test"
@@ -884,7 +885,9 @@ const name = e => (e.getAttribute('aria-label') || '').trim();
 
 
 async def check_fact_wrap(page, state, width):
-    """I1: at 390/820/1100/1280/1440/1920 no Now/Forecast fact label, value or caption wraps, clips or shrinks."""
+    """I1: at 390/820/1100/1280/1440/1920 no Now/Forecast fact label, value or caption wraps, clips or shrinks; on a phone
+    a Forecast cell's label may take two lines (G12b), the gap to its value is held by the phone Forecast check; the Now
+    strip's label and value may take two lines in their own columns (G12b)."""
     if width not in C1_FACT_WIDTHS:
         return []
     return await page.evaluate("(cardless) => {" + C1_PRELUDE + r"""
@@ -899,8 +902,14 @@ async def check_fact_wrap(page, state, width):
         const tops = [];
         for (const q of range.getClientRects()) if (q.width > 0 && !tops.some(t => Math.abs(t - q.top) < line / 2)) tops.push(q.top);
         if (!shown(e) || !e.checkVisibility({checkOpacity: true})) why.push('hidden');
-        if (r.height > line * 1.5) why.push(`taller than 1.5 lines (${r.height.toFixed(1)} vs ${line.toFixed(1)})`);
-        if (tops.length > 1) why.push(`wraps onto ${tops.length} lines`);
+        // G12b: a phone Forecast cell's label (display grid, label | value) may wrap onto a second line rather than touch
+        // its value; that label alone, and never beyond two lines. Every value and caption still holds one line.
+        // The Now strip (G12b) is one grid row: its label and its value ("1,440" over "of 8,000 points") may each take two
+        // lines in their own column; the number and its unit caption still never break.
+        const phoneLabel = e.tagName === 'DT' && !!e.closest('[data-group="forecast"]') && innerWidth <= 640;
+        const nowFact = !!e.closest('[data-group="now"]') && e.tagName !== 'SMALL', lines = phoneLabel || nowFact ? 2 : 1;
+        if (r.height > line * (lines + 0.5)) why.push(`taller than ${lines + 0.5} lines (${r.height.toFixed(1)} vs ${line.toFixed(1)})`);
+        if (tops.length > lines) why.push(`wraps onto ${tops.length} lines`);
         if (s.textOverflow === 'ellipsis') why.push('ellipsis');
         if (s.display !== 'inline' && e.scrollWidth > e.clientWidth + 1) why.push('clipped or overflowing its box');
         if (parseFloat(s.fontSize) < 12) why.push('type below 12px');
@@ -960,8 +969,8 @@ async def check_phone_header(page, state, width):
     """I4 (H1, page-wide since wave 3): at 390 the page makes one choice. If every provider card's title, count
     and chip fit on one line, every card keeps them inline (tops within 4px) and a card's top to the top of its
     headline block (label included) is at most 112px. Otherwise every card's chip sits on its own second line
-    under the title and count (148px). The action pills sit on their own row between the two, and the headline
-    starts below them."""
+    under the title and count (148px). The action pills sit on their own row after the headline and facts, right
+    above the chart (G11)."""
     if width != 390:
         return []
     return await page.evaluate("(cardless) => {" + C1_PRELUDE + r"""
@@ -994,8 +1003,11 @@ async def check_phone_header(page, state, width):
         if (d > limit) fails.push({card, why: `headline block starts ${d.toFixed(0)}px below the card top (limit ${limit}, ${allFit ? 'every card inline' : 'chips on a second line'})`});
         const pills = actions(a);
         if (!pills.length) fails.push({card, why: 'card has no visible action pills'});
-        const bottom = Math.max(...pills.map(p => p.getBoundingClientRect().bottom));
-        if (top(headline) < bottom) fails.push({card, why: 'headline block starts above the action pills end'});
+        // G11: the pills follow the headline and facts and end before the chart starts.
+        const facts = a.querySelector('[class*="__statsBlock___"]') || headline, plot = a.querySelector('[id$="-plot"]');
+        const pillTop = Math.min(...pills.map(top)), pillBottom = Math.max(...pills.map(p => p.getBoundingClientRect().bottom));
+        if (pillTop < facts.getBoundingClientRect().bottom - 0.5) fails.push({card, why: 'the action pills start above the end of the headline and facts'});
+        if (plot && plot.getBoundingClientRect().height > 0 && pillBottom > top(plot) + 0.5) fails.push({card, why: 'the action pills run into the chart'});
         // Pills only on row 2: they start below the identity row, and every pill shares one row.
         const identityBottom = Math.max(title.getBoundingClientRect().bottom, ink(count).bottom, chip.getBoundingClientRect().bottom);
         for (const p of pills) if (p.getBoundingClientRect().top < identityBottom - 1) fails.push({card, why: 'an action pill shares a row with the title, count or chip'});
@@ -1710,15 +1722,14 @@ async def check_options_summary(page, name, state, width):
     if not await toggle.is_visible():
         return [dict(why="Options button not visible")]
     rate_view = state in ("drain", "burn")
-    # Remaining names its Future assumption ("Same as now" by default); rate views hide Future, so they omit it.
+    # The summary always names Future (G11): "Future: same" by default, "Future: off" in rate views, which turn it off.
     expected = ["5-hour" if state == "no-limit" else "Weekly", "Drain rate" if state == "drain" else "Burn rate" if state == "burn" else "Remaining", "3h avg"]
-    if not rate_view:
-        expected.append("Same as now")
+    expected.append("Future: off" if rate_view else "Future: same")
     failures = []
     text = await toggle.inner_text()
     failures += [dict(why=f"summary lacks {item!r}", text=text) for item in expected if item not in text]
-    if rate_view and ("Same as now" in text or "Future" in text):
-        failures.append(dict(why="a rate view's summary names Future, which it hides", text=text))
+    if rate_view and ("Same as now" in text or "Future: same" in text):
+        failures.append(dict(why="a rate view's summary names a Future choice, which it turns off", text=text))
     box = await toggle.bounding_box()
     if box["height"] < 43.5:
         failures.append(dict(why="Options button under 44px tall", box=box))
@@ -1856,42 +1867,95 @@ async def check_expanded_duplicates(page, state, width):
     return out
 
 
+# G12 (Neon's option 3): the provider header is two cards (the remaining number with Now docked at its foot, and
+# Forecast), an opened row is three cards (Usage, Billing, Manual resets). These helpers are shared by the panel-order,
+# fact-panel, reset-reason and phone-forecast checks. The facts layout follows the drawer (`.accountFacts`, a container) by
+# its content width: three across from 1000px, Usage beside Billing with Manual resets across from 660px, stacked below.
+# The header follows `.poolHeader` (a container): the cards sit side by side from 960px, the forecast cells read
+# label-left, value-right at 600px and below.
+G12_PRELUDE = r"""
+const g12Paint = el => { // the painted text bounds, not the box
+  const out = {left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity}, w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let n = w.nextNode(); n; n = w.nextNode()) {
+    if (!n.textContent.trim()) continue;
+    const pb = n.parentElement.getBoundingClientRect();
+    if (pb.width <= 1 || pb.height <= 1) continue; // visually hidden text (the sr-only 1px box) paints nothing
+    const rg = document.createRange(); rg.selectNodeContents(n);
+    for (const b of rg.getClientRects()) if (b.width > 0 && b.height > 0) { out.left = Math.min(out.left, b.left); out.top = Math.min(out.top, b.top); out.right = Math.max(out.right, b.right); out.bottom = Math.max(out.bottom, b.bottom); }
+  }
+  return out;
+};
+const g12Out = (el, box) => { // how far the painted text sticks out of a box, in px (0 when it is inside)
+  const p = g12Paint(el);
+  return isFinite(p.left) ? Math.max(0, box.left - p.left, p.right - box.right, box.top - p.top, p.bottom - box.bottom) : 0;
+};
+const g12Mode = facts => {
+  const layout = facts.querySelector('[class*="__factsLayout___"]'), cs = getComputedStyle(facts);
+  const drawer = facts.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  return {layout, drawer: Math.round(drawer), cols: layout ? getComputedStyle(layout).gridTemplateColumns.split(' ').length : 0, want: drawer >= 1000 ? 3 : drawer >= 660 ? 2 : 1};
+};
+const g12Kind = s => s.dataset.tone === 'accent' ? 'Manual resets' : /^Usage/.test(s.querySelector(':scope > header > h4')?.textContent || '') ? 'Usage' : 'Billing';
+const g12Cards = layout => {
+  const secs = [...layout.querySelectorAll(':scope > section')], accent = secs.filter(s => s.dataset.tone === 'accent');
+  return {secs, usage: secs.find(s => g12Kind(s) === 'Usage'), billing: secs.find(s => g12Kind(s) === 'Billing'), resets: accent[0], accents: accent.length};
+};
+const g12Who = row => row.querySelector('[class*="__accountLabel___"]')?.firstChild?.textContent;
+const g12Header = sb => { // the provider header's two cards
+  const art = sb.closest('article'), head = art.querySelector('[class*="__poolHeader___"]'), cs = getComputedStyle(head);
+  const width = head.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const lead = sb.querySelector(':scope > [class*="__leadCard___"]'), fc = sb.querySelector(':scope > [data-group="forecast"]');
+  return {who: art.querySelector('h2')?.textContent, lead, fc, headline: lead?.querySelector(':scope > [class*="__headline___"]'), dock: lead?.querySelector(':scope > [data-group="now"]'),
+    cells: fc ? [...fc.querySelectorAll(':scope > dl > div')].filter(shown) : [], width: Math.round(width), phone: width <= 600, side: width >= 960};
+};
+"""
+
+
 async def check_panel_order(page, state, width):
-    """H3 (G9): an opened row leads with the burn rate figure. At 900px and below it reads, from the limits down,
-    the figure, Manual resets (full row), Usage, Billing, in the visual and the DOM order; at 1100 and 1280 the
-    figure is left of or above Usage, Usage is left of or above Billing, and Manual resets is right of both."""
+    """H3 (G12): an opened row is three cards. At 900px and below the DOM order is Usage, Manual resets, Billing (Usage,
+    which leads with the burn rate, starting at or below the limits); above 900px it is Usage, Billing, Manual resets.
+    One column reads in DOM order; two or three columns read Usage, Billing, Manual resets.
+    The cards' columns follow the drawer's width (three from 1000px, two from 660px with Manual resets across under
+    Usage and Billing, one below); a stacked card spans the layout, Manual resets spans it in two columns, and Usage
+    and Billing share a width there. Usage holds the burn rate in its strip and no Burn rate fact."""
     if state != "expanded" or width not in (390, 820, 1100, 1280):
         return []
-    return await page.evaluate("(wide) => {" + H_PRELUDE + r"""
-      const fails = [], rows = [...document.querySelectorAll('article details[open]')];
+    return await page.evaluate("(stacked) => {" + H_PRELUDE + G12_PRELUDE + r"""
+      const fails = [], rows = [...document.querySelectorAll('article details[open]')], r = e => e.getBoundingClientRect();
       if (!rows.length) return [{why: 'no open row to measure'}];
       for (const row of rows) {
-        const who = row.querySelector('[class*="__accountLabel___"]')?.firstChild?.textContent;
-        const facts = row.querySelector('[class*="__accountFacts___"]'), sections = [...facts.querySelectorAll('section')];
-        const find = re => sections.find(s => re.test(s.querySelector('h4')?.textContent || '')), usage = find(/^Usage$/), billing = find(/^Billing$/), resets = sections.find(s => s.dataset.tone === 'accent');
-        const lead = facts.querySelector('[class*="__burnLead___"]');
-        if (!usage || !billing || !resets || sections.length !== 3) { fails.push({who, why: 'row does not hold exactly Usage, Billing and Manual resets', found: sections.length}); continue; }
-        if (!lead || !shown(lead)) { fails.push({who, why: 'no burn rate figure'}); continue; }
-        if (facts.querySelectorAll('[data-tone="accent"]').length !== 1) fails.push({who, why: 'not exactly one reset section'});
+        const who = g12Who(row), facts = row.querySelector('[class*="__accountFacts___"]'), mode = facts && g12Mode(facts);
+        if (!mode || !mode.layout) { fails.push({who, why: 'no facts layout to measure'}); continue; }
+        const {secs, usage, billing, resets, accents} = g12Cards(mode.layout);
+        if (!usage || !billing || !resets || secs.length !== 3) { fails.push({who, why: 'row does not hold exactly Usage, Billing and Manual resets', found: secs.length}); continue; }
+        if (accents !== 1) fails.push({who, why: 'not exactly one reset section'});
         if (/Burn rate/.test([...usage.querySelectorAll('dt')].map(d => d.textContent).join())) fails.push({who, why: 'Usage repeats the burn rate'});
-        const r = e => e.getBoundingClientRect(), limits = row.querySelector('summary > ul[aria-label="Limits"]'), cs = getComputedStyle(facts);
-        const before = (x, y) => !!(x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING);
-        const leftOrAbove = (x, y) => r(x).right <= r(y).left + 1 || r(x).bottom <= r(y).top + 1;
-        if (!wide) {
-          const dom = sections.map(s => s === resets ? 'resets' : s === usage ? 'usage' : 'billing').join(',');
-          if (dom !== 'resets,usage,billing' || !before(lead, resets)) fails.push({who, why: 'DOM order is not figure, ' + dom});
-          const lim = [...limits.children].filter(shown), last = lim[lim.length - 1] || limits;
-          if (r(lead).top < r(last).bottom - 1) fails.push({who, why: 'the figure starts above the limits end'});
-          if (r(resets).top < r(lead).bottom - 1 || r(usage).top < r(resets).bottom - 1 || r(billing).top < r(usage).bottom - 1) fails.push({who, why: 'visual order is not figure, resets, usage, billing', tops: [lead, resets, usage, billing].map(e => Math.round(r(e).top))});
-          const inner = r(facts).width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-          if (Math.abs(r(resets).width - inner) > 2) fails.push({who, why: `Manual resets spans ${r(resets).width.toFixed(0)} of the ${inner.toFixed(0)}px row`});
-        } else {
-          if (!leftOrAbove(lead, usage) || !leftOrAbove(usage, billing)) fails.push({who, why: 'the figure, Usage and Billing are not in reading order', boxes: [lead, usage, billing].map(e => [Math.round(r(e).left), Math.round(r(e).top)])});
-          if (r(usage).right > r(resets).left + 1 || r(billing).right > r(resets).left + 1) fails.push({who, why: 'Manual resets is not right of Usage and Billing'});
+        if (!usage.querySelector(':scope > header [class*="__burnDock___"]')) fails.push({who, why: 'the burn rate is not in the Usage strip'});
+        if (mode.cols !== mode.want) fails.push({who, why: `the cards are ${mode.cols} across in a ${mode.drawer}px drawer, expected ${mode.want}`});
+        // DOM: Usage, Manual resets, Billing at 900px and below (phones read the burn rate first, then resets);
+        // Usage, Billing, Manual resets above. Visual: one column follows the DOM; two or three columns read Usage,
+        // Billing, then Manual resets (across under them in two columns).
+        const dom = stacked ? [usage, resets, billing] : [usage, billing, resets], domNames = stacked ? 'Usage, Manual resets, Billing' : 'Usage, Billing, Manual resets';
+        if (secs.some((s, i) => s !== dom[i])) fails.push({who, why: 'DOM order is not ' + domNames, got: secs.map(g12Kind)});
+        const want = mode.want === 1 ? dom : [usage, billing, resets], names = mode.want === 1 ? domNames : 'Usage, Billing, Manual resets';
+        // Reading order: each card starts below the one before it, or level with it and to its right.
+        for (let i = 1; i < want.length; i++) {
+          const a = r(want[i - 1]), b = r(want[i]);
+          if (!(b.top >= a.bottom - 1 || (Math.abs(b.top - a.top) <= 1 && b.left >= a.right - 1))) { fails.push({who, why: 'visual order is not ' + names, boxes: want.map(e => [Math.round(r(e).left), Math.round(r(e).top)])}); break; }
+        }
+        if (stacked) {
+          const limits = row.querySelector('summary > ul[aria-label="Limits"]'), lim = limits ? [...limits.children].filter(shown) : [], last = lim[lim.length - 1] || limits;
+          if (last && r(usage).top < r(last).bottom - 1) fails.push({who, why: 'the first card starts above the limits end'});
+        }
+        const inner = mode.layout.clientWidth;
+        if (mode.want === 1) {
+          for (const c of secs) if (Math.abs(r(c).width - inner) > 2) { fails.push({who, why: `a stacked card spans ${r(c).width.toFixed(0)} of the ${inner}px layout`, card: g12Kind(c)}); break; }
+        } else if (mode.want === 2) {
+          if (Math.abs(r(resets).width - inner) > 2) fails.push({who, why: `Manual resets spans ${r(resets).width.toFixed(0)} of the ${inner}px layout`});
+          if (Math.abs(r(usage).width - r(billing).width) > 1) fails.push({who, why: 'Usage and Billing differ in width', widths: [r(usage).width, r(billing).width].map(w => +w.toFixed(1))});
         }
       }
       return fails;
-    }""", width >= 901)
+    }""", width <= 900)
 
 
 H_LOADED_ROWS = dict(utility='[class*="__privacy___"]', tabs='[class*="__providerBar___"]', date='[class*="__dateNavigation___"]',
@@ -1900,7 +1964,7 @@ H_LOADED_ROWS = dict(utility='[class*="__privacy___"]', tabs='[class*="__provide
 
 async def check_skeleton_shape(browser, url, page, name, state, width):
     """H4: at 390 the loading skeleton mirrors the loaded structure (utility row, tabs, date, Options, Combined card
-    with a heading+toggle row and a select row, provider cards with a title/count/chip row and a pill row) and
+    with a heading+toggle row and a select row, provider cards with a title/count/chip row and, after the facts, a pill row) and
     its row tops and first card top are within 4px of a loaded page's at 390x844. Placeholders are visible, inert
     and aria-hidden. Opens its own second page in state ready."""
     if name in T_SKELETON_WIDE:
@@ -1914,9 +1978,15 @@ async def check_skeleton_shape(browser, url, page, name, state, width):
         visible: h(e) > 0 && e.checkVisibility({checkVisibilityCSS: true}), hidden: !!e.closest('[aria-hidden="true"]'), inert: !!e.closest('[inert]')}]));
       const card = document.querySelector('[data-skeleton-row="card"]');
       const part = (root, sel) => root.querySelector('[class*="__' + sel + '___"]');
-      const provider = [...document.querySelectorAll('[class*="__loadingIdentity___"]')].map(i => ({
-        title: top(part(i, 'loadingTitle')), count: top(part(i, 'loadingCount')), chip: top(part(i, 'loadingChip')), pills: top(part(i, 'loadingPills')),
-        sizes: [...i.querySelectorAll('[class*="__loadingCount___"], [class*="__loadingChip___"], [class*="__loadingPill___"]')].map(h), inert: !!i.closest('[inert]'), hidden: !!i.closest('[aria-hidden="true"]')}));
+      // G11: phone provider skeletons put their pill row after the fact placeholders, as the loaded cards do.
+      const provider = [...document.querySelectorAll('[class*="__loadingIdentity___"]')].map(i => {
+        const card = i.closest('[class*="__loading___"]'), below = part(card, 'loadingPillsBelow');
+        const facts = [...card.querySelectorAll('[class*="__loadingFact___"]')].map(f => f.getBoundingClientRect().bottom);
+        return {title: top(part(i, 'loadingTitle')), count: top(part(i, 'loadingCount')), chip: top(part(i, 'loadingChip')),
+          pills: below && h(below) > 0 ? top(below) : null, factsBottom: facts.length ? Math.max(...facts) : null,
+          sizes: [...i.querySelectorAll('[class*="__loadingCount___"], [class*="__loadingChip___"]'), ...(below ? below.querySelectorAll('[class*="__loadingPill___"]') : [])].map(h),
+          inert: !!i.closest('[inert]'), hidden: !!i.closest('[aria-hidden="true"]')};
+      });
       return {rows, provider, combined: card && {heading: top(card.querySelector('h2')) + h(card.querySelector('h2')) / 2, toggle: top(part(card, 'loadingToggle')) + h(part(card, 'loadingToggle')) / 2, select: top(part(card, 'loadingSelect')),
         toggleH: h(part(card, 'loadingToggle')), selectH: h(part(card, 'loadingSelect'))}};
     }""")
@@ -1933,18 +2003,19 @@ async def check_skeleton_shape(browser, url, page, name, state, width):
     if len(rows["provider"]) != 2:
         fails.append(dict(why="expected two provider skeletons", found=len(rows["provider"])))
     for p in rows["provider"]:
-        if max(p["title"], p["count"], p["chip"]) - min(p["title"], p["count"], p["chip"]) > 4 or p["pills"] < p["title"] + 20 or min(p["sizes"]) < 20 or not (p["inert"] and p["hidden"]):
-            fails.append(dict(why="provider skeleton lacks a title/count/chip row and a pill row, or is not inert and aria-hidden", provider=p))
-    # H2-D4: each fact placeholder stacks its label bar over its value bar (the loaded Forecast facts do), inside its card.
+        if max(p["title"], p["count"], p["chip"]) - min(p["title"], p["count"], p["chip"]) > 4 or p["pills"] is None or p["factsBottom"] is None or p["pills"] < p["factsBottom"] - 1 or min(p["sizes"]) < 20 or not (p["inert"] and p["hidden"]):
+            fails.append(dict(why="provider skeleton lacks a title/count/chip row and a pill row after its facts, or is not inert and aria-hidden", provider=p))
+    # H2-D4 (G12d): on phones each fact placeholder reads label left, value right on one row, as the loaded
+    # Now strip and Forecast rows do, inside its card.
     facts = await page.evaluate("""() => [...document.querySelectorAll('[class*="__loadingFact___"]')].map(f => {
       const [label, value] = [...f.children].map(c => c.getBoundingClientRect()), card = f.closest('[class*="__loading___"]').getBoundingClientRect();
-      return {labelBottom: label.bottom, valueTop: value.top, dx: Math.abs(label.left - value.left), right: Math.max(label.right, value.right), cardRight: card.right};
+      return {labelRight: label.right, valueLeft: value.left, dy: Math.abs((label.top + label.bottom) / 2 - (value.top + value.bottom) / 2), right: Math.max(label.right, value.right), cardRight: card.right};
     })""")
     if len(facts) < 8:
         fails.append(dict(why="expected at least 8 fact placeholders (4 in each provider card)", found=len(facts)))
     for fact in facts:
-        if fact["valueTop"] < fact["labelBottom"] - 1 or fact["dx"] > 1:
-            fails.append(dict(why="a fact placeholder's value is not stacked under its label", fact=fact))
+        if fact["valueLeft"] < fact["labelRight"] or fact["dy"] > 2:
+            fails.append(dict(why="a fact placeholder's value is not on its label's row, to its right", fact=fact))
         if fact["right"] > fact["cardRight"]:
             fails.append(dict(why="a fact placeholder runs past its card", fact=fact))
     loaded, context = await h_open_ready_page(browser, url, 390, 844)
@@ -1983,25 +2054,19 @@ def a_expected_facts(state, provider):
     """The summary pairs a provider card must show today (English), derived from the fixture, not from the page."""
     pool = next(p for p in fixture(state)["pools"] if p["provider"] == provider)
     five_hour = state == "no-limit"
-    holders = [a for a in pool["accounts"] if a["resets"] and a["resets"]["available"] > 0]
     available = sum(a["resets"]["available"] for a in pool["accounts"] if a["resets"])
     usable = sum(a["resets"]["usable"] for a in pool["accounts"] if a["resets"])
     stale = sum(a["status"] == "stale" for a in pool["accounts"])
     no_limit = sum(bool(a.get("noFiveHourLimit")) for a in pool["accounts"]) if five_hour else 0
     facts = []
-    # Pool-level reset totals appear unless one account holds them all and its row is on the first page (name
-    # order, R_PAGE rows), where its own cell or chip already states the count.
-    order = sorted(pool["accounts"], key=lambda a: (a.get("identifier") or a["label"]).casefold())
-    lone_shown = len(holders) == 1 and order.index(holders[0]) < R_PAGE
-    if available and not lone_shown:
-        facts.append(("Manual resets", str(available)))
-        if usable:
-            facts.append(("Usable resets", str(usable)))
+    # The pool's resets are one fact in every card that holds any (G11).
+    if available:
+        facts.append(("Manual resets", f"{usable} usable of {available} held"))
     if pool["loadedCount"] != pool["accountCount"] or pool["eligibleCount"] != pool["accountCount"]:
         if stale:
             facts += [("Current", str(pool["loadedCount"])), ("Stale", str(stale))]
         elif no_limit:
-            facts.append(("With a 5-hour limit", f"{pool['eligibleCount']} of {pool['accountCount']}"))
+            # Each account without a 5-hour limit says so in its row; only missing readings are a pool fact (G11).
             if pool["loadedCount"] < pool["eligibleCount"]:
                 facts.append(("Reporting", f"{pool['loadedCount']} of {pool['eligibleCount']}"))
         else:
@@ -2076,7 +2141,7 @@ async def a_summary_pass(page, state, lng, out):
 
 async def check_summary_facts(page, context, url, route_api, name, state):
     """A3: every summary item is a label/value pair in one shared wrapping group; values keep the Manual resets style;
-    the facts are today's (Manual resets, Usable resets, Reporting, Current, Stale, With a 5-hour limit) with the
+    the facts are today's (Manual resets "N usable of M held", Reporting, Current, Stale) with the
     fixture's numbers; a pair never breaks inside or overflows its container; items that fit one line share a top;
     at 640px and below the pairs form an even grid (equal columns, no row with a single pair beside fuller rows)."""
     if name not in A_SUMMARY_CASES:
@@ -2198,30 +2263,38 @@ async def check_search_label(page, name, state):
 
 
 async def check_rate_balance(page, name, state):
-    """H1-C4, rewritten in h2-C: a rate view's balance is the card's titled "Now" group (the heading and fact styles of the
-    Remaining view's Now group): a heading over one dt/dd fact, the label above the number, the number in the value
-    style, and " of 300 points" in the same colour and weight as the headline's "points/h"."""
+    """H1-C4, rewritten in h2-C and again for G12: a rate view's balance is the card's titled "Now" dock, the footer of
+    the lead card (the same dock as the Remaining view's): the heading "Now", then one dt/dd fact with the label and the
+    value on one line (the heading, label and value tops within 4px, in that order; a value without room may drop under
+    its label, the heading and label still share a line), the number in the value style, and
+    " of 300 points" in the same colour and weight as the headline's "points/h"."""
     if state not in ("drain", "burn"):
         return []
-    return await page.evaluate("() => {" + C1_PRELUDE + r"""
+    return await page.evaluate("() => {" + C1_PRELUDE + G12_PRELUDE + r"""
       const out = []; let measured = 0;
       for (const card of document.querySelectorAll('article')) {
         const who = card.querySelector('h2')?.textContent, h = card.querySelector('[class*="__headline___"]');
         if (!h || h.dataset.rate !== 'true') continue;
         if (h.querySelector('[class*="__headlineBalance___"]')) out.push({who, why: 'the balance is still a run-in line under the headline'});
-        const block = card.querySelector('[class*="__statsBlock___"]'), groups = block ? [...block.querySelectorAll(':scope > [class*="__statsGroup___"]')] : [];
-        const now = groups.find(g => g.querySelector('[class*="__statsHeading___"]')?.textContent.trim() === 'Now');
-        if (!now || !shown(now)) { out.push({who, why: 'no titled Now group in the rate view'}); continue; }
+        const block = card.querySelector('[class*="__statsBlock___"]'), now = block && block.querySelector(':scope > [class*="__leadCard___"] > [data-group="now"]');
+        if (!now || !shown(now)) { out.push({who, why: 'no titled Now dock in the lead card of the rate view'}); continue; }
         const heading = now.querySelector('[class*="__statsHeading___"]'), fact = now.querySelector('dl > div'), dt = fact && fact.querySelector('dt'), dd = fact && fact.querySelector('dd');
-        if (!dt || !dd) { out.push({who, why: 'the Now group has no dt/dd fact'}); continue; }
-        const forecast = groups.find(g => g !== now), fh = forecast && forecast.querySelector('[class*="__statsHeading___"]');
-        if (fh) { const a = getComputedStyle(heading), b = getComputedStyle(fh); if (a.fontSize !== b.fontSize || a.fontWeight !== b.fontWeight || a.color !== b.color) out.push({who, why: 'the Now heading does not match the Forecast heading', now: [a.fontSize, a.fontWeight, a.color], forecast: [b.fontSize, b.fontWeight, b.color]}); }
+        if (!dt || !dd) { out.push({who, why: 'the Now dock has no dt/dd fact'}); continue; }
+        if (!heading || heading.textContent.trim() !== 'Now') out.push({who, why: 'the Now dock is not titled "Now"', text: heading && heading.textContent});
         const unit = h.querySelector('strong small'), small = dd.querySelector('small');
         if (!unit || !small) { out.push({who, why: 'the balance lacks its unit, or the headline its "points/h"'}); continue; }
         measured++;
         if (!/^Weekly remaining$|^5-hour remaining$/.test(dt.textContent.trim())) out.push({who, why: 'the Now label is not "<window> remaining"', text: dt.textContent});
         if (!/^[\d.,]+\s+of\s+[\d.,]+\s+points$/.test(dd.textContent.trim())) out.push({who, why: 'the Now value is not "N of M points"', text: dd.textContent});
-        if (dd.getBoundingClientRect().top < dt.getBoundingClientRect().bottom - 1) out.push({who, why: 'the value is not under its label'});
+        if (heading) {
+          const ph = g12Paint(heading), pt = g12Paint(dt), pd = g12Paint(dd);
+          // G12b: heading, label, value in that order on one line, or (narrow cards) "Now" as a caption right above the
+          // label at its left edge; with no room the value drops under its label.
+          const dropped = pd.top >= pt.bottom - 2;
+          const inline = Math.abs(ph.top - pt.top) <= 4 && ph.right <= pt.left + 1;
+          const caption = ph.bottom <= pt.top + 2 && pt.top - ph.bottom <= 10 && Math.abs(ph.left - pt.left) <= 2;
+          if (!(inline || caption) || (dropped ? pd.right < pt.left : (Math.abs(pd.top - pt.top) > 4 || pt.right > pd.left + 1))) out.push({who, why: 'the Now heading is neither beside the label nor a caption right above it, or the value is neither beside the label nor under it', tops: [ph.top, pt.top, pd.top].map(Math.round), lefts: [ph.left, pt.left, pd.left].map(Math.round)});
+        }
         const us = getComputedStyle(unit), ss = getComputedStyle(small), ds = getComputedStyle(dd);
         if (us.color !== ss.color || us.fontWeight !== ss.fontWeight) out.push({who, why: 'the balance unit style differs from "points/h"', headline: [us.color, us.fontWeight], balance: [ss.color, ss.fontWeight]});
         if (parseInt(ds.fontWeight) < 500 || !/tabular-nums/.test(ds.fontVariantNumeric)) out.push({who, why: 'the balance number is not in the value style', weight: ds.fontWeight});
@@ -2239,26 +2312,29 @@ C2_DATA_CASES = ("laptop", "narrow", "narrow-320", "partial", "stale-narrow", "d
 
 
 async def check_phone_fact_grid(page, name, width):
-    """H2-C2: at 640px and below the Now and Forecast facts sit in one wrapping grid of at most two columns; facts on a
-    row have equal widths, every value and label stays inside its cell, and where the fact area is at least 320px
-    wide a group of two or more facts uses both columns on some row."""
+    """H2-C2, rewritten for G12: at 640px and below the Forecast cells are a grid inside the Forecast card; in a header
+    of 600px or less (a phone) it is one column, its cells at one left edge and width (1px), each below the one before.
+    Every label and value stays inside its cell."""
     if name not in C2_GRID_CASES or width > 640:
         return []
-    return await page.evaluate("() => {" + C1_PRELUDE + r"""
-      const fails = [], groups = [...document.querySelectorAll('article [class*="__statsBlock___"] dl')].filter(shown);
-      if (!groups.length) return [{why: 'no Now or Forecast facts found'}];
-      for (const dl of groups) {
-        const who = dl.closest('article').querySelector('h2')?.textContent, cs = getComputedStyle(dl), facts = [...dl.children].filter(shown);
-        if (cs.display !== 'grid') { fails.push({who, why: 'the facts are not a grid', display: cs.display}); continue; }
-        const cols = cs.gridTemplateColumns.split(' ').length;
-        if (cols > 2) fails.push({who, why: cols + ' fact columns on a phone'});
-        const rows = {};
-        for (const f of facts) { const r = f.getBoundingClientRect(); (rows[Math.round(r.top)] ||= []).push(r); }
-        for (const list of Object.values(rows)) if (list.length > 1 && Math.max(...list.map(r => r.width)) - Math.min(...list.map(r => r.width)) > 1) fails.push({who, why: 'facts on one row have unequal widths'});
-        if (facts.length > 1 && dl.getBoundingClientRect().width >= 320 && !Object.values(rows).some(l => l.length > 1)) fails.push({who, why: 'the fact area is wide enough for two columns but every fact has its own row', width: Math.round(dl.getBoundingClientRect().width)});
-        for (const f of facts) {
-          const cell = f.getBoundingClientRect(), label = f.querySelector('dt').textContent;
-          for (const e of f.querySelectorAll('dt, dd, small')) { const r = document.createRange(); r.selectNodeContents(e); if (r.getBoundingClientRect().right > cell.right + 0.5) fails.push({who, label, why: 'a label or value runs past its grid cell'}); }
+    return await page.evaluate("() => {" + C1_PRELUDE + G12_PRELUDE + r"""
+      const fails = [], blocks = [...document.querySelectorAll('article [class*="__statsBlock___"]')].filter(shown), r = e => e.getBoundingClientRect();
+      if (!blocks.length) return [{why: 'no Now or Forecast facts found'}];
+      for (const sb of blocks) {
+        const h = g12Header(sb), dl = h.fc && h.fc.querySelector(':scope > dl');
+        if (!dl) { fails.push({who: h.who, why: 'no Forecast facts to measure'}); continue; }
+        const cs = getComputedStyle(dl), cols = cs.gridTemplateColumns.split(' ').length, cells = h.cells, who = h.who;
+        if (cs.display !== 'grid') { fails.push({who, why: 'the Forecast facts are not a grid', display: cs.display}); continue; }
+        if (h.phone) {
+          if (cols !== 1) fails.push({who, why: cols + ' fact columns on a phone, expected 1', width: h.width});
+          const lefts = cells.map(c => r(c).left), widths = cells.map(c => r(c).width);
+          if (Math.max(...lefts) - Math.min(...lefts) > 1 || Math.max(...widths) - Math.min(...widths) > 1) fails.push({who, why: 'the cells do not share a left edge and width', lefts: lefts.map(Math.round), widths: widths.map(Math.round)});
+          cells.forEach((c, i) => { if (i && r(c).top < r(cells[i - 1]).bottom - 1) fails.push({who, why: 'a cell does not start below the one before it'}); });
+        }
+        for (const c of cells) {
+          const cr = r(c), label = c.querySelector('dt').textContent.trim();
+          if (g12Out(c, cr) > 0.5) fails.push({who, label, why: 'a label or value runs past its cell'});
+          if (cr.right > r(dl).right + 0.5 || cr.left < r(dl).left - 0.5) fails.push({who, label, why: 'a cell leaves the Forecast grid'});
         }
       }
       return fails;
@@ -2687,28 +2763,69 @@ async def check_phone_counts_note(page, name, width):
 
 
 async def check_phone_forecast_stack(page, name, width):
-    """P5: at 900px and below each Now and Forecast fact reads label over value (the value starts below the label and at
-    its left edge), in one grammar, and the facts stay inside their card."""
+    """P5, rewritten for G12: the provider header is two cards. The remaining number is inside the lead card with the Now
+    dock inside it at its bottom (below the number, spanning the card, its label and value on one line, the value at the
+    dock's right edge); every Forecast cell is inside the Forecast card, 12px off its sides. Under 960px of header the
+    cards stack and span it, from 960px they sit side by side at one top. In a header of 600px or less a cell reads label
+    left, value right, 8px apart (a long label wraps to two lines; a value without room drops under its label at the
+    right edge; "+N points" under its value at the right edge); above 600px it reads label over value, from the label's
+    left edge. The Now heading and label share a line, the value too or under the label. No text leaves its cell, and
+    the cells share one label and one value size."""
     if name not in P_FORECAST_CASES:
         return []
-    return await page.evaluate("() => {" + C1_PRELUDE + r"""
-      const fails = [], groups = [...document.querySelectorAll('article [class*="__statsBlock___"] dl')].filter(shown), grammar = new Set();
-      if (!groups.length) return [{why: 'no Now or Forecast facts found'}];
-      for (const dl of groups) {
-        const who = dl.closest('article').querySelector('h2')?.textContent, card = dl.closest('article').getBoundingClientRect(), facts = [...dl.children].filter(shown);
-        if (!facts.length) fails.push({who, why: 'the Forecast group holds no fact'});
-        for (const f of facts) {
-          const dt = f.querySelector('dt').getBoundingClientRect(), dd = f.querySelector('dd').getBoundingClientRect(), label = f.querySelector('dt').textContent;
-          if (dd.top < dt.bottom - 1) fails.push({who, label, why: 'the value is not below its label'});
-          if (Math.abs(dd.left - dt.left) > 1) fails.push({who, label, why: 'the value does not start at its label\'s left edge'});
-          const b = f.getBoundingClientRect();
-          if (b.left < card.left || b.right > card.right) fails.push({who, label, why: 'the fact leaves its card'});
-          const ts = getComputedStyle(f.querySelector('dt')), ds = getComputedStyle(f.querySelector('dd'));
-          grammar.add([ts.fontSize, ts.textAlign, ds.fontSize, ds.textAlign].join('/'));
+    return await page.evaluate("() => {" + C1_PRELUDE + G12_PRELUDE + r"""
+      const fails = [], blocks = [...document.querySelectorAll('article [class*="__statsBlock___"]')].filter(shown), r = e => e.getBoundingClientRect(), px = n => +n.toFixed(1);
+      if (!blocks.length) return [{why: 'no Now or Forecast facts found'}];
+      for (const sb of blocks) {
+        const h = g12Header(sb), {who, lead, fc, headline, dock, cells} = h;
+        if (!lead || !fc) { fails.push({who, why: 'the header has no lead card or no Forecast card'}); continue; }
+        const lr = r(lead), fr = r(fc);
+        if (!headline || r(headline).top < lr.top - 1 || r(headline).bottom > lr.bottom + 1) fails.push({who, why: 'the remaining number is not inside the lead card'});
+        if (h.side) {
+          if (lr.right > fr.left + 1 || Math.abs(lr.top - fr.top) > 1) fails.push({who, why: 'the cards are not side by side at one top', width: h.width});
+        } else if (fr.top < lr.bottom - 1 || Math.abs(lr.width - fr.width) > 1) fails.push({who, why: 'the cards are not stacked at one width', width: h.width, widths: [lr.width, fr.width].map(px)});
+        if (dock) {
+          const dr = r(dock), hr = r(headline), ds = getComputedStyle(dock);
+          if (dr.top < hr.bottom - 1) fails.push({who, why: 'Now is not below the number'});
+          if (Math.abs(dr.bottom - (lr.bottom - 1)) > 1.5) fails.push({who, why: 'the Now dock is not at the lead card\'s bottom', dock_bottom: px(dr.bottom), card_bottom: px(lr.bottom)});
+          if (dr.left < lr.left - 0.5 || dr.right > lr.right + 0.5 || Math.abs(dr.width - (lr.width - 2)) > 2) fails.push({who, why: 'the Now dock does not span the lead card', widths: [dr.width, lr.width].map(px)});
+          const heading = dock.querySelector('[class*="__statsHeading___"]'), dt = dock.querySelector('dt'), dd = dock.querySelector('dd');
+          if (!heading || !dt || !dd) fails.push({who, why: 'the Now dock lacks its heading, label or value'});
+          else {
+            const ph = g12Paint(heading), pt = g12Paint(dt), pd = g12Paint(dd), edge = dr.right - 1 - parseFloat(ds.paddingRight);
+            // G12b: the heading shares the label's line, or (narrow cards) is a caption right above it at its left edge;
+            // the value shares the label's line, or (no room) drops under the label.
+            const dropped = pd.top >= pt.bottom - 2;
+            const caption = ph.bottom <= pt.top + 2 && pt.top - ph.bottom <= 10 && Math.abs(ph.left - pt.left) <= 2;
+            if (!(Math.abs(ph.top - pt.top) <= 4 || caption) || (!dropped && Math.abs(pd.top - pt.top) > 4)) fails.push({who, why: 'the Now heading is neither on the label\'s line nor a caption right above it, or the value is neither on the label\'s line nor under it', tops: [ph.top, pt.top, pd.top].map(Math.round)});
+            if (Math.abs(pd.right - edge) > 2) fails.push({who, why: 'the Now value is not at the dock\'s right edge', value_right: px(pd.right), edge: px(edge)});
+          }
+          if (g12Out(dock, dr) > 0.5) fails.push({who, why: 'text leaves the Now dock'});
         }
+        if (!cells.length) { fails.push({who, why: 'the Forecast card holds no fact'}); continue; }
+        const heading = fc.querySelector('[class*="__statsHeading___"]');
+        if (!heading || r(heading).bottom > r(cells[0]).top + 1) fails.push({who, why: 'the Forecast title is not above its cells'});
+        const grammar = new Set();
+        for (const c of cells) {
+          const cr = r(c), cs = getComputedStyle(c), dt = c.querySelector(':scope > dt'), dd = c.querySelector(':scope > dd'), sm = c.querySelector(':scope > small'), label = dt.textContent.trim();
+          const at = {who, label}, side = Math.min(cr.left - fr.left, fr.right - cr.right);
+          if (side < 12 || cr.top < fr.top + 1 || cr.bottom > fr.bottom - 1) fails.push({...at, why: `the fact is ${side.toFixed(1)}px from the Forecast card's side or outside it, at least 12`});
+          if (g12Out(c, cr) > 0.5) fails.push({...at, why: 'text leaves its cell'});
+          const pt = g12Paint(dt), pd = g12Paint(dd), ps = sm ? g12Paint(sm) : null, edge = cr.right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight);
+          if (h.phone) {
+            const wrapped = pd.top >= pt.bottom - 2;
+            // G12b: label | value is a grid with an 8px gap; a long label wraps to two lines before it touches its value.
+            if (!wrapped && (pd.left < pt.right + 7.5 || Math.abs(pd.top - pt.top) > 3)) fails.push({...at, why: 'the label and value are neither on one line (8px apart) nor stacked', gap: px(pd.left - pt.right)});
+            if (Math.abs(pd.right - edge) > 2) fails.push({...at, why: wrapped ? 'a value under its label is not at the right edge' : 'the value is not at the right edge', value_right: px(pd.right), edge: px(edge)});
+            if (ps && (ps.top < pd.bottom - 2 || Math.abs(ps.right - edge) > 2)) fails.push({...at, why: 'the note is not under the value at the right edge'});
+          } else {
+            if (pd.top < pt.bottom - 1 || Math.abs(pd.left - pt.left) > 1) fails.push({...at, why: 'the value is not under its label at its left edge'});
+            if (ps && (ps.top < pd.bottom - 2 || Math.abs(ps.left - pd.left) > 1)) fails.push({...at, why: 'the note is not under the value at its left edge'});
+          }
+          grammar.add([getComputedStyle(dt).fontSize, getComputedStyle(dd).fontSize].join('/'));
+        }
+        if (grammar.size > 1) fails.push({who, why: 'Forecast facts use different label or value sizes', grammar: [...grammar]});
       }
-      // Now and Forecast facts share one grammar: the same label and value type, left-aligned, label over value.
-      if (grammar.size > 1) fails.push({why: 'Now and Forecast facts use different type or alignment', grammar: [...grammar]});
       return fails;
     }""")
 
@@ -2739,7 +2856,7 @@ async def check_header_consistency(browser, url, page, name, state, width):
 # D checks (round d1): the account details panel and the reset dialog. Each has its own JSON key, registered in
 # D_KEYS for the summary and the exit gate. A check that finds nothing to measure where it applies fails.
 D_KEYS = ("factPanelGapFailures", "predictedEmptyFailures", "resetReasonFailures", "resetDialogFailures")
-D_GAP_WIDTHS = (1100, 1280, 1440, 1920)
+D_GAP_WIDTHS = (390, 820, 1100, 1280, 1440, 1920)
 D_PRELUDE = C1_PRELUDE + r"""
 const textRight = el => { // the right edge of the painted text, not of its box
   let right = -Infinity; const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
@@ -2754,59 +2871,97 @@ const textRight = el => { // the right edge of the painted text, not of its box
 
 
 async def check_fact_panel_gap(page, state, width):
-    """D1, rewritten for G9: in every opened row at 1100/1280/1440/1920 the burn rate figure is a number at least
-    24px tall; Manual resets is a right-hand column 240-440px wide, right of every fact, at one left edge (within
-    1px) in every open row of a card; in Usage and Billing every label starts at one x and every value at another
-    (within 1px), and lists that stack share both; and no empty run between adjacent columns' painted content
-    passes 160px (225px in a panel of 1300px or more)."""
+    """D1, rewritten for G12: in every opened row of the expanded cases the facts are three cards (Usage, Billing,
+    Manual resets) in as many columns as the drawer's width calls for. Cards in one row share their top and end at
+    their own content (G12b: heights may differ, none runs more than 24px below its text), and their title strips share
+    a top and a height (within 1px), each exactly 52px (60px with a coarse pointer or at 640px and below); the burn rate figure sits at
+    the right of Usage's strip, Use reset inside Manual resets' strip at its right; no card's painted text leaves it
+    or comes within 12px of its sides; every fact reads label left, value right, on one line, or the value drops under
+    its label at the right edge (the expiry lines, left under theirs); a caption sits under its value at the right
+    edge; three across, Usage is left of Billing is left of Manual resets; and Manual resets starts at one left edge
+    (1px) in every open row of a card."""
     if state != "expanded" or width not in D_GAP_WIDTHS:
         return []
-    return await page.evaluate("() => {" + D_PRELUDE + r"""
-      const textLeft = el => { // the left edge of the painted text, not of its box
-        let left = Infinity; const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-        for (let n = w.nextNode(); n; n = w.nextNode()) {
-          if (!n.textContent.trim()) continue;
-          const r = document.createRange(); r.selectNodeContents(n);
-          for (const b of r.getClientRects()) if (b.width > 0) left = Math.min(left, b.left);
-        }
-        return left;
-      };
+    return await page.evaluate("() => {" + D_PRELUDE + G12_PRELUDE + r"""
       const fails = [], rows = [...document.querySelectorAll('article details[open]')];
       if (!rows.length) return [{why: 'no open row to measure'}];
-      const boxLefts = new Map(), r = e => e.getBoundingClientRect();
+      const boxLefts = new Map(), r = e => e.getBoundingClientRect(), px = n => +n.toFixed(1);
+      // One card: nothing leaves it, and every fact reads label left, value right.
+      const checkCard = (card, who) => {
+        const name = g12Kind(card), cr = r(card), p = g12Paint(card);
+        if (!isFinite(p.left)) { fails.push({who, card: name, why: 'no painted text to measure'}); return; }
+        const room = Math.min(p.left - cr.left - 1, cr.right - 1 - p.right);
+        if (g12Out(card, {left: cr.left + 1, right: cr.right - 1, top: cr.top + 1, bottom: cr.bottom - 1}) > 0.5 || card.scrollWidth > card.clientWidth + 1) fails.push({who, card: name, why: 'text leaves the card', paint: [p.left, p.right].map(Math.round), box: [cr.left, cr.right].map(Math.round)});
+        else if (room < 12) fails.push({who, card: name, why: `text comes within ${room.toFixed(1)}px of the card's side, at least 12`});
+        for (const d of card.querySelectorAll(':scope > dl > div')) {
+          const dt = d.querySelector(':scope > dt'), dd = d.querySelector(':scope > dd:not([class*="detail"])');
+          if (!dt || !dd || !shown(dt) || !shown(dd)) continue;
+          const row = r(d), pt = g12Paint(dt), pd = g12Paint(dd), label = dt.textContent.trim(), at = {who, card: name, label};
+          const wrapped = pd.top >= pt.bottom - 2;
+          if (dd.querySelector('[class*="resetExpiries"]')) { // the expiry lines read under their label, from its left edge
+            if (!wrapped || Math.abs(pd.left - pt.left) > 2) fails.push({...at, why: 'the expiry lines do not sit under their label at its left edge', label_left: px(pt.left), value_left: px(pd.left)});
+          } else if (wrapped) {
+            if (Math.abs(pd.right - row.right) > 2) fails.push({...at, why: 'a value under its label is not at the right edge', value_right: px(pd.right), edge: px(row.right)});
+          } else {
+            if (Math.abs(pd.top - pt.top) > 3) fails.push({...at, why: 'the label and value are neither on one line nor stacked', label_top: px(pt.top), value_top: px(pd.top)});
+            if (pd.left < pt.right + 4) fails.push({...at, why: 'the value runs into its label', gap: px(pd.left - pt.right)});
+            if (Math.abs(pd.right - row.right) > 2) fails.push({...at, why: 'the value is not at the right edge', value_right: px(pd.right), edge: px(row.right)});
+          }
+          for (const cap of d.querySelectorAll(':scope > dd[class*="detail"]')) {
+            if (!shown(cap)) continue;
+            const pc = g12Paint(cap);
+            if (pc.top < pd.bottom - 2 || Math.abs(pc.right - row.right) > 2) fails.push({...at, why: 'a caption is not under its value at the right edge', caption_top: px(pc.top), value_bottom: px(pd.bottom), caption_right: px(pc.right), edge: px(row.right)});
+          }
+        }
+      };
       for (const row of rows) {
-        const who = row.querySelector('[class*="__accountLabel___"]')?.firstChild?.textContent;
-        const facts = row.querySelector('[class*="__accountFacts___"]'), layout = facts.querySelector('[class*="__factsLayout___"]');
-        const lead = facts.querySelector('[class*="__burnLead___"]'), accent = facts.querySelector('section[data-tone="accent"]');
-        const lists = [...facts.querySelectorAll('section')].filter(s => s.dataset.tone !== 'accent' && shown(s));
-        if (!layout || !lead || !accent || !shown(accent) || lists.length !== 2) { fails.push({who, why: 'no figure, two lists and Manual resets to measure'}); continue; }
-        const big = lead.querySelector('strong');
-        if (big && parseFloat(getComputedStyle(big).fontSize) < 24) fails.push({who, why: `the burn rate figure is ${getComputedStyle(big).fontSize}, under 24px`});
-        const a = r(accent), panelWidth = r(layout).width;
-        if (a.width < 239.5 || a.width > 440.5) fails.push({who, why: `Manual resets is ${a.width.toFixed(0)}px wide, expected 240-440`});
+        const who = g12Who(row), facts = row.querySelector('[class*="__accountFacts___"]'), mode = facts && g12Mode(facts);
+        if (!mode || !mode.layout) { fails.push({who, why: 'no facts layout to measure'}); continue; }
+        const {secs, usage, billing, resets} = g12Cards(mode.layout);
+        if (!usage || !billing || !resets || secs.length !== 3 || !secs.every(shown)) { fails.push({who, why: 'no Usage, Billing and Manual resets cards to measure', found: secs.length}); continue; }
+        if (mode.cols !== mode.want) fails.push({who, why: `the cards are ${mode.cols} across in a ${mode.drawer}px drawer, expected ${mode.want}`});
+        if (mode.layout.scrollWidth > mode.layout.clientWidth + 1 || facts.scrollWidth > facts.clientWidth + 1) fails.push({who, why: 'the facts layout scrolls sideways'});
+        // Cards and strips: one row shares a top and a height, and so do their strips; no strip is under 52px.
+        const lines = [];
+        for (const c of secs) { const top = r(c).top, g = lines.find(g => Math.abs(g.top - top) <= 1); if (g) g.cards.push(c); else lines.push({top, cards: [c]}); }
+        // G12b: cards share their top and end at their own content (no blank run under a shorter card).
+        if (lines.length !== Math.ceil(secs.length / mode.cols)) fails.push({who, why: `the cards do not share a top: ${lines.length} rows for ${mode.cols} across`, tops: lines.map(g => Math.round(g.top))});
+        for (const c of secs) { const room = r(c).bottom - g12Paint(c).bottom; if (room > 24) fails.push({who, card: g12Kind(c), why: `the card runs ${room.toFixed(1)}px below its content, at most 24 (cards end at their own content)`}); }
+        for (const g of lines) {
+          const strips = g.cards.map(c => c.querySelector(':scope > header')).filter(Boolean);
+          const sh = strips.map(s => r(s).height), st = strips.map(s => r(s).top);
+          if (strips.length !== g.cards.length) fails.push({who, why: 'a card has no title strip'});
+          else if (Math.max(...sh) - Math.min(...sh) > 1 || Math.max(...st) - Math.min(...st) > 1) fails.push({who, why: 'title strips in one row differ in height or top', heights: sh.map(px), tops: st.map(Math.round), parts: strips.map(s => [...s.querySelectorAll(':scope > *')].map(k => [k.tagName.toLowerCase(), px(r(k).height), px(r(k).width)]))});
+        }
+        // Every title strip is exactly 52px (60px with a coarse pointer or at 640px and below).
+        const stripHeight = matchMedia('(pointer: coarse), (max-width: 640px)').matches ? 60 : 52;
+        for (const c of secs) { const s = c.querySelector(':scope > header'); if (s && Math.abs(r(s).height - stripHeight) > 0.5) fails.push({who, card: g12Kind(c), why: `the title strip is ${r(s).height.toFixed(1)}px, exactly ${stripHeight} expected`}); }
+        for (let i = 0; i < secs.length; i++) for (let j = i + 1; j < secs.length; j++) {
+          const a = r(secs[i]), b = r(secs[j]);
+          if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) fails.push({who, why: `${g12Kind(secs[i])} and ${g12Kind(secs[j])} overlap`});
+        }
+        if (mode.want === 3 && (r(usage).right > r(billing).left + 1 || r(billing).right > r(resets).left + 1)) fails.push({who, why: 'three across, the cards are not Usage, Billing, Manual resets from the left'});
+        // The burn rate figure: at the right of Usage's strip, on the title's line.
+        const ustrip = usage.querySelector(':scope > header'), dock = ustrip && ustrip.querySelector('[class*="__burnDock___"]');
+        if (!dock || !shown(dock)) fails.push({who, why: 'no burn rate figure in the Usage strip'});
+        else {
+          const sr = r(ustrip), pdk = g12Paint(dock), ptitle = g12Paint(ustrip.querySelector('[class*="__cardTitle___"]') || ustrip), edge = sr.right - 1 - parseFloat(getComputedStyle(ustrip).paddingRight);
+          if (Math.abs(pdk.right - edge) > 2) fails.push({who, why: 'the burn rate figure is not at the right of the Usage strip', figure_right: px(pdk.right), edge: px(edge)});
+          if (pdk.top > ptitle.bottom - 2) fails.push({who, why: 'the burn rate figure dropped under the Usage title', figure_top: px(pdk.top), title_bottom: px(ptitle.bottom)});
+          if (parseFloat(getComputedStyle(dock.querySelector('strong') || dock).fontSize) < 24 && dock.querySelector('strong')) fails.push({who, why: 'the burn rate figure is under 24px'});
+        }
+        // Use reset: inside Manual resets' strip, at its right, on the title's line.
+        const rstrip = resets.querySelector(':scope > header'), button = resets.querySelector('button');
+        if (button && shown(button)) {
+          const sr = r(rstrip), br = r(button), edge = sr.right - 1 - parseFloat(getComputedStyle(rstrip).paddingRight), ptitle = g12Paint(rstrip.querySelector('h4'));
+          if (!rstrip.contains(button) || br.top < sr.top - 1 || br.bottom > sr.bottom + 1) fails.push({who, why: 'Use reset is not inside the Manual resets strip'});
+          else if (Math.abs(br.right - edge) > 2) fails.push({who, why: 'Use reset is not at the right of the Manual resets strip', button_right: px(br.right), edge: px(edge)});
+          else if (br.top > ptitle.bottom - 2) fails.push({who, why: 'Use reset dropped under the Manual resets title'});
+        }
+        for (const c of secs) checkCard(c, who);
         const card = row.closest('article');
         if (!boxLefts.has(card)) boxLefts.set(card, []);
-        boxLefts.get(card).push({who, left: a.left});
-        const facts1 = lists.flatMap(l => [...l.querySelectorAll('dl > div')]).filter(d => d.querySelector('dt'));
-        if (a.left < Math.max(...facts1.map(d => textRight(d)), textRight(lead)) - 0.5) fails.push({who, why: 'Manual resets is not right of every fact'});
-        // Lists: labels share one x and values another; lists that stack (one left edge) share both.
-        const groups = [];
-        for (const l of lists) {
-          const left = Math.round(r(l).left), g = groups.find(g => Math.abs(g.left - left) <= 1);
-          if (g) g.lists.push(l); else groups.push({left, lists: [l]});
-        }
-        for (const g of groups) {
-          const dts = g.lists.flatMap(l => [...l.querySelectorAll('dt')]), dds = g.lists.flatMap(l => [...l.querySelectorAll('dl > div > dd:first-of-type')]);
-          const xs = els => els.map(e => Math.round(r(e).left));
-          if (Math.max(...xs(dts)) - Math.min(...xs(dts)) > 1) fails.push({who, why: 'labels start at different x', xs: xs(dts)});
-          if (Math.max(...xs(dds)) - Math.min(...xs(dds)) > 1) fails.push({who, why: 'values start at different x', xs: xs(dds)});
-        }
-        // Empty runs between columns: figure | each list column | Manual resets, by painted text.
-        const cols = [{l: textLeft(lead), r: textRight(lead)}, ...groups.sort((x, y) => x.left - y.left).map(g => ({l: Math.min(...g.lists.map(textLeft)), r: Math.max(...g.lists.map(textRight))})), {l: a.left, r: a.right}]
-          .sort((x, y) => x.l - y.l);
-        const runs = cols.slice(1).map((c, i) => c.l - cols[i].r).filter(run => run > 0);
-        const maxRun = panelWidth >= 1300 ? 225 : 160;
-        if (runs.length && Math.max(...runs) > maxRun) fails.push({who, why: `${Math.max(...runs).toFixed(0)}px empty between columns, at most ${maxRun}`, runs: runs.map(x => +x.toFixed(1))});
+        boxLefts.get(card).push({who, left: r(resets).left});
       }
       for (const lefts of boxLefts.values()) {
         const xs = lefts.map(l => l.left);
@@ -2831,12 +2986,14 @@ async def check_predicted_empty(page, state, width):
 
 
 async def check_reset_reason(page, name, state):
-    """D2: in every opened Manual resets box the reason sits within 8px of the Use reset button and is its
+    """D2 (G12): in every opened Manual resets card Use reset sits inside the card's title strip, and the reason sits
+    right under that strip (its box starts 0-12px below it and its painted text within 16px: the note's 12px top
+    padding and its leading), inside the card, within 12px of the button (the strip's bottom padding) and is the button's
     aria-describedby; a disabled button (H2-B) has a solid outline of at least 3:1 and text of at least 4.5:1
     against the box, by pixels, and no fill, and looks different from an enabled one wherever both are on the page."""
     if state not in ("expanded", "details") and not name.startswith("reset-confirm"):
         return []
-    found = await page.evaluate("() => {" + D_PRELUDE + r"""
+    found = await page.evaluate("() => {" + D_PRELUDE + G12_PRELUDE + r"""
       const out = [], boxes = [...document.querySelectorAll('article details[open] section[data-tone="accent"]')];
       for (const [index, section] of boxes.entries()) {
         const button = section.querySelector('button'), note = section.querySelector('p[role="status"]');
@@ -2844,8 +3001,10 @@ async def check_reset_reason(page, name, state):
         const row = section.closest('details'), who = row.querySelector('[class*="__accountLabel___"]')?.firstChild?.textContent;
         const b = button.getBoundingClientRect(), n = note ? note.getBoundingClientRect() : null;
         const dx = n ? Math.max(n.left - b.right, b.left - n.right, 0) : null, dy = n ? Math.max(n.top - b.bottom, b.top - n.bottom, 0) : null;
-        const cs = getComputedStyle(button);
-        out.push({who, index, disabled: button.disabled, rel: {x: b.left - section.getBoundingClientRect().left, y: b.top - section.getBoundingClientRect().top, w: b.width, h: b.height}, gap: n ? Math.max(dx, dy) : null, noted: !!note && shown(note),
+        const cs = getComputedStyle(button), hdr = button.closest('header'), h = hdr && hdr.parentElement === section ? hdr.getBoundingClientRect() : null, sr = section.getBoundingClientRect();
+        const pn = note ? g12Paint(note) : null;
+        out.push({who, index, disabled: button.disabled, rel: {x: b.left - sr.left, y: b.top - sr.top, w: b.width, h: b.height}, gap: n ? Math.max(dx, dy) : null, noted: !!note && shown(note),
+          inStrip: !!h && b.top >= h.top - 1 && b.bottom <= h.bottom + 1, underStrip: n && h ? n.top - h.bottom : null, paintUnderStrip: pn && h && isFinite(pn.top) ? pn.top - h.bottom : null, inCard: !!n && n.left >= sr.left - 1 && n.right <= sr.right + 1,
           describedBy: !!note && button.getAttribute('aria-describedby') === note.id,
           box: box(button), area: box(section), style: cs.borderTopStyle, fill: cs.backgroundColor, border: cs.borderTopColor});
       }
@@ -2858,8 +3017,12 @@ async def check_reset_reason(page, name, state):
         who = item["who"]
         if not item["noted"] or not item["describedBy"]:
             fails.append(dict(who=who, why="the reason is missing or not the button's aria-describedby"))
-        elif item["gap"] > 8:
-            fails.append(dict(who=who, why=f"the reason is {item['gap']:.0f}px from the button, at most 8"))
+        elif item["gap"] > 12:
+            fails.append(dict(who=who, why=f"the reason is {item['gap']:.0f}px from the button, at most 12"))
+        elif (not item["inStrip"] or item["underStrip"] is None or not -1 <= item["underStrip"] <= 12
+              or item["paintUnderStrip"] is None or item["paintUnderStrip"] > 16 or not item["inCard"]):
+            fails.append(dict(who=who, why="Use reset is not in the card's strip with its reason right under the strip",
+                              inStrip=item["inStrip"], underStrip=item["underStrip"], paintUnderStrip=item["paintUnderStrip"], inCard=item["inCard"]))
         if not item["disabled"]:
             continue
         if item["style"] != "dashed":
@@ -2945,11 +3108,11 @@ async def check_reset_dialog_facts(dialog):
     if not facts or any(f is None for f in facts):
         return [dict(why="the dialog has no label-above-value facts to measure")]
     labels = [f["label"] for f in facts]
-    # "Expires" (the soonest held expiry) follows Resets to use whenever the account's resets have a known
+    # "Reset expires" (the soonest held expiry, G11) follows Resets to use whenever the account's resets have a known
     # future expiry; it names a date and time in UTC.
-    if labels not in (["Account", "Resets to use", "Limits to reset"], ["Account", "Resets to use", "Expires", "Limits to reset"]):
-        fails.append(dict(why="the dialog facts are not Account, Resets to use, [Expires,] Limits to reset", labels=labels))
-    expiry = next((f["value"] for f in facts if f and f["label"] == "Expires"), None)
+    if labels not in (["Account", "Resets to use", "Limits to reset"], ["Account", "Resets to use", "Reset expires", "Limits to reset"]):
+        fails.append(dict(why="the dialog facts are not Account, Resets to use, [Reset expires,] Limits to reset", labels=labels))
+    expiry = next((f["value"] for f in facts if f and f["label"] == "Reset expires"), None)
     if expiry is not None and not re.search(r"\d{1,2}:\d{2}\s*[AP]M\s*UTC", expiry.replace("\u00a0", " ")):
         fails.append(dict(why="Expires is not a date and time", value=expiry))
     for fact in facts:
@@ -3125,8 +3288,8 @@ async def check_banner_layout(page):
       const button = banner.querySelector('button');
       if (!button) return [{why: 'banner has no Try again button'}];
       const b = banner.getBoundingClientRect(), k = button.getBoundingClientRect(), p = page.getBoundingClientRect(), s = getComputedStyle(banner), fails = [];
-      if (banner.hasAttribute('data-alone') && b.width > 640.5) fails.push({why: 'standalone card wider than 640px', width: b.width});
-      if (!banner.hasAttribute('data-alone') && Math.abs(b.right - p.right) > 2) fails.push({why: 'in-page banner does not align to card right edge', right: b.right, content: p.right});
+      // K13: the banner and the standalone card share the 640px cap (the empty and error cards' width).
+      if (b.width > 640.5) fails.push({why: 'banner wider than 640px', width: b.width});
       if (Math.abs(b.left - p.left) > 1) fails.push({why: 'banner is not left-aligned with the content', left: b.left, content: p.left});
       const below = b.bottom - k.bottom - parseFloat(s.borderBottomWidth), top = parseFloat(s.paddingTop);
       if (below < top - 0.5) fails.push({why: 'Try again has less room below than the banner pads above', below, top});
@@ -3678,7 +3841,8 @@ W_HEADLINE_JS = "() => {" + C1_PRELUDE + r"""
     const strong = headline.querySelector(':scope > strong'), word = strong.querySelector('[class*="__unavailableValue___"]');
     const probe = document.createElement('span');
     probe.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline';
-    (word || strong).append(probe);
+    // The unit shares the number's baseline; a probe appended to a flex <strong> would be a flex item of its own.
+    (word || strong.querySelector(':scope > small') || strong).append(probe);
     const baseline = probe.getBoundingClientRect().bottom - headline.getBoundingClientRect().top;
     probe.remove();
     const context = headline.querySelector(':scope > [class*="__headlineContext___"]'), sr = (word || strong).getBoundingClientRect();
@@ -3978,7 +4142,7 @@ G2_CELL_JS = """() => {
     const summary = cell.parentElement, c = r(cell), next = [...summary.querySelectorAll(':scope > ul > li')].filter(e => e.checkVisibility({checkVisibilityCSS: true}))[0];
     const nameCell = summary.querySelector('[class*="__accountName___"]'), text = nameCell.querySelector('[class*="__accountText___"]');
     let right = -Infinity; const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
-    for (let n = w.nextNode(); n; n = w.nextNode()) { if (n.parentElement.closest('[aria-hidden="true"]') || !n.parentElement.checkVisibility({checkVisibilityCSS: true})) continue;
+    for (let n = w.nextNode(); n; n = w.nextNode()) { if (n.parentElement.closest('[aria-hidden="true"], [class*="__srOnly___"], [class*="__visuallyHidden___"]') || !n.parentElement.checkVisibility({checkVisibilityCSS: true})) continue;
       const g = document.createRange(); g.selectNodeContents(n); for (const b of g.getClientRects()) if (b.width > 0) right = Math.max(right, b.right); }
     // The cell's own screen-reader label (the column header is hidden from assistive technology) and the held line's
     // hidden measuring copy are not part of its text.
@@ -4115,14 +4279,15 @@ G9_HELD_JS = r"""() => {
   }
   return out;
 }"""
-# What the four-kind account (ops…) and the 5-hour + full account (ada…) must show: the four kinds never fit; the
-# pair fits in English and Vietnamese (19 characters, under 120px) but not in Russian.
-G9_HELD_WANT = {"en": ("count", "named"), "vi": ("count", "named"), "ru": ("count", "count")}
+# What the four-kind account (ops…) and the one-kind account (ada…) must show, as measured in the 120px column: the
+# four kinds never fit with "held" on the line; "2 full held" fits in English, while Vietnamese ("2 toàn bộ đang
+# giữ") and Russian ("в запасе полные: 2") are wider and fall back to the count.
+G9_HELD_WANT = {"en": ("count", "named"), "vi": ("count", None), "ru": ("count", None)}  # English first: other languages only must not wrap
 # A lone reset holder past the first page, holding every kind, in phone widths and a long language.
 G9_SUMMARY_CASES = ("real-narrow",)
 G9_SUMMARY_JS = r"""() => {
-  const out = [], facts = [...document.querySelectorAll('article [class*="__summaryFact___"]')].filter(f => f.querySelector('[class*="__resetKindTotals___"]'));
-  if (!facts.length) return [{why: 'no reset summary with kinds to measure'}];
+  const out = [], facts = [...document.querySelectorAll('article [class*="__summaryFact___"]')];
+  if (!facts.length) return [{why: 'no reset summary to measure'}];
   for (const f of facts) {
     const card = f.closest('article'), edge = card.getBoundingClientRect().right - parseFloat(getComputedStyle(card).paddingRight);
     if (f.getBoundingClientRect().right > edge + 0.5) out.push({why: 'the reset summary runs past its card', over: +(f.getBoundingClientRect().right - edge).toFixed(1)});
@@ -4147,9 +4312,10 @@ async def check_row_geometry(page, width, browser=None, url=None, name=None):
                 out += [dict(page=tag, **f) for f in await fresh.evaluate(G9_ROW_JS, width >= 901)]
                 held = await fresh.evaluate(G9_HELD_JS)
                 got = [next((v for k, v in held.items() if k.startswith(p)), None) for p in ("ops", "ada")]
-                want = [w if w == "named" else "count" for w in (four, pair)]
-                if [g if g in (None, "named") else "count" for g in got] != want:
-                    out.append(dict(page=tag, why="held lines (four kinds, 5-hour + full) are not named/counted as measured", want=want, got=got))
+                want = [w if w in ("named", None) else "count" for w in (four, pair)]
+                norm = [g if g in (None, "named") else "count" for g in got]
+                if any(w is not None and n != w for n, w in zip(norm, want)):
+                    out.append(dict(page=tag, why="held lines (four kinds, one kind) are not named/counted as measured", want=want, got=got))
             finally:
                 await context.close()
     if browser and name in G9_SUMMARY_CASES:
@@ -4317,15 +4483,16 @@ UNIVERSAL_CHECKS_JS = "(width) => {" + C3_HELPERS + r"""
     }
   }
 
-  // D3c: FactPanel Usage->Billing vertical stretch bound across all open drawers.
+  // D3c: no vertical stretch between cards that stack in one column of an open drawer (G12: any two cards, the
+  // nearer one above, wherever the reset card sits between Usage and Billing).
   for (const facts of document.querySelectorAll('article details[open] [class*="__accountFacts___"]')) {
     if (!shown(facts)) continue;
-    const secs = [...facts.querySelectorAll('section')].filter(s => shown(s) && s.dataset.tone !== 'accent');
-    if (secs.length >= 2) {
-      const a = r(secs[0]), b = r(secs[1]);
-      if (Math.abs(a.left - b.left) < 4 && b.top - a.bottom > 48) {
-        d3.push({why: `FactPanel vertical section gap ${(b.top - a.bottom).toFixed(0)}px exceeds 48px`});
-      }
+    const secs = [...facts.querySelectorAll('section')].filter(shown).map(r).sort((x, y) => x.top - y.top);
+    for (let i = 1; i < secs.length; i++) {
+      const b = secs[i], above = secs.slice(0, i).filter(a => Math.abs(a.left - b.left) < 4 && a.bottom <= b.top + 1);
+      if (!above.length) continue;
+      const gap = b.top - Math.max(...above.map(a => a.bottom));
+      if (gap > 48) d3.push({why: `FactPanel vertical section gap ${gap.toFixed(0)}px exceeds 48px`});
     }
   }
 
@@ -4714,10 +4881,38 @@ async def main():
                     )
                     await page.wait_for_timeout(250)
                 path = out / f"{name}.png"
-                await page.screenshot(
-                    path=str(path), full_page=True, animations="disabled"
-                )
+                # G12: a mobile context's full_page shot drops `pointer: coarse`, so the shot painted the
+                # 32px controls (`@media (pointer: coarse)` makes them 44px) while the geometry below (and a
+                # real phone) has the 44px ones, and everything under the first of them sat higher in the
+                # pixels than in the DOM (contrast and ink read the wrong pixels). Grow the viewport to the
+                # page and shoot the viewport instead, then restore it; pages over 16000px (a texture
+                # limit) keep the full_page shot.
+                shot_view = dict(page.viewport_size)
+                page_height = await page.evaluate("() => Math.ceil(document.documentElement.scrollHeight)")
+                inner_js = "() => { const c = document.querySelector('.content'); return c ? Math.ceil(c.scrollHeight - c.clientHeight) : 0; }"
+                grown = max(shot_view["height"], page_height)
+                if shot_view["height"] < page_height <= 16000:
+                    await page.set_viewport_size(dict(width=width, height=grown))
+                    for _ in range(3):
+                        extra = await page.evaluate(inner_js)
+                        if extra <= 0 or grown + extra > 16000:
+                            break
+                        grown += extra
+                        await page.set_viewport_size(dict(width=width, height=grown))
+                    await page.wait_for_timeout(300)
+                if grown > shot_view["height"] and await page.evaluate(inner_js) <= 0:
+                    await page.evaluate("() => { scrollTo(0, 0); const c = document.querySelector('.content'); if (c) c.scrollTop = 0; }")
+                    await page.wait_for_timeout(150)
+                    await page.screenshot(path=str(path), animations="disabled", clip=dict(x=0, y=0, width=width, height=min(grown, page_height)))
+                else:
+                    await page.screenshot(
+                        path=str(path), full_page=True, animations="disabled"
+                    )
+                # The geometry is read in the layout that was shot (the grown viewport), then the viewport returns.
                 geo = await page.evaluate(GEOMETRY)
+                if page.viewport_size != shot_view:
+                    await page.set_viewport_size(shot_view)
+                    await page.wait_for_timeout(300)
                 # Read before the other checks, which collapse rows; the pixels come from the shot just taken.
                 reset_reason_failures = await check_reset_reason(page, name, state)
                 # Hidden reason: as loaded, except states reached by an interaction, which are read once open.

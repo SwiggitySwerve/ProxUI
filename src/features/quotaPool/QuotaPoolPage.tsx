@@ -5,7 +5,6 @@ import {
   IconAlertTriangle,
   IconEye,
   IconClock,
-  IconRefreshCw,
   IconSlidersHorizontal,
   IconChevronDown,
   IconChevronLeft,
@@ -27,6 +26,7 @@ import { poolProviderLabel, poolProviderStyle } from './providerPresentation';
 import { DiscoveredQuota } from './DiscoveredQuota';
 import { viewRange } from './chartGeometry';
 import {
+  forecastMultiplier,
   readViewState,
   resolveViewProvider,
   sameView,
@@ -86,7 +86,7 @@ export function QuotaPoolPage() {
   const query: PoolQuery = {
     window: view.window,
     lookback: view.lookback,
-    multiplier: view.future,
+    multiplier: forecastMultiplier(view),
     ...local,
   };
   const state = usePoolDashboard(query);
@@ -117,6 +117,12 @@ export function QuotaPoolPage() {
   }, [data, activeProvider, provider]);
   const shownPools = orderedPools.filter(
     (pool) => activeProvider === 'all' || activeProvider === poolProviderViewId(pool.provider)
+  );
+  // Wide tables give the Manual resets column room for two kinds ("1 weekly · 2 Fable held") when no
+  // card has more than two limit columns; every card shares the width, so their columns line up (G11).
+  const wideResets = shownPools.every(
+    (pool) =>
+      new Set(pool.accounts.flatMap((account) => account.windows.map((limit) => limit.id))).size <= 2
   );
   const providerName = (id: string) =>
     poolProviderLabel(
@@ -173,20 +179,19 @@ export function QuotaPoolPage() {
     node.focus();
   }, []);
   // The Options button spells out every current choice on one line at 390px ("Weekly · Remaining · 3h
-  // avg · Same as now"); a non-default Future is named with its prefix. Rate views omit Future.
+  // avg · Future: same"); Future is always named, so its value never reads as a setting of its own,
+  // and rate views say it is off, as the wide toolbar's control does (G11).
   const optionsSummary = [
     t(`quota_pool.${view.window === 'weekly' ? 'weekly' : 'five_hour'}`),
     t(`quota_pool.${mode}`),
     t('quota_pool.options_avg', { hours: view.lookback }),
-    ...(mode === 'remaining'
-      ? [
-          view.future === 1
-            ? t('quota_pool.scenario.same')
-            : `${t('quota_pool.future_prefix')}: ${t(
-                `quota_pool.scenario.${view.future === 0.5 ? 'half' : view.future === 2 ? 'double' : 'idle'}`
-              )}`,
-        ]
-      : []),
+    mode !== 'remaining'
+      ? t('quota_pool.options_future_off')
+      : view.future === 1
+        ? t('quota_pool.options_future_same')
+        : `${t('quota_pool.future_prefix')}: ${t(
+            `quota_pool.scenario.${view.future === 0.5 ? 'half' : view.future === 2 ? 'double' : 'idle'}`
+          )}`,
   ].join(' · ');
 
   return (
@@ -413,10 +418,11 @@ export function QuotaPoolPage() {
                     ))}
                   </select>
                 </label>
-                {/* The scenario only shapes the Remaining forecast, so rate views don't offer it. */}
-                {mode === 'remaining' && (
-                  <label className={styles.selectLabel}>
-                    <span className={styles.selectPrefix}>{t('quota_pool.future_prefix')}</span>
+                {/* The scenario only shapes the Remaining forecast. Rate views keep the control in its
+                    place, off, and its one choice says why, so the row never changes shape (G11). */}
+                <label className={styles.selectLabel}>
+                  <span className={styles.selectPrefix}>{t('quota_pool.future_prefix')}</span>
+                  {mode === 'remaining' ? (
                     <select
                       value={query.multiplier}
                       onChange={(event) =>
@@ -431,8 +437,12 @@ export function QuotaPoolPage() {
                         </option>
                       ))}
                     </select>
-                  </label>
-                )}
+                  ) : (
+                    <select disabled value="off">
+                      <option value="off">{t('quota_pool.future_remaining_only')}</option>
+                    </select>
+                  )}
+                </label>
               </div>
             </div>
           </fieldset>
@@ -565,8 +575,8 @@ export function QuotaPoolPage() {
               <Skeleton className={styles.loadingToggle} rounded={999} inert />
               <Skeleton className={styles.loadingSelect} rounded={999} inert />
             </div>
-            {/* The combined card has a label-above-value headline matching loaded cards. */}
-            <div className={styles.loadingHero}>
+            {/* The combined card has a label-above-value headline in a number card, matching loaded cards. */}
+            <div className={`${styles.loadingHero} ${styles.loadingHeroCard}`}>
               <span className={styles.loadingNumber}>
                 <Skeleton width={150} height={14} rounded={4} />
                 <Skeleton width={180} height={42} rounded={8} />
@@ -583,7 +593,7 @@ export function QuotaPoolPage() {
                   <PoolProviderMark provider={item} />
                   {t(`quota_pool.${item}`)}
                 </h2>
-                {/* Phones: the account count and status chip, then the action pills. */}
+                {/* The account count and status chip; wide screens put the action pills on this row too. */}
                 <Skeleton className={styles.loadingCount} rounded={4} />
                 <Skeleton className={styles.loadingChip} rounded={999} />
                 <span className={styles.loadingPills}>
@@ -591,18 +601,33 @@ export function QuotaPoolPage() {
                   <Skeleton className={styles.loadingPill} rounded={999} />
                 </span>
               </div>
-              <div className={styles.loadingStats}>
-                <span className={styles.loadingNumber}>
-                  <Skeleton width={140} height={14} rounded={4} />
-                  <Skeleton width={170} height={42} rounded={8} />
-                </span>
-                {[0, 1, 2, 3].map((index) => (
-                  <span key={index} className={styles.loadingFact}>
+              {/* The loaded header's two cards: the number with Now docked under it, then Forecast (G12). */}
+              <div className={styles.loadingStats} data-rate={mode !== 'remaining' || undefined}>
+                <span className={styles.loadingCard}>
+                  <span className={styles.loadingNumber}>
+                    <Skeleton width={140} height={14} rounded={4} />
+                    <Skeleton width={170} height={42} rounded={8} />
+                  </span>
+                  <span className={styles.loadingFact}>
                     <Skeleton width={84} height={10} rounded={4} />
                     <Skeleton width={128} height={16} rounded={4} />
                   </span>
-                ))}
+                </span>
+                <span className={styles.loadingCard}>
+                  <Skeleton className={styles.loadingCardTitle} width={64} height={12} rounded={4} />
+                  {[0, 1, 2].map((index) => (
+                    <span key={index} className={styles.loadingFact}>
+                      <Skeleton width={84} height={10} rounded={4} />
+                      <Skeleton width={128} height={16} rounded={4} />
+                    </span>
+                  ))}
+                </span>
               </div>
+              {/* Phones: the action pills follow the facts, right above the chart, as the loaded card's do (G11). */}
+              <span className={styles.loadingPillsBelow}>
+                <Skeleton className={styles.loadingPill} rounded={999} />
+                <Skeleton className={styles.loadingPill} rounded={999} />
+              </span>
               <Skeleton height={120} rounded={8} />
               <div className={styles.loadingRows}>
                 {[0, 1].map((index) => (
@@ -628,6 +653,7 @@ export function QuotaPoolPage() {
         className={styles.pools}
         aria-busy={state.loading}
         data-chip-line={chipLine || undefined}
+        data-wide-resets={wideResets || undefined}
       >
         {data &&
           shownPools.map((pool, index, shown) => (
@@ -733,12 +759,9 @@ function RefreshCountdown({
   if (dueAtMs === null) return null;
   return (
     <span className={styles.countdown} data-refreshing={refreshing} role="status">
-      {/* A clock for the countdown; a spinning refresh icon while a collection is running. */}
-      {refreshing ? (
-        <IconRefreshCw size={16} aria-hidden="true" />
-      ) : (
-        <IconClock size={16} aria-hidden="true" />
-      )}
+      {/* A clock for the countdown. While a collection runs the header's refresh button spins, so
+          this stays plain status text: one progress indicator on the page (G11). */}
+      {!refreshing && <IconClock size={16} aria-hidden="true" />}
       {refreshing
         ? t('quota_pool.refreshing')
         : t(`quota_pool.${retrying ? 'auto_retry_in' : 'auto_refresh_in'}`, {
