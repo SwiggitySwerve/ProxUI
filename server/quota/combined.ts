@@ -67,29 +67,47 @@ export function combinedPools(
   readRecorded: (eligible: QuotaPool[]) => PoolPoint[],
   readLayers?: (eligible: QuotaPool[], times: number[]) => PoolPoint[][]
 ): CombinedPoolResult {
+  // A pool whose every account is disabled (a paused or retired source) has no balance or
+  // forecast to add, but the history its accounts recorded still belongs on the chart.
+  const dormant = pools.filter(
+    (pool) =>
+      pool.eligibleCount === 0 &&
+      pool.accounts.length > 0 &&
+      pool.accounts.every((account) => account.status === 'disabled')
+  );
   const members = pools.filter(
-    (pool) => pool.eligibleCount > 0 || pool.forecastState !== 'no-accounts'
+    (pool) =>
+      !dormant.includes(pool) && (pool.eligibleCount > 0 || pool.forecastState !== 'no-accounts')
   );
   // A provider with no limit in this window (e.g. weekly-only Codex, 5-hour) has no allowance to
   // add; leaving it in would hold the total at "collecting" and empty its history.
   const limited = members.filter((pool) => pool.forecastState !== 'no-limit');
   const eligible = limited.length ? limited : members;
-  if (!eligible.length) return { series: null, unavailableReason: 'no-accounts' };
-  if (new Set(eligible.map((pool) => pool.provider)).size !== eligible.length)
+  const charted = [...eligible, ...dormant];
+  if (!charted.length) return { series: null, unavailableReason: 'no-accounts' };
+  if (new Set(charted.map((pool) => pool.provider)).size !== charted.length)
     return { series: null, unavailableReason: 'ambiguous-sources' };
-  const forecastState = eligible.some((pool) => pool.forecastState === 'stale')
-    ? 'stale'
-    : eligible.some((pool) => pool.forecastState === 'partial')
-      ? 'partial'
-      : eligible.some((pool) => pool.forecastState !== 'ready')
-        ? 'collecting'
-        : 'ready';
+  const forecastState = !eligible.length
+    ? 'no-accounts'
+    : eligible.some((pool) => pool.forecastState === 'stale')
+      ? 'stale'
+      : eligible.some((pool) => pool.forecastState === 'partial')
+        ? 'partial'
+        : eligible.some((pool) => pool.forecastState !== 'ready')
+          ? 'collecting'
+          : 'ready';
   const projectedLayers =
     forecastState === 'ready' ? alignProjections(eligible.map((pool) => pool.projected)) : [];
   const projected = sumProjections(projectedLayers);
-  const recorded = eligible.some((pool) => pool.eligibleCount === 0) ? [] : readRecorded(eligible);
+  // A live pool with no accounts to read (failed or empty inventory) leaves the total unknown; a
+  // pool with no limit in this window has nothing to add and never does.
+  const recorded = eligible.some(
+    (pool) => pool.eligibleCount === 0 && pool.forecastState !== 'no-limit'
+  )
+    ? []
+    : readRecorded(charted);
   const recordedLayers = readLayers?.(
-    eligible,
+    charted,
     recorded.map((point) => point.atMs)
   );
   const resets = new Map<number, number[]>();
@@ -102,7 +120,8 @@ export function combinedPools(
     unavailableReason: null,
     ...(recordedLayers
       ? {
-          layers: eligible.map((pool, index) => ({
+          layers: charted.map((pool, index) => ({
+            ...(index < eligible.length ? {} : { historyOnly: true as const }),
             provider: pool.provider,
             ...(pool.displayName ? { displayName: pool.displayName } : {}),
             instanceId: pool.instanceId,
@@ -115,15 +134,27 @@ export function combinedPools(
             resets: pool.resets,
             poolEmptyAtMs: pool.poolEmptyAtMs,
             recorded: recordedLayers[index],
-            projected: projectedLayers[index] ?? [],
+            // A dormant pool has nothing ahead of it: zero on the live forecast's events, so the
+            // stacked chart lines every layer up.
+            projected:
+              index < eligible.length
+                ? (projectedLayers[index] ?? [])
+                : projected.map((point) => ({ ...point, remainingPoints: 0 })),
           })),
         }
       : {}),
     series: {
       capacityPoints: sumKnown(eligible.map((pool) => pool.capacityPoints))!,
-      remainingPoints: sumKnown(eligible.map((pool) => pool.remainingPoints)),
-      burnPointsPerHour: sumKnown(eligible.map((pool) => pool.burnPointsPerHour)),
-      drainPointsPerHour: sumKnown(eligible.map((pool) => pool.drainPointsPerHour)),
+      // Only dormant pools: history without a live balance.
+      remainingPoints: eligible.length
+        ? sumKnown(eligible.map((pool) => pool.remainingPoints))
+        : null,
+      burnPointsPerHour: eligible.length
+        ? sumKnown(eligible.map((pool) => pool.burnPointsPerHour))
+        : null,
+      drainPointsPerHour: eligible.length
+        ? sumKnown(eligible.map((pool) => pool.drainPointsPerHour))
+        : null,
       forecastState,
       // A failed inventory with no known members is unknown, never a zero-sized pool.
       recorded,

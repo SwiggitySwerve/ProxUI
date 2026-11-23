@@ -24,6 +24,8 @@ type ChartPool = PoolTrace & {
   sourceLabel?: string;
   instanceId?: string;
   displayName?: string;
+  /** A layer with history only: its zero projection aligns the stack and is not drawn. */
+  historyOnly?: true;
 };
 
 interface ChartProps {
@@ -127,8 +129,11 @@ function PoolChartView({
       band: stacked?.[index],
     };
   });
+  // A history-only layer's forecast zeros only align the stack: nothing to inspect or mark.
   const samples = series.flatMap(({ pool, samples }) =>
-    samples.map((sample) => ({ ...sample, pool }))
+    samples
+      .filter((sample) => !(pool.historyOnly && sample.projected))
+      .map((sample) => ({ ...sample, pool }))
   );
   // Order inspection by time without joining or resampling separate source traces.
   if (comparison) samples.sort((a, b) => a.point.atMs - b.point.atMs);
@@ -447,7 +452,7 @@ function PoolChartView({
                 data-series={pool.instanceId ?? pool.provider}
               >
                 {band &&
-                  [false, true].flatMap((projected) =>
+                  (pool.historyOnly ? [false] : [false, true]).flatMap((projected) =>
                     bandSegments(band, projected, x, y).map((path, index) => (
                       <path
                         key={`band-${projected}-${index}`}
@@ -461,7 +466,7 @@ function PoolChartView({
                       />
                     ))
                   )}
-                {[false, true].map((projected) =>
+                {(pool.historyOnly ? [false] : [false, true]).map((projected) =>
                   segments(projected, plotSamples).map((path, index) => {
                     const firstX = path.slice(1).split(',')[0];
                     const lastX = path.split(' L').slice(-1)[0]?.replace(/^M/, '').split(',')[0];
@@ -487,7 +492,8 @@ function PoolChartView({
                   })
                 )}
                 {seriesSamples.map(({ point, projected, position }, index) =>
-                  position === null || (projected && !sparseProjection) ? null : (
+                  position === null ||
+                  (projected && (!sparseProjection || pool.historyOnly)) ? null : (
                     <circle
                       key={index}
                       cx={x(point.atMs)}

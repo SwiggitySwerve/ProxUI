@@ -73,11 +73,10 @@ flowchart LR
   B[Browser] --> P["prox<br/>nginx + single-file UI<br/>:18318"]
   P -->|"/v8/management"| X["ProxD · Codex<br/>:8317"]
   P -->|"/claude/v8/management"| C["ProxD · Claude<br/>:8319"]
-  P -->|"/gemini/v8/management"| G["ProxD · Antigravity<br/>:8321"]
   P -->|"/v8/management/prox/*"| H["prox-history<br/>Bun server · :18319"]
   H --> Q[("Quota snapshots<br/>SQLite")]
   H -->|"analytics query"| U["prox-usage<br/>Bun server · :18320"]
-  U -.->|"usage subscription"| X & C & G
+  U -.->|"usage subscription"| X & C
   H -.->|"quota reads"| X & C
 ```
 

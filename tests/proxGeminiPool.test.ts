@@ -425,6 +425,121 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     expect(fromMs).toBe(Math.min(...poll.map((sample) => sample.observedAtMs)));
   });
 
+  test('a Gemini source taken out of the manifest keeps its stored pool and history', async () => {
+    const f = fixture();
+    await f.collector.refresh();
+    // Built as prox-history does after the Gemini hub left the manifest: only the Claude source
+    // is configured, the Gemini account and its samples are still stored.
+    const pools = buildDashboard(
+      f.store.listAccounts(),
+      f.store.listSamples(0, NOW),
+      {
+        nowMs: NOW,
+        window: 'weekly',
+        lookbackHours: 3,
+        multiplier: 1,
+        offsetDays: 0,
+        reveal: false,
+      },
+      {
+        historyStartedAtMs: NOW,
+        lastRefreshAtMs: NOW,
+        nextRefreshAtMs: NOW,
+        refreshing: false,
+        issues: [],
+        sources: f.collector.sources.filter((source) => source.instanceId !== 'gemini-src'),
+      }
+    ).pools;
+    const gemini = pools.find((pool) => pool.provider === 'antigravity')!;
+    expect(gemini.instanceId).toBe('gemini-src');
+    expect(gemini.accountCount).toBe(1);
+    expect(gemini.recorded.at(-1)?.remainingPoints).toBeCloseTo(450, 6);
+  });
+
+  test('a disabled account keeps the history it recorded, and leaves the pool after it', async () => {
+    const f = fixture();
+    await f.collector.refresh();
+    // The suspended Gemini credential was disabled before its source was removed.
+    const accounts = f.store
+      .listAccounts()
+      .map((account) =>
+        account.provider === 'antigravity' ? { ...account, disabled: true } : account
+      );
+    const at = (nowMs: number) =>
+      buildDashboard(
+        accounts,
+        f.store.listSamples(0, NOW),
+        {
+          nowMs,
+          window: 'weekly',
+          lookbackHours: 3,
+          multiplier: 1,
+          offsetDays: 0,
+          reveal: false,
+        },
+        {
+          historyStartedAtMs: NOW,
+          lastRefreshAtMs: NOW,
+          nextRefreshAtMs: NOW,
+          refreshing: false,
+          issues: [],
+          sources: f.collector.sources,
+        }
+      ).pools.find((pool) => pool.provider === 'antigravity')!;
+    const gemini = at(NOW);
+    expect(gemini.accounts[0].status).toBe('disabled');
+    expect(gemini.eligibleCount).toBe(0);
+    expect(gemini.recorded.find((point) => point.atMs === NOW)?.remainingPoints).toBeCloseTo(
+      450,
+      6
+    );
+    // Its last reading stays the last point; nothing is drawn for it afterwards.
+    expect(at(NOW + DAY_MS).recorded.at(-1)).toMatchObject({ atMs: NOW });
+  });
+
+  test('the combined chart keeps a retired, disabled Gemini account\'s history', async () => {
+    const f = fixture();
+    await f.collector.refresh();
+    const accounts = f.store
+      .listAccounts()
+      .map((account) =>
+        account.provider === 'antigravity' ? { ...account, disabled: true } : account
+      );
+    const combined = buildDashboard(
+      accounts,
+      f.store.listSamples(0, NOW),
+      {
+        nowMs: NOW,
+        window: 'weekly',
+        lookbackHours: 3,
+        multiplier: 1,
+        offsetDays: 0,
+        reveal: false,
+      },
+      {
+        historyStartedAtMs: NOW,
+        lastRefreshAtMs: NOW,
+        nextRefreshAtMs: NOW,
+        refreshing: false,
+        issues: [],
+        sources: f.collector.sources.filter((source) => source.instanceId !== 'gemini-src'),
+      }
+    ).combined;
+    const last = (
+      series: { recorded: { atMs: number; remainingPoints: number | null }[] } | null | undefined
+    ) => series?.recorded.find((point) => point.atMs === NOW)?.remainingPoints;
+    // Claude reads 80 of 100 points; Gemini's last reading is 450 of its 500.
+    expect(last(combined?.all?.series)).toBeCloseTo(80 + 450, 6);
+    expect(last(combined?.antigravity?.series)).toBeCloseTo(450, 6);
+    // The dormant Gemini pool neither holds the total's forecast nor shows a live balance.
+    expect(combined?.all?.series?.forecastState).toBe('collecting');
+    expect(combined?.antigravity?.series?.remainingPoints).toBeNull();
+    expect(combined?.all?.layers?.map((layer) => layer.provider)).toEqual([
+      'claude',
+      'antigravity',
+    ]);
+  });
+
   test('a reading without the Gemini group records explicit missing windows, not zero', () => {
     const { samples } = quotaSamples(
       'antigravity',

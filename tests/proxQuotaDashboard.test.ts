@@ -756,6 +756,68 @@ describe('stacked chart geometry', () => {
     expect(markup).not.toContain('· Recorded');
     expect(markup).not.toContain('data-series="total"');
   });
+  test('a history-only layer draws its history but no forecast over the live layers', async () => {
+    await i18n.changeLanguage('en');
+    const live = {
+      ...pool,
+      provider: 'claude' as const,
+      recorded: [point(100, 70), point(500, 60)],
+      projected: [point(500, 60), point(900, 40)],
+    };
+    // The retired Gemini source: history, then zeros on the live forecast's events.
+    const dormant = {
+      ...pool,
+      provider: 'antigravity' as const,
+      historyOnly: true as const,
+      recorded: [point(100, 30), point(500, 0)],
+      projected: [point(500, 0), point(900, 0)],
+    };
+    const total = {
+      ...pool,
+      capacityPoints: 400,
+      recorded: [point(100, 100), point(500, 60)],
+      projected: [point(500, 60), point(900, 40)],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(PoolComparisonChart, {
+        pools: [live, dormant],
+        stackedTotal: total,
+        dashboard,
+        mode: 'remaining',
+      })
+    );
+    expect(markup.match(/data-stack-band="recorded"/g) ?? []).toHaveLength(2);
+    expect(markup.match(/data-stack-band="projected"/g) ?? []).toHaveLength(1);
+    const gemini = markup.slice(markup.indexOf('data-series="antigravity"'));
+    expect(gemini.slice(0, gemini.indexOf('</g></g>') + 8)).not.toContain('stroke-dasharray');
+  });
+  test('a selected forecast moment reads only the live layers, never a history-only one', async () => {
+    await i18n.changeLanguage('en');
+    // No recorded points: the chart selects the first forecast moment.
+    const live = { ...pool, provider: 'claude' as const, recorded: [], projected: [point(500, 60)] };
+    const dormant = {
+      ...pool,
+      provider: 'antigravity' as const,
+      historyOnly: true as const,
+      recorded: [],
+      projected: [point(500, 0)],
+    };
+    const total = { ...pool, capacityPoints: 400, recorded: [], projected: [point(500, 60)] };
+    const markup = renderToStaticMarkup(
+      createElement(PoolComparisonChart, {
+        pools: [live, dormant],
+        stackedTotal: total,
+        dashboard,
+        mode: 'remaining',
+      })
+    );
+    const readout = markup.slice(markup.indexOf('aria-live'));
+    expect(readout).toContain('Claude');
+    expect(readout).toContain('60\u00a0points');
+    expect(readout).not.toContain('Gemini');
+    // One selection marker: the live layer's.
+    expect(markup.match(/r="5"/g) ?? []).toHaveLength(1);
+  });
   test('long rosters get search, sort and a low count; short ones stay plain', async () => {
     await i18n.changeLanguage('en');
     const account = pool.accounts[0];

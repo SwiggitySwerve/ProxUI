@@ -135,7 +135,13 @@ export type PoolTrace = Pick<
   | 'poolEmptyAtMs'
 >;
 export type PoolLayer = PoolTrace &
-  Pick<QuotaPool, 'provider' | 'instanceId' | 'sourceLabel' | 'displayName'>;
+  Pick<QuotaPool, 'provider' | 'instanceId' | 'sourceLabel' | 'displayName'> & {
+    /**
+     * Every account is disabled: the layer has history only. Its projection is zeros that keep
+     * the stack aligned and is never drawn.
+     */
+    historyOnly?: true;
+  };
 export interface CombinedPoolResult {
   /** Provider contributions on the same history/event timeline; contains no account metadata. */
   layers?: PoolLayer[];
