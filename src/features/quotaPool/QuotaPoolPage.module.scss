@@ -5388,8 +5388,9 @@ $table-tiers: (
     grid-template-columns: minmax(260px, 0.75fr) minmax(480px, 1.6fr);
   }
 }
-// Forecast reads as three cells where the loaded card does: 601–619px stacked headers and from 900px.
-@container loadingCard (min-width: 601px) and (max-width: 619px) {
+// Forecast reads as three cells where the loaded card does: between its phone rows (600px and under)
+// and its side-by-side rows (620–899px), and from 900px. Ranges match fractional widths too.
+@container loadingCard ((width > 600px) and (width < 620px)) or (width >= 900px) {
   .page .loading > .loadingStats > .loadingCard:last-child {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
@@ -5402,24 +5403,6 @@ $table-tiers: (
       gap: 8px;
       min-height: 89px;
       padding: 12px 13px;
-    }
-  }
-}
-@container loadingCard (min-width: 900px) {
-  .page .loading > .loadingStats {
-    > .loadingCard:last-child {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      > .loadingCardTitle {
-        grid-column: 1 / -1;
-      }
-      > .loadingFact {
-        display: grid;
-        align-content: start;
-        gap: 8px;
-        min-height: 89px;
-        padding: 12px 13px;
-      }
     }
   }
 }
