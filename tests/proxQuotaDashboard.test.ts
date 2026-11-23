@@ -791,6 +791,33 @@ describe('stacked chart geometry', () => {
     const gemini = markup.slice(markup.indexOf('data-series="antigravity"'));
     expect(gemini.slice(0, gemini.indexOf('</g></g>') + 8)).not.toContain('stroke-dasharray');
   });
+  test('a selected forecast moment reads only the live layers, never a history-only one', async () => {
+    await i18n.changeLanguage('en');
+    // No recorded points: the chart selects the first forecast moment.
+    const live = { ...pool, provider: 'claude' as const, recorded: [], projected: [point(500, 60)] };
+    const dormant = {
+      ...pool,
+      provider: 'antigravity' as const,
+      historyOnly: true as const,
+      recorded: [],
+      projected: [point(500, 0)],
+    };
+    const total = { ...pool, capacityPoints: 400, recorded: [], projected: [point(500, 60)] };
+    const markup = renderToStaticMarkup(
+      createElement(PoolComparisonChart, {
+        pools: [live, dormant],
+        stackedTotal: total,
+        dashboard,
+        mode: 'remaining',
+      })
+    );
+    const readout = markup.slice(markup.indexOf('aria-live'));
+    expect(readout).toContain('Claude');
+    expect(readout).toContain('60\u00a0points');
+    expect(readout).not.toContain('Gemini');
+    // One selection marker: the live layer's.
+    expect(markup.match(/r="5"/g) ?? []).toHaveLength(1);
+  });
   test('long rosters get search, sort and a low count; short ones stay plain', async () => {
     await i18n.changeLanguage('en');
     const account = pool.accounts[0];

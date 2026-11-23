@@ -129,8 +129,11 @@ function PoolChartView({
       band: stacked?.[index],
     };
   });
+  // A history-only layer's forecast zeros only align the stack: nothing to inspect or mark.
   const samples = series.flatMap(({ pool, samples }) =>
-    samples.map((sample) => ({ ...sample, pool }))
+    samples
+      .filter((sample) => !(pool.historyOnly && sample.projected))
+      .map((sample) => ({ ...sample, pool }))
   );
   // Order inspection by time without joining or resampling separate source traces.
   if (comparison) samples.sort((a, b) => a.point.atMs - b.point.atMs);
