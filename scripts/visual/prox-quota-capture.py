@@ -3840,7 +3840,8 @@ W_HEADLINE_JS = "() => {" + C1_PRELUDE + r"""
     const strong = headline.querySelector(':scope > strong'), word = strong.querySelector('[class*="__unavailableValue___"]');
     const probe = document.createElement('span');
     probe.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline';
-    (word || strong).append(probe);
+    // The unit shares the number's baseline; a probe appended to a flex <strong> would be a flex item of its own.
+    (word || strong.querySelector(':scope > small') || strong).append(probe);
     const baseline = probe.getBoundingClientRect().bottom - headline.getBoundingClientRect().top;
     probe.remove();
     const context = headline.querySelector(':scope > [class*="__headlineContext___"]'), sr = (word || strong).getBoundingClientRect();

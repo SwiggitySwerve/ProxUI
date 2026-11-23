@@ -5348,3 +5348,15 @@ $table-tiers: (
     padding: 12px 13px;
   }
 }
+
+// "of 12,000 points" stays one phrase: when it can't fit beside the number it moves under it whole,
+// never leaving "points" alone on a line (G12c).
+.pool .poolHeader .leadCard > .headline strong:has(> small) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 5px;
+  > small {
+    white-space: nowrap;
+  }
+}
