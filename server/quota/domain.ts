@@ -277,13 +277,17 @@ function accountHistories(
   return { scale, recorded, rates, histories };
 }
 
+function lastReadingAt(history: readonly QuotaSample[]): number {
+  return history.length ? history[history.length - 1].observedAtMs : -Infinity;
+}
+
 function recordedHistory(
   active: StoredAccount[],
   samples: QuotaSample[],
   options: DashboardOptions,
   fromMs: number,
   toMs: number,
-  { recorded, rates }: ReturnType<typeof accountHistories>,
+  { recorded, rates, histories }: ReturnType<typeof accountHistories>,
   sharedTimes?: readonly number[]
 ): PoolPoint[] {
   const { nowMs } = options;
@@ -310,10 +314,14 @@ function recordedHistory(
     const held = index > 0 && at - times[index - 1] > STALE_MS;
     const time = held ? times[index - 1] : at;
     // An account joins the pool at its first stored sample. Before that it was not a member,
-    // so adding an account does not turn the pool's earlier history unknown.
+    // so adding an account does not turn the pool's earlier history unknown. A disabled account
+    // keeps what it recorded and leaves at its last reading, so disabling it (or retiring its
+    // whole source) never erases the pool's past.
     const members = active.filter(
       (a) =>
-        a.firstSampleAtMs === undefined || (a.firstSampleAtMs !== null && a.firstSampleAtMs <= time)
+        (a.firstSampleAtMs === undefined ||
+          (a.firstSampleAtMs !== null && a.firstSampleAtMs <= time)) &&
+        (!a.disabled || time <= lastReadingAt(histories.get(a.id)!))
     );
     const snapshots = members.map((a) => recorded(a.id, time));
     const historicalRates = members.map((a) => rates(a.id, time));
@@ -498,7 +506,14 @@ function buildPool(
     forecastState === 'ready'
       ? projectPool(forecastInputs, nowMs, Math.max(toMs, nowMs + 14 * DAY_MS))
       : { points: [], resets: [], firstEmptyAtMs: null, poolEmptyAtMs: null };
-  const recorded = recordedHistory(active, samples, options, fromMs, toMs, pointHistories);
+  const recorded = recordedHistory(
+    accounts.filter((a) => !unlimited.has(a.id)),
+    samples,
+    options,
+    fromMs,
+    toMs,
+    pointHistories
+  );
   const nextResetAtMs = loaded.reduce<number | null>(
     (earliest, a) =>
       a.resetAtMs !== null && a.resetAtMs > nowMs
@@ -658,7 +673,6 @@ export function buildDashboard(
     const active = accounts.filter(
       (account) =>
         !account.retired &&
-        !account.disabled &&
         !unlimited.has(account.id) &&
         selected.some(
           (pool) => pool.provider === account.provider && pool.instanceId === account.instanceId

@@ -456,6 +456,47 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     expect(gemini.recorded.at(-1)?.remainingPoints).toBeCloseTo(450, 6);
   });
 
+  test('a disabled account keeps the history it recorded, and leaves the pool after it', async () => {
+    const f = fixture();
+    await f.collector.refresh();
+    // The suspended Gemini credential was disabled before its source was removed.
+    const accounts = f.store
+      .listAccounts()
+      .map((account) =>
+        account.provider === 'antigravity' ? { ...account, disabled: true } : account
+      );
+    const at = (nowMs: number) =>
+      buildDashboard(
+        accounts,
+        f.store.listSamples(0, NOW),
+        {
+          nowMs,
+          window: 'weekly',
+          lookbackHours: 3,
+          multiplier: 1,
+          offsetDays: 0,
+          reveal: false,
+        },
+        {
+          historyStartedAtMs: NOW,
+          lastRefreshAtMs: NOW,
+          nextRefreshAtMs: NOW,
+          refreshing: false,
+          issues: [],
+          sources: f.collector.sources,
+        }
+      ).pools.find((pool) => pool.provider === 'antigravity')!;
+    const gemini = at(NOW);
+    expect(gemini.accounts[0].status).toBe('disabled');
+    expect(gemini.eligibleCount).toBe(0);
+    expect(gemini.recorded.find((point) => point.atMs === NOW)?.remainingPoints).toBeCloseTo(
+      450,
+      6
+    );
+    // Its last reading stays the last point; nothing is drawn for it afterwards.
+    expect(at(NOW + DAY_MS).recorded.at(-1)).toMatchObject({ atMs: NOW });
+  });
+
   test('a reading without the Gemini group records explicit missing windows, not zero', () => {
     const { samples } = quotaSamples(
       'antigravity',
