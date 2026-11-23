@@ -315,6 +315,32 @@ describe('plan change signal', () => {
   });
 });
 
+describe('disabled accounts in history', () => {
+  test("a disabled account's final reading keeps its own point when another reads right after", () => {
+    const reading = (accountId: string, atMs: number, remainingPercent: number): QuotaSample => ({
+      accountId,
+      window: 'weekly',
+      observedAtMs: atMs,
+      remainingPercent,
+      resetAtMs: now + 24 * HOUR_MS,
+      periodHours: 168,
+    });
+    const final = now - 3_000;
+    const pool = dashboard(
+      [{ ...account('off', 'claude'), disabled: true }, account('on', 'claude')],
+      [
+        reading('off', final - 300_000, 85),
+        reading('on', final - 299_000, 75),
+        reading('off', final, 80),
+        reading('on', final + 1_000, 70),
+      ]
+    ).pools.find((p) => p.provider === 'claude')!;
+    // At the final reading both count; a second later only the account still in the pool.
+    expect(pool.recorded.find((point) => point.atMs === final)?.remainingPoints).toBe(80 + 75);
+    expect(pool.recorded.find((point) => point.atMs === final + 1_000)?.remainingPoints).toBe(70);
+  });
+});
+
 describe('plan persistence', () => {
   const stores: QuotaStore[] = [];
   afterEach(() => stores.splice(0).forEach((s) => s.close()));

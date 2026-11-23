@@ -497,6 +497,49 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     expect(at(NOW + DAY_MS).recorded.at(-1)).toMatchObject({ atMs: NOW });
   });
 
+  test('the combined chart keeps a retired, disabled Gemini account\'s history', async () => {
+    const f = fixture();
+    await f.collector.refresh();
+    const accounts = f.store
+      .listAccounts()
+      .map((account) =>
+        account.provider === 'antigravity' ? { ...account, disabled: true } : account
+      );
+    const combined = buildDashboard(
+      accounts,
+      f.store.listSamples(0, NOW),
+      {
+        nowMs: NOW,
+        window: 'weekly',
+        lookbackHours: 3,
+        multiplier: 1,
+        offsetDays: 0,
+        reveal: false,
+      },
+      {
+        historyStartedAtMs: NOW,
+        lastRefreshAtMs: NOW,
+        nextRefreshAtMs: NOW,
+        refreshing: false,
+        issues: [],
+        sources: f.collector.sources.filter((source) => source.instanceId !== 'gemini-src'),
+      }
+    ).combined;
+    const last = (
+      series: { recorded: { atMs: number; remainingPoints: number | null }[] } | null | undefined
+    ) => series?.recorded.find((point) => point.atMs === NOW)?.remainingPoints;
+    // Claude reads 80 of 100 points; Gemini's last reading is 450 of its 500.
+    expect(last(combined?.all?.series)).toBeCloseTo(80 + 450, 6);
+    expect(last(combined?.antigravity?.series)).toBeCloseTo(450, 6);
+    // The dormant Gemini pool neither holds the total's forecast nor shows a live balance.
+    expect(combined?.all?.series?.forecastState).toBe('collecting');
+    expect(combined?.antigravity?.series?.remainingPoints).toBeNull();
+    expect(combined?.all?.layers?.map((layer) => layer.provider)).toEqual([
+      'claude',
+      'antigravity',
+    ]);
+  });
+
   test('a reading without the Gemini group records explicit missing windows, not zero', () => {
     const { samples } = quotaSamples(
       'antigravity',

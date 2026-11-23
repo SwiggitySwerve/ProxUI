@@ -302,7 +302,15 @@ function recordedHistory(
     const bucket = Math.floor(sample.observedAtMs / REFRESH_INTERVAL_MS);
     bucketTimes.set(bucket, Math.max(bucketTimes.get(bucket) ?? 0, sample.observedAtMs));
   }
-  const times = sharedTimes ? [...sharedTimes] : [...bucketTimes.values()].sort((a, b) => a - b);
+  // A disabled account's final reading is a point of its own: it leaves the pool right after it,
+  // so a later reading in the same bucket must not stand in for it.
+  const finalReadings = active
+    .filter((a) => a.disabled)
+    .map((a) => lastReadingAt(histories.get(a.id)!))
+    .filter((atMs) => atMs >= fromMs && atMs <= Math.min(nowMs, toMs));
+  const times = sharedTimes
+    ? [...sharedTimes]
+    : [...new Set([...bucketTimes.values(), ...finalReadings])].sort((a, b) => a - b);
   // No reports at all is drawn as the last balance held flat until the next report: the point
   // 1 ms before that report repeats the previous point, and it is the only one that follows a gap.
   if (!sharedTimes) {
