@@ -19,6 +19,7 @@ import { MAX_AUTH_FILE_SIZE } from '@/utils/constants';
 import { downloadBlob } from '@/utils/download';
 import {
   isRuntimeOnlyAuthFile,
+  summarizeAuthFileStatusMessage,
   supportsAuthFileManualRefresh,
 } from '@/features/authFiles/constants';
 
@@ -500,7 +501,12 @@ export function useAuthFilesData(options?: UseAuthFilesDataOptions): UseAuthFile
         if (!sourceScope.isCurrent()) return;
         if (connectionRevision !== sourceScope.getRevision()) return;
         const message = err instanceof Error ? err.message : t('notification.update_failed');
-        showNotification(t('auth_files.manual_refresh_failed', { name, message }), 'error');
+        showNotification(
+          summarizeAuthFileStatusMessage(message).kind === 'signin_expired'
+            ? t('auth_files.manual_refresh_signin_expired', { name })
+            : t('auth_files.manual_refresh_failed', { name, message }),
+          'error'
+        );
       } finally {
         manualRefreshPendingRef.current.delete(key);
         setManualRefreshing((prev) => {

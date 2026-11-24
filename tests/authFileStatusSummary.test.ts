@@ -46,6 +46,35 @@ describe('auth file status summary', () => {
     expect(summarizeAuthFileStatusMessage(raw)).toEqual({ kind: 'rate_limit', resetsAt: null });
   });
 
+  test('reads a refresh token the provider rejected as a sign-in to redo', () => {
+    // The hub's status once the refresh token is rejected (conductor_refresh.go).
+    expect(summarizeAuthFileStatusMessage('unauthorized (refresh token invalid)')).toEqual({
+      kind: 'signin_expired',
+    });
+    // A manual refresh's error carries Anthropic's own answer.
+    expect(
+      summarizeAuthFileStatusMessage(
+        'token refresh failed after 3 attempts: token refresh failed with status 400: {"error": "invalid_grant", "error_description": "Refresh token expired"}'
+      )
+    ).toEqual({ kind: 'signin_expired' });
+    expect(summarizeAuthFileStatusMessage('{"error":"invalid_grant"}')).toEqual({
+      kind: 'signin_expired',
+    });
+    expect(
+      authFileStatusWarning(
+        {
+          name: 'claude-a.json',
+          type: 'claude',
+          statusMessage: 'unauthorized (refresh token invalid)',
+        },
+        0
+      )
+    ).toEqual({ kind: 'signin_expired' });
+    expect(i18n.getFixedT('en')('auth_files.status_signin_expired')).toBe(
+      'Sign-in expired · sign in to this account again from OAuth Login'
+    );
+  });
+
   test('falls back to the inner message, then to the original text', () => {
     expect(
       summarizeAuthFileStatusMessage(

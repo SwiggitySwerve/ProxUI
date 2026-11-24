@@ -3069,8 +3069,9 @@ $table-tiers: (
         }
       }
     }
-    // The block says an unavailable window; the status line doesn't repeat it.
-    &[data-status='error'] .accountStatus,
+    // The block says an unavailable window; the status line doesn't repeat it. An expired sign-in
+    // keeps its line: the block can't say why.
+    &[data-status='error']:not([data-signin-expired]) .accountStatus,
     &[data-status='missing-window'] .accountStatus {
       display: none;
     }
@@ -3363,7 +3364,7 @@ $table-tiers: (
   }
   // The cell already says which limit is unavailable; the line under the name would say it twice.
   .pool .account[data-unavailable-cell] {
-    &[data-status='error'],
+    &[data-status='error']:not([data-signin-expired]),
     &[data-status='missing-window'] {
       > summary > .accountStatus {
         display: none;

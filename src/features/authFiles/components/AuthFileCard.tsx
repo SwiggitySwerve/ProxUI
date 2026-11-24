@@ -118,6 +118,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const rawStatusMessage = getAuthFileStatusMessage(file);
   const describeStatus = (summary: AuthFileStatusSummary): string => {
     if (summary.kind === 'message') return summary.text;
+    if (summary.kind === 'signin_expired') return t('auth_files.status_signin_expired');
     if (summary.kind === 'rate_limit') {
       return summary.resetsAt
         ? t('auth_files.status_rate_limited_until', {
