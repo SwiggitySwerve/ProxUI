@@ -12,6 +12,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
 import {
   IconAlertTriangle,
   IconArrowDown,
@@ -35,6 +36,9 @@ import { profileWindowId } from '@/domain/quotaWindows/normalized';
 import { isBuiltInPoolProvider } from '@/domain/quotaPool/providers';
 import { heldResetKinds, wasSpent, type ResetKindCount } from './resetAccounts';
 import { PoolAccountResets, ResetKindCounts } from './PoolAccountResets';
+import { useProviderSources } from '@/stores/useProviderSources';
+import { useCredentialInventoryStore, useSourceFiles } from '@/stores/useCredentialInventoryStore';
+import { signInExpired } from './model/signInExpired';
 import { PoolChart } from './PoolChart';
 import { PoolGraph } from './PoolGraph';
 import { PoolGraphToggle } from './PoolGraphToggle';
@@ -290,6 +294,20 @@ export function PoolCard({
     (account) => account.status === 'error' || account.status === 'missing-window'
   );
   const staleAccounts = pool.accounts.filter((account) => account.status === 'stale');
+  // An unreadable account may have lost its sign-in; the hub's credential list says so. It is
+  // read only when a row needs it.
+  const registry = useProviderSources();
+  const sourceView = registry.sources.find((view) => view.source.instanceId === pool.instanceId);
+  const sourceOwner =
+    sourceView?.status === 'ready' && pool.accounts.some((account) => account.status === 'error')
+      ? sourceView.session?.owner
+      : undefined;
+  const sourceFiles = useSourceFiles(sourceOwner);
+  useEffect(() => {
+    if (sourceOwner) void useCredentialInventoryStore.getState().ensureLoaded(sourceOwner);
+  }, [sourceOwner]);
+  const needsSignIn = (account: (typeof pool.accounts)[number]) =>
+    signInExpired(sourceFiles, pool.instanceId, pool.provider, account);
   // The accounts holding the total back. The notice counts them and its action shows them in
   // the list, instead of naming masked addresses that wrap badly.
   const affectedAccounts =
@@ -1029,6 +1047,23 @@ export function PoolCard({
                       </>
                     ) : account.status === 'no-limit' ? (
                       noLimitLabel
+                    ) : needsSignIn(account) ? (
+                      // What happened and how old the figures are; the open row says what to do.
+                      <>
+                        <span className={styles.staleWord}>
+                          <IconAlertTriangle
+                            className={styles.staleIcon}
+                            size={14}
+                            aria-hidden="true"
+                          />
+                          {t('quota_pool.signin_expired')}
+                        </span>{' '}
+                        <span className={styles.staleSince}>
+                          <span className={styles.staleDot}>· </span>
+                          {t('quota_pool.observed')}{' '}
+                          <span className={styles.nowrap}>{date(account.observedAtMs)}</span>
+                        </span>
+                      </>
                     ) : account.status === 'missing-window' || account.status === 'error' ? (
                       t('quota_pool.window_unavailable', { window: windowLabel })
                     ) : (
@@ -1145,6 +1180,14 @@ export function PoolCard({
                   )}
                 </summary>
                 <div className={styles.accountFacts}>
+                  {needsSignIn(account) && (
+                    <p className={styles.stateNote} data-state="stale" role="status">
+                      {t('quota_pool.signin_expired_detail')}
+                      <Link className={styles.noteAction} to="/oauth">
+                        {t('quota_pool.signin_again')}
+                      </Link>
+                    </p>
+                  )}
                   {/* The page lays out its own sections as three cards: Usage (with the burn rate
                       in its title strip), Billing and Manual resets, the one accent card (G12). */}
                   <div className={styles.factsLayout}>

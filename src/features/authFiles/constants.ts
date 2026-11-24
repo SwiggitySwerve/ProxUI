@@ -127,10 +127,17 @@ export const getAuthFileStatusMessage = (file: AuthFileItem): string => {
 export type AuthFileStatusSummary =
   | { kind: 'usage_limit'; window: 'weekly' | 'five_hour' | null; resetsAt: number | null }
   | { kind: 'rate_limit'; resetsAt: number | null }
+  /** The provider no longer accepts the refresh token: only signing in again fixes it. */
+  | { kind: 'signin_expired' }
   | { kind: 'message'; text: string };
+
+// The hub's status for a rejected refresh token (ProxD conductor_refresh.go) and the provider's
+// own answer, e.g. Anthropic's {"error": "invalid_grant", "error_description": "Refresh token expired"}.
+const SIGNIN_EXPIRED = /refresh token (invalid|expired)|invalid_grant/i;
 
 /** Upstream errors arrive as raw JSON; reduce them to what the card should say. */
 export const summarizeAuthFileStatusMessage = (raw: string): AuthFileStatusSummary => {
+  if (SIGNIN_EXPIRED.test(raw)) return { kind: 'signin_expired' };
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -184,7 +191,8 @@ export const authFileStatusWarning = (
 ): AuthFileStatusSummary | null => {
   if (!hasAuthFileStatusWarning(file)) return null;
   const summary = summarizeAuthFileStatusMessage(getAuthFileStatusMessage(file));
-  if (summary.kind === 'message' || summary.resetsAt !== null) return summary;
+  if (summary.kind === 'message' || summary.kind === 'signin_expired' || summary.resetsAt !== null)
+    return summary;
   const retryAt = Date.parse(file.nextRetryAfter ?? '');
   return Number.isFinite(retryAt) && retryAt > now ? { ...summary, resetsAt: retryAt } : summary;
 };
