@@ -2746,6 +2746,7 @@
     "window_remaining": "{{window}} quota remaining",
     "history_forecast": "History and forecast",
     "forecast_status": "Forecast {{state}}",
+    "history_only": "History only",
     "limit_note": "Balances are reported by the provider. Model-specific limits and request availability may differ.",
     "runtime_source": "Management source",
     "runtime_scope": "This page uses the {{provider}} runtime. Pooled quotas combine both providers.",
@@ -2848,6 +2849,7 @@
     "normalized_intro": "Accounts are weighted by plan, not tokens. One base plan is 100 points:",
     "value_unavailable": "Unavailable",
     "value_withheld": "Withheld",
+    "value_retired": "Not collected",
     "value_not_summed": "Not summed",
     "no_reading_at": "No reading at {{date}}",
     "no_complete_reading_at": "No complete reading at {{date}}",
@@ -2895,7 +2897,8 @@
       "partial": "Total and forecast unavailable: some eligible accounts have no current quota data.",
       "stale": "Total and forecast unavailable until stale observations are refreshed.",
       "no-accounts": "No accounts are available for this provider. Add credentials in the account view.",
-      "no-limit": "These accounts have no {{window}} limit, so there is nothing to total here."
+      "no-limit": "These accounts have no {{window}} limit, so there is nothing to total here.",
+      "retired": "No longer collected: this source was retired. Its recorded history stays on the chart."
     },
     "account_status": {
       "ok": "Up to date",

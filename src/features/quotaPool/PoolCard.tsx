@@ -22,6 +22,7 @@ import {
   IconCircleHalf,
   IconClock,
   IconHistory,
+  IconInbox,
   IconInfo,
   IconTimer,
   IconX,
@@ -64,6 +65,7 @@ const CHIP_ICONS: Record<PoolChipIcon, typeof IconCheck> = {
   saved: IconHistory,
   collecting: IconTimer,
   info: IconInfo,
+  retired: IconInbox,
 };
 
 /** What is held, by kind, in the language's own word order: "1 weekly · 2 Fable held" (G11). */
@@ -296,6 +298,9 @@ export function PoolCard({
     (account) => account.status === 'error' || account.status === 'missing-window'
   );
   const staleAccounts = pool.accounts.filter((account) => account.status === 'stale');
+  // Every account disabled: the source is retired (ProxUI #129) and the card shows history only, as the
+  // Combined chart's historyOnly layer does. Nothing is missing, so it has no warning, total or forecast.
+  const retired = pool.accounts.length > 0 && pool.accounts.every((account) => account.disabled);
   // An unreadable account may have lost its sign-in; the hub's credential list says so. It is
   // read only when a row needs it.
   const registry = useProviderSources();
@@ -329,7 +334,9 @@ export function PoolCard({
   const affectedIds = new Set(affectedAccounts.map((account) => account.id));
   // A total with estimated accounts is still shown; the note says so instead of "withheld".
   const estimated = pool.remainingPoints !== null ? (pool.estimatedCount ?? 0) : 0;
-  const stateNote = unmapped
+  const stateNote = retired
+    ? t('quota_pool.state_note.retired')
+    : unmapped
     ? noLimitLabel
     : estimated > 0
       ? t('quota_pool.estimated_count', { count: estimated, total: pool.accountCount })
@@ -502,9 +509,10 @@ export function PoolCard({
     pool.loadedCount !== pool.accountCount || pool.eligibleCount !== pool.accountCount;
   // Accounts without a 5-hour limit are not missing: with all the rest reporting there is no coverage fact.
   const showCoverage =
+    !retired &&
     coverageMissing &&
     !(staleAccounts.length === 0 && noLimitCount > 0 && pool.loadedCount >= pool.eligibleCount);
-  const chip = poolChip(pool.forecastState, savedData);
+  const chip = poolChip(pool.forecastState, savedData, retired);
   const ChipIcon = CHIP_ICONS[chip.icon];
   const headlineContext = (
     <div className={styles.headlineContext}>
@@ -533,35 +541,40 @@ export function PoolCard({
           controls={`${id}-plot`}
         />
       )}
-      {/* A move that can't happen (first or last card) isn't drawn. */}
-      {move?.up && (
-        <button
-          type="button"
-          onClick={move.up}
-          aria-label={t('quota_pool.move_up', { pool: providerLabel })}
-          title={t('quota_pool.move_up', { pool: providerLabel })}
-        >
-          <IconArrowUp size={16} aria-hidden="true" />
-          {t('quota_pool.move_up_short')}
-        </button>
-      )}
-      {move?.down && (
-        <button
-          type="button"
-          onClick={move.down}
-          aria-label={t('quota_pool.move_down', { pool: providerLabel })}
-          title={t('quota_pool.move_down', { pool: providerLabel })}
-        >
-          <IconArrowDown size={16} aria-hidden="true" />
-          {t('quota_pool.move_down_short')}
-        </button>
+      {/* A move that can't happen (first or last card) isn't drawn. The pair stays together: a middle card's
+          three pills don't fit one phone row, so the pair takes the next row whole (g13). */}
+      {(move?.up || move?.down) && (
+        <span className={styles.moveGroup}>
+          {move?.up && (
+            <button
+              type="button"
+              onClick={move.up}
+              aria-label={t('quota_pool.move_up', { pool: providerLabel })}
+              title={t('quota_pool.move_up', { pool: providerLabel })}
+            >
+              <IconArrowUp size={16} aria-hidden="true" />
+              {t('quota_pool.move_up_short')}
+            </button>
+          )}
+          {move?.down && (
+            <button
+              type="button"
+              onClick={move.down}
+              aria-label={t('quota_pool.move_down', { pool: providerLabel })}
+              title={t('quota_pool.move_down', { pool: providerLabel })}
+            >
+              <IconArrowDown size={16} aria-hidden="true" />
+              {t('quota_pool.move_down_short')}
+            </button>
+          )}
+        </span>
       )}
     </span>
   );
   // Why the forecast or total is limited, across the card under its summary. On phones it sits in the
   // header after the facts, so the action pills that follow it stay right above the chart (G11).
   const stateBanner = pool.forecastState !== 'ready' && (
-    <p className={styles.stateNote} role="status" data-state={pool.forecastState}>
+    <p className={styles.stateNote} role="status" data-state={retired ? 'retired' : pool.forecastState}>
       {/* The page's one "Refresh now" sits in the combined card's notice above. */}
       <span>{stateNote}</span>
       {affectedAccounts.length > 0 && (
@@ -615,6 +628,8 @@ export function PoolCard({
                 <ChipIcon size={13} aria-hidden="true" />
                 {savedData
                   ? t('quota_pool.saved_forecast')
+                  : retired
+                  ? t('quota_pool.history_only')
                   : t('quota_pool.forecast_status', {
                       state: t(`quota_pool.state.${pool.forecastState}`).toLocaleLowerCase(
                         i18n.language
@@ -645,7 +660,9 @@ export function PoolCard({
                   <span className={styles.unavailableValue}>{noLimitLabel}</span>
                 ) : pool[metricField[mode]] === null ? (
                   // A muted word in the number slot, so a withheld total never passes for a value.
-                  <span className={styles.unavailableValue}>{t('quota_pool.value_withheld')}</span>
+                  <span className={styles.unavailableValue}>
+                    {t(retired ? 'quota_pool.value_retired' : 'quota_pool.value_withheld')}
+                  </span>
                 ) : (
                   <>
                     {number(pool[metricField[mode]])}
@@ -695,6 +712,7 @@ export function PoolCard({
             </div>
           )}
           </div>
+          {!retired && (
           <div className={styles.statsGroup} data-group="forecast">
             {/* The 5-hour view names its window once, over every forecast fact (G11); weekly is the default. */}
             <p className={styles.statsHeading}>
@@ -725,6 +743,7 @@ export function PoolCard({
               </div>
             </dl>
           </div>
+          )}
         </div>
         {phone && stateBanner}
         {phone && reorder}

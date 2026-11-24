@@ -2744,6 +2744,7 @@
     "window_remaining": "{{window}}剩余额度",
     "history_forecast": "历史与预测",
     "forecast_status": "预测{{state}}",
+    "history_only": "History only",
     "limit_note": "余额由提供商报告。特定模型的限制和请求可用性可能有所不同。",
     "runtime_source": "管理来源",
     "runtime_scope": "此页面使用 {{provider}} 实例。汇总额度包含两个提供商。",
@@ -2846,6 +2847,7 @@
     "normalized_intro": "账户按套餐而非令牌加权。一个基础套餐为 100 点：",
     "value_unavailable": "不可用",
     "value_withheld": "暂不显示",
+    "value_retired": "Not collected",
     "value_not_summed": "未合计",
     "no_reading_at": "{{date}} 无读数",
     "no_complete_reading_at": "{{date}} 无完整读数",
@@ -2893,7 +2895,8 @@
       "partial": "总量和预测不可用：部分符合条件的账户没有当前配额数据。",
       "stale": "请刷新过期观测后查看总量和预测。",
       "no-accounts": "此服务商没有可用账号。请在账号视图中添加凭据。",
-      "no-limit": "这些账号没有{{window}}限额，因此这里没有可汇总的额度。"
+      "no-limit": "这些账号没有{{window}}限额，因此这里没有可汇总的额度。",
+      "retired": "No longer collected: this source was retired. Its recorded history stays on the chart."
     },
     "account_status": {
       "ok": "最新",

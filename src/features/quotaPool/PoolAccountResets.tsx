@@ -141,8 +141,15 @@ function ResetFact({
   // A disabled button with a stated reason never sits beside "Usable now": the reason says why it
   // can't be used from here, and the row's Manual resets cell still counts what is usable (G10).
   const blockedHere = disabled && !!reason && !spent && resets.usable > 0;
+  // An enabled button already says every held reset is usable; "Usable now" under it read as a label
+  // missing its value. A partial count ("1 usable now") still says something the button doesn't.
+  const buttonSaysIt = !disabled && status.statusKey === 'quota_pool.reset_usable';
   const aside = [
-    !live && !blockedHere && status.statusKey && t(status.statusKey, { usable: resets.usable }),
+    !live &&
+      !blockedHere &&
+      !buttonSaysIt &&
+      status.statusKey &&
+      t(status.statusKey, { usable: resets.usable }),
     !spent && reason,
   ]
     .filter(Boolean)
@@ -159,7 +166,7 @@ function ResetFact({
               disabled,
               onClick: onClick ?? (() => {}),
             },
-            note: aside || t('quota_pool.reset_unavailable'),
+            note: aside || (buttonSaysIt ? undefined : t('quota_pool.reset_unavailable')),
           }
         : { action: undefined })}
     >
@@ -208,13 +215,16 @@ function LastResetUsed({
   const kind = ['session', 'weekly', 'fable', 'full'].includes(event.kind)
     ? t(`claude_reset.kind_${event.kind}`)
     : t('quota_pool.reset_last_used_generic');
+  // The date is the value and the kind (with any outcome) the line under it, so a phone keeps the label
+  // on one line instead of giving the whole row to "Weekly reset · Nov 21, 10:47 AM UTC".
   return (
     <Fact
       label={t('quota_pool.reset_last_used_label')}
       state="known"
-      value={
+      value={formatPoolDate(event.requestedAtMs, i18n.language)}
+      aside={
         <span data-reset-outcome={event.outcome}>
-          {kind} · {formatPoolDate(event.requestedAtMs, i18n.language)}
+          {kind}
           {UNSETTLED.has(event.outcome)
             ? ` · ${t('quota_pool.reset_last_unknown')}`
             : !APPLIED.has(event.outcome) &&

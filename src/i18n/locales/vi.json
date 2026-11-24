@@ -2752,6 +2752,7 @@
     "window_remaining": "Hạn mức còn lại: {{window}}",
     "history_forecast": "Lịch sử và dự báo",
     "forecast_status": "Dự báo {{state}}",
+    "history_only": "History only",
     "limit_note": "Số dư do nhà cung cấp báo cáo. Giới hạn từng mô hình và khả năng xử lý yêu cầu có thể khác nhau.",
     "runtime_source": "Nguồn quản lý",
     "runtime_scope": "Trang này sử dụng môi trường {{provider}}. Hạn mức tổng hợp bao gồm cả hai nhà cung cấp.",
@@ -2854,6 +2855,7 @@
     "normalized_intro": "Tài khoản được tính theo gói, không theo token. Một gói cơ bản là 100 điểm:",
     "value_unavailable": "Không khả dụng",
     "value_withheld": "Bị giữ lại",
+    "value_retired": "Not collected",
     "value_not_summed": "Không cộng gộp",
     "no_reading_at": "Không có số đo lúc {{date}}",
     "no_complete_reading_at": "Không có số đo đầy đủ lúc {{date}}",
@@ -2901,7 +2903,8 @@
       "partial": "Không có tổng và dự báo: một số tài khoản đủ điều kiện thiếu dữ liệu hạn mức hiện tại.",
       "stale": "Tổng và dự báo chưa khả dụng cho đến khi các quan sát cũ được làm mới.",
       "no-accounts": "Nhà cung cấp này chưa có tài khoản. Thêm thông tin xác thực trong phần tài khoản.",
-      "no-limit": "Các tài khoản này không có giới hạn {{window}}, nên không có gì để cộng gộp."
+      "no-limit": "Các tài khoản này không có giới hạn {{window}}, nên không có gì để cộng gộp.",
+      "retired": "No longer collected: this source was retired. Its recorded history stays on the chart."
     },
     "account_status": {
       "ok": "Hiện tại",

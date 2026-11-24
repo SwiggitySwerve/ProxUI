@@ -202,6 +202,9 @@ def fixture(state):
             for series in ("recorded", "projected"):
                 pool[series] = [dict(item, remainingPoints=None if item["remainingPoints"] is None else round(item["remainingPoints"] * f, 1))
                                 for item in pool[series]]
+        if state.startswith("real"):
+            # The live hubs' source labels: the long Claude one shares a phone title line with the count.
+            pool["sourceLabel"] = "Claude / Claude Code" if provider == "claude" else "GPT / Codex"
         if state == "long-name":
             # A name beyond 28ch, beside a (usable) reset chip: it wraps in its Account cell, minimized or not.
             accounts[0]["identifier"] = "a.deliberately.long.credential.name.for.a.shared.workstation@example-corporate.test"
@@ -306,6 +309,37 @@ def fixture(state):
     combined = {"all":dict(series=total,layers=layers,unavailableReason=None)}
     combined.update({layer["provider"]:dict(series={key:layer[key] for key in total},layers=[layer],unavailableReason=None) for layer in layers})
     if state == "stacked-unavailable": combined["all"] = dict(series=None,unavailableReason="ambiguous-sources")
+    if state == "real-retired":
+        # A retired source, shaped like the live Gemini pool after ProxUI #129: its one account is disabled
+        # and reports no windows, its history stops a day ago, and Combined stacks it as history only.
+        times = [item["atMs"] for item in layers[0]["recorded"]]
+        history = [dict(atMs=at, remainingPoints=round(1858.8 - i * 9.5, 1), burnPointsPerHour=26.0,
+                        drainPointsPerHour=26.0) for i, at in enumerate(t for t in times if t <= NOW - DAY)]
+        retired = dict(
+            provider="antigravity", instanceId="gemini-primary", sourceLabel="gemini-primary",
+            accountCount=1, eligibleCount=0, loadedCount=0, capacityPoints=0, remainingPoints=None,
+            estimatedCount=0, burnPointsPerHour=None, drainPointsPerHour=None, forecastState="partial",
+            firstEmptyAtMs=None, poolEmptyAtMs=None, nextResetAtMs=None, nextResetGainPoints=None,
+            recorded=history, projected=[], resets=[],
+            accounts=[dict(
+                id="gemini-primary:antigravity:" + hashlib.sha256(b"fixture-gemini-0").hexdigest(),
+                sourceAccountId="gemini-primary:antigravity:" + hashlib.sha256(b"fixture-gemini-0").hexdigest(),
+                label="Gemini 1", plan=dict(label="Ultra", capacityPoints=2000, known=True),
+                identifier="mar•••la@ex•••.test", disabled=True, status="disabled",
+                observedAtMs=history[-1]["atMs"], remainingPercent=92.938787, resetAtMs=NOW + 6 * DAY,
+                burnPointsPerHour=None, emptyAtMs=None, windows=[], resets=None, billing=None)],
+        )
+        pools.append(retired)
+        layer = {key: retired[key] for key in total}
+        layer.update(provider="antigravity", instanceId="gemini-primary", sourceLabel="gemini-primary",
+                     historyOnly=True,
+                     # On the shared timeline the server reads a retired layer as 0 after its last point.
+                     recorded=[dict(item) for item in history] + [
+                         dict(atMs=at, remainingPoints=0, burnPointsPerHour=0, drainPointsPerHour=0)
+                         for at in times[len(history):]])
+        combined["all"]["layers"].append(layer)
+        combined["antigravity"] = dict(series={key: layer[key] for key in total}, layers=[layer],
+                                       unavailableReason=None)
     return dict(
         combined=combined,
         nowMs=NOW,
@@ -364,7 +398,7 @@ GEOMETRY = r"""(providedRoot) => {
     const screen=(x,y)=>{const p=new DOMPoint(x,y).matrixTransform(matrix);return {x:p.x-origin.x,y:p.y-origin.y};};
     const strokePoints=[...svg.querySelectorAll('path[stroke]')].flatMap(path=>Array.from({length:11},(_,i)=>{const p=path.getPointAtLength(path.getTotalLength()*i/10);return screen(p.x,p.y);}));
     for(const c of svg.querySelectorAll('circle')) strokePoints.push(screen(c.cx.baseVal.value,c.cy.baseVal.value));
-    return {provider:e.querySelector('h2')?.textContent?.toLowerCase(),...rect(svg),strokePoints};
+    return {provider:e.querySelector('h2')?.firstChild?.textContent?.trim().toLowerCase(),...rect(svg),strokePoints};
   });
   const guides=[...root.querySelectorAll('ul[aria-label="Limits"]')].filter(e=>visible(e)&&parseFloat(getComputedStyle(e).borderInlineStartWidth)>0).map(rect);
   // Colours that carry meaning, sampled from pixels by measure(): error icon, Low chip, status dots, limit bars.
@@ -968,8 +1002,8 @@ async def check_toggle_consistency(page, state, width):
 async def check_phone_header(page, state, width):
     """I4 (H1, page-wide since wave 3): at 390 the page makes one choice. If every provider card's title, count
     and chip fit on one line, every card keeps them inline (tops within 4px) and a card's top to the top of its
-    headline block (label included) is at most 112px. Otherwise every card's chip sits on its own second line
-    under the title and count (148px). The action pills sit on their own row after the headline and facts, right
+    headline block (label included) is at most 112px. Otherwise every card's count and chip share a second line
+    under the title (148px), and the count is never clipped. The action pills sit on their own row after the headline and facts, right
     above the chart (G11)."""
     if width != 390:
         return []
@@ -996,9 +1030,15 @@ async def check_phone_header(page, state, width):
         const mid = e => { const b = e.getBoundingClientRect(); return (b.top + b.bottom) / 2; }, tops = [mid(title), (ink(count).top + ink(count).bottom) / 2, mid(chip)], oneLine = Math.max(...tops) - Math.min(...tops) <= 4, limit = allFit ? 112 : 148;
         if (allFit && !oneLine) { const f = fit(m); fails.push({card, why: `every card's title, count and chip fit one line (${f.need.toFixed(0)} of ${f.inner.toFixed(0)}px here) but this card wraps`}); }
         if (!allFit) {
-          if (top(chip) < Math.max(title.getBoundingClientRect().bottom, ink(count).bottom) - 2) fails.push({card, why: 'a card does not fit one line, yet this chip is not on its own second line'});
-          if (Math.abs((ink(count).top + ink(count).bottom) / 2 - mid(title)) > 4) fails.push({card, why: 'the count left the title line'});
+          // g13: the count and chip share the second line, under the title, so a long source label never
+          // squeezes the count (live "Claude · Claude / Claude Code" cut "4 accounts" off at the card edge).
+          const titleBottom = title.getBoundingClientRect().bottom;
+          if (top(chip) < titleBottom - 2 || ink(count).top < titleBottom - 2) fails.push({card, why: 'a card does not fit one line, yet its count and chip are not on a second line under the title'});
+          if (Math.abs((ink(count).top + ink(count).bottom) / 2 - mid(chip)) > 4) fails.push({card, why: 'the count and chip are not on one line'});
         }
+        // The count reads whole and inside the card at every width.
+        const cardBox = a.getBoundingClientRect(), countBox = count.getBoundingClientRect();
+        if (count.scrollWidth > count.clientWidth + 1 || countBox.right > cardBox.right - 1) fails.push({card, why: 'the account count is clipped or runs past the card'});
         const d = top(headline) - top(a);
         if (d > limit) fails.push({card, why: `headline block starts ${d.toFixed(0)}px below the card top (limit ${limit}, ${allFit ? 'every card inline' : 'chips on a second line'})`});
         const pills = actions(a);
@@ -1012,7 +1052,12 @@ async def check_phone_header(page, state, width):
         const identityBottom = Math.max(title.getBoundingClientRect().bottom, ink(count).bottom, chip.getBoundingClientRect().bottom);
         for (const p of pills) if (p.getBoundingClientRect().top < identityBottom - 1) fails.push({card, why: 'an action pill shares a row with the title, count or chip'});
         const pillTops = pills.map(top);
-        if (pills.length && Math.max(...pillTops) - Math.min(...pillTops) > 2) fails.push({card, why: 'action pills are not on one row'});
+        // g13: a middle card's three pills don't fit one phone row; the graph toggle keeps the first row and the
+        // move pair takes the next whole. Any other split (a move alone on a row) fails.
+        const moves = pills.filter(p => p.closest('[class*="__moveGroup___"]')), others = pills.filter(p => !moves.includes(p));
+        const spread = list => list.length ? Math.max(...list.map(top)) - Math.min(...list.map(top)) : 0;
+        const split = pills.length === 3 && moves.length === 2 && spread(moves) <= 2 && spread(others) <= 2 && Math.min(...moves.map(top)) > Math.max(...others.map(p => p.getBoundingClientRect().bottom)) - 1;
+        if (pills.length && spread(pills) > 2 && !split) fails.push({card, why: 'action pills are not on one row (or a middle card\'s move pair is split)'});
         // Touch targets stay full size.
         for (const p of pills) if (p.getBoundingClientRect().height < 43.5) fails.push({card, why: `action pill ${p.getBoundingClientRect().height}px tall`});
         // Chip text is whole.
@@ -1152,6 +1197,14 @@ async def open_fixture_page(browser, url, state, width, lng, view, height=1000, 
             await route.fulfill(json={"version": "fixture", "syncedAtMs": NOW, "sources": []})
         elif "/prox/refresh" in request_url:
             await route.fulfill(json=fixture(state))
+        elif "/prox/resets/events" in request_url and state == "real-open" and "provider=claude" in request_url:
+            # g13: every opened Claude row has used a weekly reset, so "Last used" shows as it does live.
+            claude = next(pool for pool in fixture(state)["pools"] if pool["provider"] == "claude")
+            await route.fulfill(json={"events": [
+                dict(id=index + 1, accountId=account["id"], provider="claude", kind="weekly", outcome="reset",
+                     requestedAtMs=NOW - 2 * DAY + index * 3_600_000, settledAtMs=NOW - 2 * DAY + index * 3_600_000,
+                     cooldownCleared=None)
+                for index, account in enumerate(claude["accounts"])]})
         elif "/prox/pools" in request_url and failing:
             await route.fulfill(status=503, json={"error": "Fixture unavailable"})
         elif "/prox/pools" in request_url:
@@ -3006,6 +3059,7 @@ async def check_reset_reason(page, name, state):
         out.push({who, index, disabled: button.disabled, rel: {x: b.left - sr.left, y: b.top - sr.top, w: b.width, h: b.height}, gap: n ? Math.max(dx, dy) : null, noted: !!note && shown(note),
           inStrip: !!h && b.top >= h.top - 1 && b.bottom <= h.bottom + 1, underStrip: n && h ? n.top - h.bottom : null, paintUnderStrip: pn && h && isFinite(pn.top) ? pn.top - h.bottom : null, inCard: !!n && n.left >= sr.left - 1 && n.right <= sr.right + 1,
           describedBy: !!note && button.getAttribute('aria-describedby') === note.id,
+          describes: button.hasAttribute('aria-describedby'),
           box: box(button), area: box(section), style: cs.borderTopStyle, fill: cs.backgroundColor, border: cs.borderTopColor});
       }
       return out;
@@ -3015,7 +3069,12 @@ async def check_reset_reason(page, name, state):
     fails = []
     for item in found:
         who = item["who"]
-        if not item["noted"] or not item["describedBy"]:
+        if not item["noted"] and not item["disabled"]:
+            # g13: an enabled button over resets that are all usable has no note; "Usable now" under it read as a
+            # label missing its value. The button must then point at nothing rather than a missing note.
+            if item["describes"]:
+                fails.append(dict(who=who, why="an enabled Use reset without a note still has an aria-describedby"))
+        elif not item["noted"] or not item["describedBy"]:
             fails.append(dict(who=who, why="the reason is missing or not the button's aria-describedby"))
         elif item["gap"] > 12:
             fails.append(dict(who=who, why=f"the reason is {item['gap']:.0f}px from the button, at most 12"))
@@ -4568,6 +4627,8 @@ async def main():
         ("real-1100", "real", 1100, 900),
         ("real-narrow", "real", 390, 844),
         ("real-open", "real-open", 1440, 1000),
+        ("real-retired", "real-retired", 1440, 1000),
+        ("real-retired-narrow", "real-retired", 390, 844),
         ("drain", "drain", 1440, 1000),
         ("deep-link", "deep-link", 1440, 1000),
         ("burn-narrow", "burn", 390, 844),

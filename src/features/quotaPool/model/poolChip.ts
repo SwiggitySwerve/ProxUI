@@ -1,14 +1,22 @@
 import type { PoolForecastState } from '@/domain/quotaPool/types';
 
-export type PoolChipIcon = 'check' | 'partial' | 'stale' | 'saved' | 'collecting' | 'info';
+export type PoolChipIcon =
+  'check' | 'partial' | 'stale' | 'saved' | 'collecting' | 'info' | 'retired';
 
 /** One chip per card in every state: a word and an icon, each icon used for one status only. */
 export function poolChip(
   forecastState: PoolForecastState,
-  savedData: boolean
-): { state: PoolForecastState | 'saved'; icon: PoolChipIcon; tone: 'neutral' | 'warning' } {
+  savedData: boolean,
+  retired = false
+): {
+  state: PoolForecastState | 'saved' | 'retired';
+  icon: PoolChipIcon;
+  tone: 'neutral' | 'warning';
+} {
   // Saved data shown during a retry is expected, so its chip stays neutral; the banner explains it.
   if (savedData) return { state: 'saved', icon: 'saved', tone: 'neutral' };
+  // A retired source is no longer read on purpose, so nothing about it needs attention.
+  if (retired) return { state: 'retired', icon: 'retired', tone: 'neutral' };
   switch (forecastState) {
     case 'ready':
       return { state: forecastState, icon: 'check', tone: 'neutral' };

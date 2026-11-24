@@ -70,8 +70,19 @@ function PoolChartView({
     return () => observer.disconnect();
   }, []);
   const unit = t(`quota_pool.${mode === 'remaining' ? 'points' : 'points_hour'}`);
+  // The Remaining axis tops out at the larger of capacity and the data (chartGeometry), so its widest
+  // label is that number: a retired pool has no capacity, and its top label is its largest reading.
   const numberChars = formatPoolNumber(
-    Math.max(0, stackedTotal?.capacityPoints ?? 0, ...pools.map((pool) => pool.capacityPoints)),
+    Math.max(
+      0,
+      stackedTotal?.capacityPoints ?? 0,
+      ...pools.map((pool) =>
+        Math.max(
+          pool.capacityPoints,
+          ...(mode === 'remaining' ? pool.recorded.map((point) => point.remainingPoints ?? 0) : [])
+        )
+      )
+    ),
     i18n.language
   ).length;
   const alignUnitEnd = width >= 600;
@@ -652,8 +663,11 @@ function PoolChartView({
               >
                 <i />
                 {poolLabel(pool)}
-                {pool.forecastState !== 'ready' &&
-                  ` · ${t(`quota_pool.state.${pool.forecastState}`)}`}
+                {/* A retired layer is history by design, not a partial forecast. */}
+                {pool.historyOnly
+                  ? ` · ${t('quota_pool.history_only')}`
+                  : pool.forecastState !== 'ready' &&
+                    ` · ${t(`quota_pool.state.${pool.forecastState}`)}`}
               </span>
             ))}
           {/* Line styles are a separate key from provider colours, so they read as styles. */}
