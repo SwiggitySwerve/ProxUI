@@ -40,26 +40,40 @@ const resetCard = (available: number, usable: number, disabled: boolean) =>
     })
   );
 
+/** The Use reset button's opening tag, and the text of the note it points at (null when none). */
+const resetButton = (markup: string) => {
+  const button = markup.match(/<button[^>]*>/)?.[0];
+  if (!button) throw new Error('no Use reset button');
+  const id = button.match(/aria-describedby="([^"]+)"/)?.[1];
+  const note = id ? markup.match(new RegExp(`<p id="${id}"[^>]*>([^<]*)</p>`))?.[1] : undefined;
+  return { enabled: !/\sdisabled=/.test(button), described: id !== undefined, note: note ?? null };
+};
+
 describe('Use reset over resets that are all usable', () => {
   test('an enabled button has no "Usable now" note and describes nothing', async () => {
     await i18n.changeLanguage('en');
     const markup = resetCard(1, 1, false);
-    expect(markup).toContain('Use reset');
+    expect(resetButton(markup)).toEqual({ enabled: true, described: false, note: null });
     expect(markup).not.toContain('Usable now');
     expect(markup).not.toContain('Not usable now');
-    expect(markup).not.toContain('aria-describedby');
   });
 
   test('a partial count still says how many are usable, as the button does not', async () => {
     await i18n.changeLanguage('en');
-    const markup = resetCard(3, 1, false);
-    expect(markup).toContain('1 usable now');
-    expect(markup).toContain('aria-describedby');
+    expect(resetButton(resetCard(3, 1, false))).toEqual({
+      enabled: true,
+      described: true,
+      note: '1 usable now',
+    });
   });
 
   test('a disabled button keeps its note', async () => {
     await i18n.changeLanguage('en');
-    expect(resetCard(1, 1, true)).toContain('aria-describedby');
+    expect(resetButton(resetCard(1, 1, true))).toEqual({
+      enabled: false,
+      described: true,
+      note: 'Usable now',
+    });
   });
 });
 
@@ -120,6 +134,10 @@ describe('the y axis gutter', () => {
   test('widens when the data tops capacity, so its top label does not clip', () => {
     // A retired pool: no capacity, and the axis tops out at its largest reading, "1,858.8".
     expect(gutter(chartPool(0, [1858.8, 1840]))).toBeGreaterThan(
+      gutter(chartPool(2000, [1800, 1700]))
+    );
+    // With capacity too: a reading above 2,000 tops the axis at "25,000.5", wider than "2,000".
+    expect(gutter(chartPool(2000, [25_000.5, 1700]))).toBeGreaterThan(
       gutter(chartPool(2000, [1800, 1700]))
     );
   });

@@ -3068,7 +3068,10 @@ async def check_last_used(page, state):
         const value = dt.parentElement.querySelector('dd:not([class*="__detail___"])'), kind = dt.parentElement.querySelector('dd[class*="__detail___"]');
         if (lines(dt) !== 1) fails.push({why: `the Last used label takes ${lines(dt)} lines`});
         if (!value || lines(value) !== 1) fails.push({why: 'the Last used date does not hold one line', text: value?.textContent});
-        if (!kind || !/reset/i.test(kind.textContent)) fails.push({why: 'the reset kind is not on the line under the date', text: kind?.textContent});
+        // The kind is its own single line, below the date (not beside or above it), and names the reset.
+        const below = kind && value && kind.getBoundingClientRect().top >= value.getBoundingClientRect().bottom - 1;
+        if (!kind || !/reset/i.test(kind.textContent) || lines(kind) !== 1 || !below)
+          fails.push({why: 'the reset kind is not one line under the date', text: kind?.textContent, lines: kind && lines(kind)});
       }
       return fails;
     }""")
