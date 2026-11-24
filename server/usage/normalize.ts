@@ -245,7 +245,7 @@ function maskEmailAddresses(text: string): string {
  * character, then capped. It is the only way failure text enters the store, for live events and
  * for CPAMP's persisted value alike, and again when it is served. Scrubbing a scrubbed value
  * changes nothing, except CPAMP's own e-mail rule on `a@b.cc@d.ee` (masked again on the second
- * pass). Prox-only hardening beyond CPAMP: private-key blocks (even unterminated, to the end)
+ * pass). ProxUI-only hardening beyond CPAMP: private-key blocks (even unterminated, to the end)
  * are redacted first, and arrays and objects under secret-named keys are redacted whole. Every
  * step is linear in the text, so an upstream body of any shape and size is scrubbed whole and
  * stored exactly as CPAMP stores it; nothing is cut or withheld.
@@ -416,7 +416,7 @@ export function maskSource(value: string, isKey = false): string {
   const trimmed = value.trim();
   if (!trimmed) return '';
   // The record says the source is a key (an API-key credential, or the client's own key): CPAMP
-  // would keep a short one as it is, Prox never stores it, only its hash.
+  // would keep a short one as it is, ProxUI never stores it, only its hash.
   if (isKey) return sha256Source(trimmed);
   const at = trimmed.indexOf('@');
   if (at !== -1) {
@@ -450,7 +450,7 @@ export function isKeySource(source: string, authType: string, apiKey: string): b
 }
 
 /**
- * CPAMP's persisted `source` as Prox stores it. A value CPAMP already masked stays as it is, so
+ * CPAMP's persisted `source` as ProxUI stores it. A value CPAMP already masked stays as it is, so
  * a short e-mail masked as `ab***@x.test` imports exactly; but a value whose SHA-256 is CPAMP's
  * persisted `api_key_hash` is the client's key whatever it looks like, and an API-key
  * credential's unmasked value is hashed.

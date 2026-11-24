@@ -55,8 +55,8 @@ const SEARCH_DIMS = [
   'error_code_id',
 ];
 /**
- * Dictionary fields Prox searches that CPAMP's document does not hold (it has the credential's
- * provider, not the record's, no response model and only the effective tier). Prox returns
+ * Dictionary fields ProxUI searches that CPAMP's document does not hold (it has the credential's
+ * provider, not the record's, no response model and only the effective tier). ProxUI returns
  * events here that CPAMP does not; parity evidence uses the list to explain them.
  */
 export const PROX_ONLY_SEARCH_DIMS = [
@@ -65,7 +65,7 @@ export const PROX_ONLY_SEARCH_DIMS = [
   'requested_tier_id',
   'effective_tier_id',
 ] as const;
-/** Fields CPAMP's search document holds that Prox keeps as event_detail text. */
+/** Fields CPAMP's search document holds that ProxUI keeps as event_detail text. */
 const DOCUMENT_TEXT = ['header_trace_id', 'fail_summary'];
 const SEARCH_IDS = [
   'execution_id',

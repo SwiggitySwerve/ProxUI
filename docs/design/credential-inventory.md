@@ -2,7 +2,7 @@
 
 > **Superseded in part (2026-11-24):** [docs/design/account-state.md](account-state.md) owns account, credential and provider state, the inventory version tuple and the provider set. Where this document disagrees, that one wins.
 
-**Headline:** Prox doesn't need a credential manager. It already has one store per proxy (each CLI-Proxy's auth files). What's missing is one versioned read model of that store, plus a single commit that every metadata screen reads from. Today five screens fetch the list separately, one listener hears the change event, and the quota history waits up to 5 minutes.
+**Headline:** ProxUI doesn't need a credential manager. It already has one store per proxy (each CLI-Proxy's auth files). What's missing is one versioned read model of that store, plus a single commit that every metadata screen reads from. Today five screens fetch the list separately, one listener hears the change event, and the quota history waits up to 5 minutes.
 
 **Brief:** The user's words: "Remove everywhere, at once"; "remove auth event should populate throughout the entire UI in one go"; "anything that is a direct metadata/config screen should be updated" (Analytics request, usage and dollar metrics may keep history); "test everything around adding or removing credentials"; and move the architecture toward "event driven sequences and centralized sources that are easy for things to read from".
 
@@ -14,7 +14,7 @@
 - Transport: SSE versus version polling with ETags.
 - Data: retire, scrub, purge or tombstone.
 
-**Phase 0 reframe (omo-sophia):** There is one source of truth per proxy and several derived copies (Prox SQLite, collector memory, cpa-manager-plus). The design question is how a change at the source retires or purges each copy, not how to centralize the stores.
+**Phase 0 reframe (omo-sophia):** There is one source of truth per proxy and several derived copies (ProxUI SQLite, collector memory, cpa-manager-plus). The design question is how a change at the source retires or purges each copy, not how to centralize the stores.
 
 ## Phase 1: assignments
 - **omo-vulcan:** strongest concrete implementation, data-structure changes and an end-to-end proof without touching real credentials.
@@ -53,7 +53,7 @@
 ## Phase 3: cross-attack
 - **omo-vulcan updated:**
   - Scrub on every retire.
-  - Purge right away only rows the user deleted by name in Prox that a fresh validated inventory confirms are gone; otherwise purge after 24 h.
+  - Purge right away only rows the user deleted by name in ProxUI that a fresh validated inventory confirms are gone; otherwise purge after 24 h.
   - Defer the `.lock` fix and cpa-manager-plus.
   - Crux: absence from one inventory isn't proof of intent, so only reversible steps follow from absence alone.
 - **omo-delphi updated:**
@@ -66,7 +66,7 @@
 
 **Current (verified):**
 1. **CLI-Proxy:** each instance's auth-files directory is the only credential store: Codex on :8317 from `~/.local/share/cli-proxy-api/auth`, Claude on :8319 from `~/.local/share/cli-proxy-claude/auth`. Deletes remove the `.json` file and its runtime record, never the `.lock`, and emit no event.
-2. **Browser to CLI-Proxy, directly through nginx** (`deploy/provider-routes.conf`). There is no Prox application server in between. Each screen lists `/credentials` itself:
+2. **Browser to CLI-Proxy, directly through nginx** (`deploy/provider-routes.conf`). There is no ProxUI application server in between. Each screen lists `/credentials` itself:
    - Auth Files: `useAuthFilesData.ts:229`
    - Accounts: `QuotaPage.tsx:146`
    - Dashboard: `useDashboardOverview.ts:157`
@@ -74,7 +74,7 @@
    - Reset rows: `PoolAccountResets.tsx:153`
 3. **Browser to prox-history** (`/v8/management/prox/` → `127.0.0.1:18319/v1/`): Quota Management reads `/v1/pools`, which comes from SQLite. That data changes only on the 5-minute collection, and a manual refresh within 4 minutes is ignored.
 4. **Change signal:** `AUTH_FILES_CHANGED_EVENT` is a same-tab window event with one listener, the sidebar badge.
-5. **cpa-manager-plus** (the user's fork, SwiggitySwerve/CPA-Manager-Plus, deployed at b59df335) reads the Claude CLI-Proxy on its own and keeps its own account-keyed tables. Prox only reads Analytics from it (`server/analytics/handler.ts`; Prox's Analytics reads no quota tables).
+5. **cpa-manager-plus** (the user's fork, SwiggitySwerve/CPA-Manager-Plus, deployed at b59df335) reads the Claude CLI-Proxy on its own and keeps its own account-keyed tables. ProxUI only reads Analytics from it (`server/analytics/handler.ts`; ProxUI's Analytics reads no quota tables).
 
 **Problems with this flow:**
 - Five or more independent fetches.
@@ -86,7 +86,7 @@
 **Target:**
 1. **CLI-Proxy** stays the store.
 2. **prox-history** owns the one inventory read model and its version.
-3. **One change event** comes from a Prox add/remove (awaited sync), from another tab (BroadcastChannel) or from an outside change (5 s ETag poll).
+3. **One change event** comes from a ProxUI add/remove (awaited sync), from another tab (BroadcastChannel) or from an outside change (5 s ETag poll).
 4. **One browser store** commits every slice at once.
 5. **Every metadata screen** reads that store.
 6. **A janitor** removes orphaned `.lock` files when the auth directories change.
@@ -97,14 +97,14 @@
 
 **PR A (prox repo):**
 - prox-history keeps the credential-inventory read model with a content-hash version.
-- A new inventory-only sync runs immediately when Prox adds or removes a credential.
+- A new inventory-only sync runs immediately when ProxUI adds or removes a credential.
 - One browser store fetches every slice and publishes it in a single commit, and every metadata/config screen reads from it.
 - Update paths:
   - Tabs in the same browser are nudged at once over BroadcastChannel.
-  - Other devices, other browsers and changes made outside Prox are picked up by a 5-second ETag poll.
+  - Other devices, other browsers and changes made outside ProxUI are picked up by a 5-second ETag poll.
 - Lifecycle on retire:
-  - Prox scrubs the account's email and name and clears collector memory.
-  - Accounts the user deleted by name in Prox are purged as soon as a fresh validated inventory confirms they are gone.
+  - ProxUI scrubs the account's email and name and clears collector memory.
+  - Accounts the user deleted by name in ProxUI are purged as soon as a fresh validated inventory confirms they are gone.
   - Accounts that merely disappeared are purged after 24 hours.
 - A user systemd path unit, installed by the deploy script, removes `.lock` files whose `.json` is gone whenever either auth directory changes.
 
@@ -115,7 +115,7 @@
 
 **Why:**
 - The CLI-Proxy auth files are the only real credential store. A registry would be a second writer that still has to reconcile.
-- Reconciliation catches changes made outside Prox. The acting tab awaits the sync, so it has no lag.
+- Reconciliation catches changes made outside ProxUI. The acting tab awaits the sync, so it has no lag.
 - A single client commit is the only way to guarantee "no screen lags another".
 - Scrubbing at retire removes everything identifying at once, and it can be undone if the account comes back.
 - Purging differs by evidence of intent:
@@ -135,7 +135,7 @@ The purge-timing split was settled by taking omo-vulcan's intent-based rule: imm
 - Other devices, browsers and outside changes can be up to about 5 s behind. Every screen on a device is equally behind, because all read one store.
 - Rows of accounts that merely disappeared linger, anonymized, for 24 hours.
 - Removed accounts already drop out of past pool capacity (today's behaviour).
-- cpa-manager-plus changes ship as a second PR in its own repo. Its screens update within about 5 s of the change, the same bound as other devices, not in the same frame as the acting Prox tab.
+- cpa-manager-plus changes ship as a second PR in its own repo. Its screens update within about 5 s of the change, the same bound as other devices, not in the same frame as the acting ProxUI tab.
 
 **Second-order consequences:**
 - New metadata screens read the store instead of fetching their own lists.

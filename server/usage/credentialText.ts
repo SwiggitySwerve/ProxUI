@@ -35,7 +35,7 @@ const pemEndRegex = /-----END (?:RSA |EC |OPENSSH |ENCRYPTED |DSA )?PRIVATE KEY-
  * every BEGIN that has no END, so it is quadratic. Here a BEGIN is searched for outside a block
  * and an END inside one, so markers that share dashes (an END's trailing dashes starting the next
  * BEGIN) are found as the pattern finds them; once a BEGIN has no END, no later one has either.
- * `unterminated` (Prox-only) also redacts that BEGIN through the end of the text.
+ * `unterminated` (ProxUI-only) also redacts that BEGIN through the end of the text.
  */
 export function redactPrivateKeyBlocks(text: string, unterminated = false): string {
   let out = '';
@@ -244,7 +244,7 @@ function collectionEnd(value: string, open: number): number {
 }
 /**
  * The scrubber above redacts scalar values only, so `"Cookie": ["sid=..."]` keeps its secret. This
- * replaces a whole array or object value held by a secret-named key. Prox-only hardening: used
+ * replaces a whole array or object value held by a secret-named key. ProxUI-only hardening: used
  * where upstream text is stored (failure text, header values), not by the CPAMP-ported scrubber.
  */
 export function redactSecretCollections(value: string): string {
