@@ -77,6 +77,8 @@ describe('a retired source', () => {
     expect(markup).not.toContain('some eligible accounts have no current quota data');
     expect(markup).not.toContain('data-group="forecast"');
     expect(markup).not.toContain('Reporting');
+    // Nothing it holds counts toward a total.
+    expect(markup).not.toContain('counts toward total');
   });
 
   test('a pool with one live account is not retired', async () => {

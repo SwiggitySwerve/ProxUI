@@ -773,7 +773,8 @@ export function PoolCard({
             <span className={styles.accountsTitleStack}>
               <b className={styles.accountHeadingLabel}>{t('quota_pool.accounts')}</b>
               {/* Phones have no column heading, so attach the counted-limit note directly to the Accounts heading. */}
-              {visibleAccounts.length > 0 && (
+              {/* A retired pool counts toward nothing, so it has no such note. */}
+              {visibleAccounts.length > 0 && !retired && (
                 <span className={styles.phoneCountsNote}>
                   {t('quota_pool.counts_toward_total_phone', { window: windowLabel })}
                 </span>
