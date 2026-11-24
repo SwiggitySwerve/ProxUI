@@ -42,11 +42,14 @@ const resetCard = (available: number, usable: number, disabled: boolean) =>
 
 /** The Use reset button's opening tag, and the text of the note it points at (null when none). */
 const resetButton = (markup: string) => {
-  const button = markup.match(/<button[^>]*>/)?.[0];
+  // The button whose visible label is "Use reset" (its context follows in a visually hidden span).
+  const button = markup.match(/<button[^>]*>Use reset<span/)?.[0];
   if (!button) throw new Error('no Use reset button');
-  const id = button.match(/aria-describedby="([^"]+)"/)?.[1];
+  // Presence, not value: an empty aria-describedby="" still describes (nothing), so it must not pass as none.
+  const described = /\saria-describedby=/.test(button);
+  const id = button.match(/aria-describedby="([^"]*)"/)?.[1];
   const note = id ? markup.match(new RegExp(`<p id="${id}"[^>]*>([^<]*)</p>`))?.[1] : undefined;
-  return { enabled: !/\sdisabled=/.test(button), described: id !== undefined, note: note ?? null };
+  return { enabled: !/\sdisabled=/.test(button), described, note: note ?? null };
 };
 
 describe('Use reset over resets that are all usable', () => {
