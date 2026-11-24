@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import {
   findPoolResetFile,
@@ -226,5 +227,25 @@ describe('pool row sign-in expiry', () => {
     expect(signInExpired([rejected], 'other', 'claude', account)).toBe(false);
     expect(signInExpired(undefined, 's', 'claude', account)).toBe(false);
     expect(signInExpired([rejected], undefined, 'claude', account)).toBe(false);
+  });
+});
+
+describe('pool card reads the sign-in state it shows', () => {
+  const card = readFileSync('src/features/quotaPool/PoolCard.tsx', 'utf8');
+  const css = readFileSync('src/features/quotaPool/QuotaPoolPage.module.scss', 'utf8');
+  test('a newly failing account re-reads a credential list that may be cached from before', () => {
+    // ensureLoaded keeps a cached list, and the poll only notices added or removed credentials.
+    expect(card).toContain('useCredentialInventoryStore.getState().refresh();');
+    expect(card).toContain('}, [sourceOwnerId, errorIds]);');
+    expect(card).not.toContain('ensureLoaded(sourceOwner)');
+  });
+  test('the status line stays visible on an expired sign-in row at every width', () => {
+    expect(card).toContain('data-signin-expired={signInExpiredIds.has(account.id) || undefined}');
+    // Phones hide the line when the block says a window is unavailable; wide tables when a cell does.
+    expect(css).toContain("&[data-status='error']:not([data-signin-expired]) .accountStatus,");
+    expect(css).toContain(
+      ".pool .account[data-unavailable-cell] {\n    &[data-status='error']:not([data-signin-expired]),"
+    );
+    expect(css).not.toContain("&[data-status='error'] .accountStatus");
   });
 });

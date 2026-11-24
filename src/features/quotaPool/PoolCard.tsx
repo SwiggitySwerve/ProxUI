@@ -38,6 +38,7 @@ import { heldResetKinds, wasSpent, type ResetKindCount } from './resetAccounts';
 import { PoolAccountResets, ResetKindCounts } from './PoolAccountResets';
 import { useProviderSources } from '@/stores/useProviderSources';
 import { useCredentialInventoryStore, useSourceFiles } from '@/stores/useCredentialInventoryStore';
+import { sourceOwnerKey } from '@/services/api/sourceSession';
 import { signInExpired } from './model/signInExpired';
 import { PoolChart } from './PoolChart';
 import { PoolGraph } from './PoolGraph';
@@ -298,16 +299,24 @@ export function PoolCard({
   // read only when a row needs it.
   const registry = useProviderSources();
   const sourceView = registry.sources.find((view) => view.source.instanceId === pool.instanceId);
+  const errorIds = pool.accounts
+    .filter((account) => account.status === 'error')
+    .map((account) => account.id)
+    .join(',');
   const sourceOwner =
-    sourceView?.status === 'ready' && pool.accounts.some((account) => account.status === 'error')
-      ? sourceView.session?.owner
-      : undefined;
+    sourceView?.status === 'ready' && errorIds ? sourceView.session?.owner : undefined;
+  const sourceOwnerId = sourceOwner ? sourceOwnerKey(sourceOwner) : null;
   const sourceFiles = useSourceFiles(sourceOwner);
+  // Re-read the list whenever another account fails, even if it is cached: a credential can lose
+  // its sign-in after the list was read, and the inventory poll only notices added or removed ones.
   useEffect(() => {
-    if (sourceOwner) void useCredentialInventoryStore.getState().ensureLoaded(sourceOwner);
-  }, [sourceOwner]);
-  const needsSignIn = (account: (typeof pool.accounts)[number]) =>
-    signInExpired(sourceFiles, pool.instanceId, pool.provider, account);
+    if (sourceOwnerId) void useCredentialInventoryStore.getState().refresh();
+  }, [sourceOwnerId, errorIds]);
+  const signInExpiredIds = new Set(
+    pool.accounts
+      .filter((account) => signInExpired(sourceFiles, pool.instanceId, pool.provider, account))
+      .map((account) => account.id)
+  );
   // The accounts holding the total back. The notice counts them and its action shows them in
   // the list, instead of naming masked addresses that wrap badly.
   const affectedAccounts =
@@ -981,6 +990,7 @@ export function PoolCard({
                 key={account.id}
                 className={styles.account}
                 data-status={account.status}
+                data-signin-expired={signInExpiredIds.has(account.id) || undefined}
                 data-phone-blocks={phoneBlocks(account) || undefined}
                 data-unavailable-cell={
                   account.windows.some((limit) => limit.remainingPercent === null) || undefined
@@ -1032,11 +1042,23 @@ export function PoolCard({
                     />
                   </span>
                   <span className={styles.accountStatus}>
-                    {account.status === 'stale' ? (
+                    {account.status === 'stale' || signInExpiredIds.has(account.id) ? (
+                      // What happened and how old the figures are; an expired sign-in's open row
+                      // says what to do.
                       <>
                         <span className={styles.staleWord}>
-                          <IconClock className={styles.staleIcon} size={14} aria-hidden="true" />
-                          {t('quota_pool.account_status.stale')}
+                          {account.status === 'stale' ? (
+                            <IconClock className={styles.staleIcon} size={14} aria-hidden="true" />
+                          ) : (
+                            <IconAlertTriangle
+                              className={styles.staleIcon}
+                              size={14}
+                              aria-hidden="true"
+                            />
+                          )}
+                          {account.status === 'stale'
+                            ? t('quota_pool.account_status.stale')
+                            : t('quota_pool.signin_expired')}
                         </span>{' '}
                         {/* "Last reading …" wraps as one unit, never between its words. */}
                         <span className={styles.staleSince}>
@@ -1047,23 +1069,6 @@ export function PoolCard({
                       </>
                     ) : account.status === 'no-limit' ? (
                       noLimitLabel
-                    ) : needsSignIn(account) ? (
-                      // What happened and how old the figures are; the open row says what to do.
-                      <>
-                        <span className={styles.staleWord}>
-                          <IconAlertTriangle
-                            className={styles.staleIcon}
-                            size={14}
-                            aria-hidden="true"
-                          />
-                          {t('quota_pool.signin_expired')}
-                        </span>{' '}
-                        <span className={styles.staleSince}>
-                          <span className={styles.staleDot}>· </span>
-                          {t('quota_pool.observed')}{' '}
-                          <span className={styles.nowrap}>{date(account.observedAtMs)}</span>
-                        </span>
-                      </>
                     ) : account.status === 'missing-window' || account.status === 'error' ? (
                       t('quota_pool.window_unavailable', { window: windowLabel })
                     ) : (
@@ -1180,7 +1185,7 @@ export function PoolCard({
                   )}
                 </summary>
                 <div className={styles.accountFacts}>
-                  {needsSignIn(account) && (
+                  {signInExpiredIds.has(account.id) && (
                     <p className={styles.stateNote} data-state="stale" role="status">
                       {t('quota_pool.signin_expired_detail')}
                       <Link className={styles.noteAction} to="/oauth">
