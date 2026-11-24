@@ -1846,10 +1846,11 @@ $table-tiers: (
       display: grid;
       // The limit tracks share what's left after Account and Plan, so a card with two limits ends at
       // the row's right edge like one with three. Each track is its column's needs plus an equal
-      // bar, so the bars of a card are as long as each other.
+      // bar, so the bars of a card are as long as each other. A roster that reports no limits (a retired
+      // source) has no tracks: React drops the empty property, so the empty fallback keeps the row valid.
       grid-template-columns:
         20px var(--name-track) var(--plan-track)
-        var(--limit-tracks)
+        var(--limit-tracks, )
         128px;
       justify-content: start;
       column-gap: var(--col-gap);
@@ -1982,7 +1983,7 @@ $table-tiers: (
       .accountHead,
       .account > summary {
         // As above: the limits share the rest of the row.
-        grid-template-columns: 20px var(--name-track) var(--plan-track) var(--limit-tracks);
+        grid-template-columns: 20px var(--name-track) var(--plan-track) var(--limit-tracks, );
       }
       // Here the last header is a limit's, not the balance's: it wraps inside its track like the others.
       .accountHead span:last-child {
@@ -3099,16 +3100,20 @@ $table-tiers: (
 }
 
 // Phone provider header (640px and below): title, count and chip share a line while every card's fits;
-// when any card's doesn't, the page sets data-chip-line (usePhoneChipLine) and every card's chip takes
-// its own second line, so a page never mixes the two. The action row stays as shipped.
+// when any card's doesn't, the page sets data-chip-line (usePhoneChipLine) and every card's count and
+// chip take a second line together, so a page never mixes the two and a long source label never squeezes
+// the count. The action row stays as shipped.
 @media (max-width: 640px) {
   .pools[data-chip-line] .poolTitle {
     display: grid;
-    grid-template-columns: auto minmax(0, auto) minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
-    .badge {
+    > .poolMeta {
+      display: flex;
       grid-column: 1 / -1;
-      justify-self: start;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px 12px;
     }
   }
 }
@@ -5421,5 +5426,19 @@ $table-tiers: (
 @container loadingCard (min-width: 900px) and (max-width: 999px) {
   .page .loading > .loadingStats[data-rate] {
     grid-template-columns: minmax(340px, 0.75fr) minmax(480px, 1.6fr);
+  }
+}
+
+/* g13 */
+// The move pair is one flex item on phones: a middle card's three pills don't fit one row, so the graph
+// toggle keeps the first row and both moves take the next together, never one move alone. Wide screens
+// lay the buttons out as before.
+.moveGroup {
+  display: contents;
+}
+@media (max-width: 640px) {
+  .reorder .moveGroup {
+    display: flex;
+    gap: 8px;
   }
 }

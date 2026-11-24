@@ -102,7 +102,7 @@ export function FactSection({ title, tone, children, action, note }: FactSection
               type="button"
               disabled={action.disabled}
               onClick={action.onClick}
-              aria-describedby={id}
+              aria-describedby={noteEl ? id : undefined}
             >
               {action.label}
               <span className={styles.srOnly}> {action.context}</span>

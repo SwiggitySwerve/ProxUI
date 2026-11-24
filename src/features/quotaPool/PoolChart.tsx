@@ -70,18 +70,6 @@ function PoolChartView({
     return () => observer.disconnect();
   }, []);
   const unit = t(`quota_pool.${mode === 'remaining' ? 'points' : 'points_hour'}`);
-  const numberChars = formatPoolNumber(
-    Math.max(0, stackedTotal?.capacityPoints ?? 0, ...pools.map((pool) => pool.capacityPoints)),
-    i18n.language
-  ).length;
-  const alignUnitEnd = width >= 600;
-  const baseFrame = fitChartFrame(
-    width,
-    savedData || pools.some((pool) => pool.forecastState !== 'ready') || mode !== 'remaining',
-    // One reading draws a point, not a line, so it gets the compact height.
-    minimized || Math.max(...pools.map((pool) => pool.recorded.length)) === 1,
-    alignUnitEnd ? Math.max(numberChars, Math.ceil(unit.length * 0.72)) : numberChars
-  );
   // Phones still get a start, middle and end date plus one between, so a range reads at a glance.
   const tickCount = width < 480 ? 4 : width < 850 ? 5 : 8;
   // null = not yet inspected: show the newest recorded sample, i.e. the current reading.
@@ -134,6 +122,37 @@ function PoolChartView({
     samples
       .filter((sample) => !(pool.historyOnly && sample.projected))
       .map((sample) => ({ ...sample, pool }))
+  );
+  // The y axis labels min, middle and max (below). Its gutter is as wide as the widest of them, and
+  // never narrower than the capacity it was sized from before, so a chart whose data stays inside
+  // capacity keeps its layout. A retired pool (no capacity) or a stack topped by retired history
+  // labels its data instead, and those labels must not clip.
+  const axisCapacity =
+    stackedTotal?.capacityPoints ?? Math.max(0, ...pools.map((pool) => pool.capacityPoints));
+  const axisSamples = stacked
+    ? stacked.flatMap((layer) =>
+        layer.flatMap((sample) =>
+          [sample.lower, sample.upper].map((value) => ({
+            ...sample,
+            point: { ...sample.point, [field]: value },
+          }))
+        )
+      )
+    : samples;
+  const axis = chartGeometry(axisSamples, mode, axisCapacity, fromMs, toMs);
+  const numberChars = Math.max(
+    ...[
+      Math.max(0, stackedTotal?.capacityPoints ?? 0, ...pools.map((pool) => pool.capacityPoints)),
+      ...(axis.min === axis.max ? [axis.min] : [axis.min, (axis.min + axis.max) / 2, axis.max]),
+    ].map((value) => formatPoolNumber(value, i18n.language).length)
+  );
+  const alignUnitEnd = width >= 600;
+  const baseFrame = fitChartFrame(
+    width,
+    savedData || pools.some((pool) => pool.forecastState !== 'ready') || mode !== 'remaining',
+    // One reading draws a point, not a line, so it gets the compact height.
+    minimized || Math.max(...pools.map((pool) => pool.recorded.length)) === 1,
+    alignUnitEnd ? Math.max(numberChars, Math.ceil(unit.length * 0.72)) : numberChars
   );
   // Order inspection by time without joining or resampling separate source traces.
   if (comparison) samples.sort((a, b) => a.point.atMs - b.point.atMs);
@@ -247,23 +266,7 @@ function PoolChartView({
         bottom: baseFrame.bottom + staggerPad,
       }
     : baseFrame;
-  const geometry = chartGeometry(
-    stacked
-      ? stacked.flatMap((layer) =>
-          layer.flatMap((sample) =>
-            [sample.lower, sample.upper].map((value) => ({
-              ...sample,
-              point: { ...sample.point, [field]: value },
-            }))
-          )
-        )
-      : samples,
-    mode,
-    stackedTotal?.capacityPoints ?? Math.max(0, ...pools.map((pool) => pool.capacityPoints)),
-    fromMs,
-    toMs,
-    chartFrame
-  );
+  const geometry = chartGeometry(axisSamples, mode, axisCapacity, fromMs, toMs, chartFrame);
   const { x, y, min, max, segments } = geometry;
   const latestRecorded = samples.reduce(
     (latest, { point, projected }, index) => (!projected && point.atMs <= nowMs ? index : latest),
@@ -652,8 +655,11 @@ function PoolChartView({
               >
                 <i />
                 {poolLabel(pool)}
-                {pool.forecastState !== 'ready' &&
-                  ` · ${t(`quota_pool.state.${pool.forecastState}`)}`}
+                {/* A retired layer is history by design, not a partial forecast. */}
+                {pool.historyOnly
+                  ? ` · ${t('quota_pool.history_only')}`
+                  : pool.forecastState !== 'ready' &&
+                    ` · ${t(`quota_pool.state.${pool.forecastState}`)}`}
               </span>
             ))}
           {/* Line styles are a separate key from provider colours, so they read as styles. */}
