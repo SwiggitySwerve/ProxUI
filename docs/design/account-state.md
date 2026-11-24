@@ -37,7 +37,7 @@ An audit on 2026-11-24 found these causes:
 | Cooldown, rate limit, status text | Hub | hub credential list only | inventory store files | Auth Files card |
 | Provider lifecycle (`needs_attention`) | Hub catalog | `/v1/inventory` catalog | inventory store | provider-level UI only, never a per-account notice |
 | Read status, with refinements `no-reader`, `no-limit`, `missing-window` in one precedence order | `readStatus()` in `server/quota/accountState.ts` | `/v1/accounts`, `/v1/pools` | `sourceQuotaStore(owner)`, pool slot | `AccountStateNotice` |
-| Pool-window refinements: `no-limit`, `missing-window` | `domain.ts`, on top of `readStatus` | `/v1/pools` | pool slot | `PoolCard` |
+| Pool-window refinements: `no-limit`, `missing-window`, stale selected window | `accountState.ts` (the same precedence function); `domain.ts` only supplies the selected window's sample | `/v1/pools` | pool slot | `PoolCard` |
 | No five-hour limit, plan, account label | `accountState.ts` | `/v1/accounts`, `/v1/pools` | `sourceQuotaStore`, pool slot | provider bodies, `PoolCard` |
 | Quota numbers, resets, billing | prox-history for served sources, the hub otherwise (`src/features/quota/RULES.md`) | `/v1/accounts`, `/v1/pools` | `sourceQuotaStore(owner)` | provider bodies, `PoolCard` |
 | Which providers can claim resets | prox-history reset support (Claude and Codex, `store.ts` CHECK, `claims.ts`) | `/v1/accounts` resets | `sourceQuotaStore` | reset panel |
@@ -56,10 +56,13 @@ Guessing around that in Prox (a regex over messages, or a latch with an unreliab
 
 ### The rule (migration step 0, in ProxD)
 
-- On a terminal grant rejection, the hub writes `requires_sign_in: true` into the credential's metadata and saves the file, the same way it persists `disabled` (`sdk/cliproxy/auth/codex_persist.go`).
-- File synthesis restores `RequiresSignIn` (and its error status and message) from that metadata, so a restart changes nothing.
-- A successful token refresh or a new sign-in for the credential removes the field and saves the file.
-- The hub's existing `requires_sign_in` output then means the same thing before and after a restart.
+The hub already decides sign-in correctly while it runs, including the per-grant rules: a Codex credential can refresh one grant successfully while another stays rejected (`conductor_unauthorized_refresh_test.go:1488`). Step 0 only makes that decision survive a restart. It does not change it.
+
+- **Persist the inputs.** The hub writes the state its in-memory rule depends on into the credential's metadata: the sign-in flag and the per-grant rejection markers. It saves the file the same way it persists `disabled` (`sdk/cliproxy/auth/codex_persist.go`).
+- **Restore exactly that.** File synthesis restores `RequiresSignIn` and the markers.
+  - It does not restore an error status or `Unavailable`. Whether the credential can serve stays the hub's existing access-token eligibility rule: a credential whose refresh was rejected but whose access token still works keeps serving after a restart, as it does today (`conductor_unauthorized_refresh_test.go:894`).
+- **Clear on the hub's own recovery rule.** The flag is cleared, and the file saved, only when the hub's existing logic clears it in memory: the rejected grant refreshes, or there is a new sign-in.
+- The hub's `requires_sign_in` output then means the same thing before and after a restart.
 
 ### In Prox
 
@@ -101,15 +104,15 @@ There are three kinds of change, and each has one path:
 
 `newestSample` is the newest stored sample across windows, never collector memory, so a restart changes nothing.
 
-Refinements come after the core status, in one precedence order shared by every caller:
+`accountState.ts` also owns the refinements: one function takes the core inputs plus, for pools, the selected window's newest sample, and returns the final status. `domain.ts` and the unpooled builder pass inputs; they decide nothing. The precedence:
 
 1. `disabled` always wins.
 2. `no-reader` (unpooled only): prox-history has no reader for the provider.
 3. The core `error`.
-4. Pool only, for the selected window:
-   - `no-limit` when the provider answered and reports no such limit;
-   - `missing-window` when the selected window has no sample at all;
-   - `stale` when the selected window's sample has expired, even if another window is fresh.
+4. Pool only, for the selected window's newest sample:
+   - **No row at all** gives `missing-window`.
+   - **A row whose value is null** gives `no-limit` when the account's no-five-hour-limit rule covers that window, and `missing-window` otherwise. The collector writes such a row whenever an answer omitted the window (`collector.ts:388-398`).
+   - **A row with a value but expired** gives `stale`, even if another window is fresh.
 5. The core `stale`.
 6. `ok`.
 
@@ -141,7 +144,7 @@ Provider membership is the union of:
 - the runtime provider id of every live credential the hub lists, even when the hub's catalog omits that provider or stops advertising its reader;
 - the catalog entries that Auth Files also shows as waiting and that can be signed in to: the Connect card (`sourceCatalogEntries`, `server/quota/collector.ts:130-145`).
 
-A provider kept only because a credential uses it appears in `/v1/inventory` with `reader: none`.
+Its `reader` is whatever the catalog advertises for it. Only a provider the catalog does not advertise a reader for (or omits) shows `reader: none`. A catalogued provider keeps its reader once its first credential arrives and it leaves the waiting set.
 
 ### A reader is an attribute, not a membership test
 
@@ -151,7 +154,7 @@ A provider kept only because a credential uses it appears in `/v1/inventory` wit
 
 - Its accounts stay unretired.
 - While the source is dropped, `prune()` skips their samples.
-- When the source returns, its accounts rejoin the normal 30-day retention like every live source, and its recent history shows again in the normal date range (14 days back).
+- When the source returns, its accounts rejoin the normal 30-day retention like every live source. Samples within a chart's queried range show again: the default chart starts 3 days before today (`domain.ts:569`), and earlier days are reached by moving the range back.
 
 ## Rendering
 
@@ -188,12 +191,12 @@ Each test lands with the migration step that makes it pass. None lands red.
 
 | Test | Lands in | Checks |
 |---|---|---|
-| ProxD: `requires_sign_in` persistence | 0 | A terminal grant rejection writes the metadata. A restart (file synthesis) restores `RequiresSignIn`, the error status and the message. A successful refresh clears it. A same-file OAuth sign-in clears it. A sign-in followed by a restart stays cleared. |
+| ProxD: `requires_sign_in` persistence | 0 | The existing regression tests pass unchanged and again with a restart inserted at each step: a partial Codex refresh keeps the flag (`conductor_unauthorized_refresh_test.go:1488`), and a rejected refresh with a working access token keeps serving (`:894`). A terminal rejection writes the metadata; a restart restores the flag and markers but no error status. The hub's own recovery clears it. A same-file OAuth sign-in clears it, and stays cleared after a restart. |
 | Collector, store and HTTP behaviour (`tests/proxCollector.test.ts`, `tests/proxQuotaDashboard.test.ts`) | 1 | An inventory read with `requires_sign_in` stores `signInRequired` with no failed poll; a read without it clears it; disabled wins. The inventory version (and the pool's `inventoryVersion`) changes on set and on clear, and not on an identical re-read. `/v1/accounts`, `/v1/pools` and unpooled cards show `signInRequired` beside status `ok`. |
 | `tests/accountStateContract.test.ts` | 1 (server scope), then extended in 2 and 3 | **1:** no sign-in text pattern (`refresh token`, `invalid_grant`) anywhere in `server/`; no `errorReason` or `lastErrorReason`. **2:** the same over `src/`. **3:** `.lastErrorAtMs` read only in `accountState.ts` and `store.ts`. |
 | `tests/accountStateScreens.test.ts` | 2 | Scans all of `src/features/**` and `src/components/**`: no raw hub field names, `account_state.` only in `AccountStateNotice`. Renders `AuthFileCard`, `AuthFileQuotaSection`, `QuotaCard`, `PoolCard` and `PoolAccountResets` from one fixture and checks the same sentence and the `oauthPath` link. `credentialHealth` counts sign-in as a problem. The refresh toast says to sign in again when the re-read file has `signInRequired`. |
 | `tests/accountReadStatus.test.ts` | 3 | A `readStatus` table test: no sample with and without a failure; a failure at the same instant as the sample; a failure older than a fresh sample; an old inventory sighting. The precedence overlaps: disabled with no reader; an expired selected window beside a fresh other window; no sample at all for the selected window. An agreement test: `/v1/accounts`, `/v1/pools` and unpooled agree on the core status from one store fixture. Unpooled collection with no pool profile stores the latest reading, which survives a restart and never enters pool totals. |
-| `tests/proxProviderSet.test.ts` | 4 | A source missing from the manifest shows on no pool, combined band, inventory source or account list. After advancing more than 30 days and running `prune()`, its samples still exist. After re-adding the source and one collection cycle, its samples from the last 30 days remain and show in the default range. Dropping a source takes effect without a restart. An invalid revision changes nothing. A runtime provider the catalog omits stays in `/v1/inventory` with `reader: none`, and a Connect entry still appears for a hub with no credentials. It replaces the PR #129 tests in `tests/proxGeminiPool.test.ts`. |
+| `tests/proxProviderSet.test.ts` | 4 | A source missing from the manifest shows on no pool, combined band, inventory source or account list. After a long absence (the clock advanced more than 30 days, then `prune()`), its samples still exist. After a short absence (re-added within the chart range, then one collection cycle), a sample from before the drop that falls in the queried range shows on the chart. Dropping a source takes effect without a restart. An invalid revision changes nothing. A runtime provider the catalog omits stays in `/v1/inventory` with `reader: none`. A catalogued provider keeps its advertised reader after its first credential arrives. A Connect entry still appears for a hub with no credentials. It replaces the PR #129 tests in `tests/proxGeminiPool.test.ts`. |
 | Inventory version (`tests/proxInventoryLifecycle.test.ts`) | 4 | A change to only display name, logo, reader, lifecycle or availability changes the version (no 304). |
 | `tests/providerLiterals.test.ts` | 4 (server read models), then 5 (`src/features/quotaPool`, `src/stores`, quota API modules) | No `'claude'`, `'codex'` or `'antigravity'` literals outside a file-to-reason allow-list: readers, plans, reset claims and presentation. A docs check: every provider named as live in `server/quota/RULES.md` and `README.md` is in the manifest. |
 | Source membership in the browser | 5 | With a real discovery and routing update: dropping a source removes it from Auth Files, `/quota/accounts`, `/quota`, Models and OAuth and clears its cached state. Dropping the login binding ends that session with the message. Standalone hub access is unchanged. |
@@ -206,7 +209,7 @@ Seven steps, each its own PR: step 0 in ProxD, the rest in ProxUI. Each PR is ve
 
 | # | Step | Replaces |
 |---|---|---|
-| 0 | **ProxD persists `requires_sign_in`** in credential metadata; file synthesis restores it; a successful refresh or a new sign-in clears it. Rolled with `roll-all.sh`. | A sign-in state that the hub forgets on restart. |
+| 0 | **ProxD persists the sign-in decision's inputs** (the flag and per-grant markers) in credential metadata. File synthesis restores them, with no error status. The hub's existing recovery rule clears them. Rolled with `roll-all.sh`. | A sign-in state that the hub forgets on restart. |
 | 1 | **Sign-in on the server and on the wire.** The collector copies `requires_sign_in` into the `quota_accounts.signInRequired` column. The column needs a guarded `ALTER`, plus `QUOTA_ACCOUNT_COLUMNS` and `quotaAccountsTableSql`, so the widening rebuild keeps it. `signInRequired` goes on `/v1/inventory`, `/v1/accounts` and `/v1/pools`, and into the version tuple. PoolCard reads it. Take a `VACUUM INTO` backup before deploying. | The undeployed `lastErrorReason` / `errorReason` work, the collector's memory set, and the regex in `src/domain/quotaPool/errorReason.ts`. |
 | 2 | **One notice on every screen.** The normaliser sets `file.signInRequired`. `AccountStateNotice` is used on the six screens. `credentialHealth` counts sign-in. The toast reads the re-read file. The `account_state.*` keys replace `auth_files.status_signin_expired`, `quota_pool.signin_expired*` and `quota_pool.signin_again`. | The regex in `constants.ts` and the screen-specific sentences. |
 | 3 | **One read-status rule.** `server/quota/accountState.ts`. Unpooled cards read stored samples. The client keeps `error` distinct from `stale`, Codex included. | Three status derivations and three no-five-hour-limit rules. |
