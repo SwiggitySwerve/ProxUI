@@ -40,6 +40,7 @@ import { useProviderSources } from '@/stores/useProviderSources';
 import { useCredentialInventoryStore, useSourceFiles } from '@/stores/useCredentialInventoryStore';
 import { sourceOwnerKey } from '@/services/api/sourceSession';
 import { signInExpired } from './model/signInExpired';
+import { oauthPath } from '@/features/oauth/oauthPath';
 import { PoolChart } from './PoolChart';
 import { PoolGraph } from './PoolGraph';
 import { PoolGraphToggle } from './PoolGraphToggle';
@@ -1188,10 +1189,7 @@ export function PoolCard({
                   {signInExpiredIds.has(account.id) && (
                     <p className={styles.stateNote} data-state="stale" role="status">
                       {t('quota_pool.signin_expired_detail')}
-                      <Link
-                        className={styles.noteAction}
-                        to={`/oauth?source=${encodeURIComponent(pool.instanceId ?? '')}`}
-                      >
+                      <Link className={styles.noteAction} to={oauthPath(pool.instanceId ?? '')}>
                         {t('quota_pool.signin_again')}
                       </Link>
                     </p>

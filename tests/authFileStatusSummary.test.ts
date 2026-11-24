@@ -70,9 +70,7 @@ describe('auth file status summary', () => {
         0
       )
     ).toEqual({ kind: 'signin_expired' });
-    expect(i18n.getFixedT('en')('auth_files.status_signin_expired')).toBe(
-      "Sign-in expired · the provider no longer accepts this account's sign-in"
-    );
+    expect(i18n.getFixedT('en')('auth_files.status_signin_expired')).toBe('Sign-in expired');
   });
 
   test('falls back to the inner message, then to the original text', () => {

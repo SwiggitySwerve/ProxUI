@@ -46,6 +46,7 @@ import { AuthFileCooldownSection } from './AuthFileCooldownSection';
 import { getSiwcBindingStatus, supportsSiwcBinding } from '@/features/oauth/siwcBinding';
 import { SiwcStatusBadge } from '@/features/oauth/components/SiwcStatusBadge';
 import { useAuthFilesSource } from '../AuthFilesSourceContext';
+import { oauthPath } from '@/features/oauth/oauthPath';
 import styles from './AuthFileCard.module.scss';
 
 export type AuthFileCardProps = {
@@ -331,11 +332,8 @@ export function AuthFileCard(props: AuthFileCardProps) {
                 <IconInfo className={styles.warningIcon} size={14} />
                 <span>{describeStatus(statusWarning)}</span>
                 {statusWarning.kind === 'signin_expired' && (
-                  <Link
-                    className={styles.warningAction}
-                    to={`/oauth?source=${encodeURIComponent(session.owner.instanceId)}`}
-                  >
-                    {t('auth_files.signin_again')}
+                  <Link className={styles.warningAction} to={oauthPath(session.owner.instanceId)}>
+                    {t('quota_pool.signin_again')}
                   </Link>
                 )}
               </div>

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import { oauthPath } from '../src/features/oauth/oauthPath';
 
 // The quota host binds CSS-module classes at import time, which Bun cannot render.
 // Keep these source contracts small; browser checks cover the actual card interactions.
@@ -97,10 +98,13 @@ describe('auth file card sign-in expiry', () => {
     const warning = source.split('{statusWarning && (')[1].split('<AuthFileCooldownSection')[0];
     expect(warning).toContain("statusWarning.kind === 'signin_expired'");
     // OAuth Login signs in on the hub it is given, so the link names this credential's hub.
-    expect(warning).toContain(
-      'to={`/oauth?source=${encodeURIComponent(session.owner.instanceId)}`}'
-    );
-    expect(warning).toContain("{t('auth_files.signin_again')}");
+    expect(warning).toContain('to={oauthPath(session.owner.instanceId)}');
+    expect(warning).toContain("{t('quota_pool.signin_again')}");
     expect(styles).toContain('.warningAction {');
   });
+});
+
+test('OAuth Login links name their hub', () => {
+  // A sign-in on the default hub would save the credential on the wrong one.
+  expect(oauthPath('claude primary')).toBe('/oauth?source=claude%20primary');
 });
