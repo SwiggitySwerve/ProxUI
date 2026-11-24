@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and install Prox UI, quota history and usage collection. Never restart either inference proxy.
+# Build and install ProxUI, quota history and usage collection. Never restart either inference proxy.
 set -euo pipefail
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo"
@@ -137,9 +137,9 @@ curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1
 systemctl --user enable --now prox-sources.path prox-sources-apply.timer
 trap - EXIT
 if ((sources_failed)); then
-  echo 'Prox UI deployed, but prox-sources-apply failed; the previous source routes stay live.' \
+  echo 'ProxUI deployed, but prox-sources-apply failed; the previous source routes stay live.' \
     'See journalctl --user -u prox-sources-apply.service. The timer retries it; prox-history' \
     'picks up a changed or removed baked source only at its next restart (the next deploy).' >&2
   exit 1
 fi
-echo 'Prox UI deployed. Cluster routing and Authentik registration are separate; see docs/PROX-SETUP.md.'
+echo 'ProxUI deployed. Cluster routing and Authentik registration are separate; see docs/PROX-SETUP.md.'

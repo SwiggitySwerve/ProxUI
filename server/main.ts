@@ -51,7 +51,7 @@ startEventLoopLagProbe();
 // Keep the default analytics views warm so page loads never wait on slow scans.
 void analyticsHandler.warm();
 const analyticsWarmer = setInterval(() => void analyticsHandler.warm(), 15_000);
-console.log('Prox quota history listening on loopback port 18319');
+console.log('ProxUI quota history listening on loopback port 18319');
 const shutdown = () => {
   collector.stop();
   clearInterval(analyticsWarmer);

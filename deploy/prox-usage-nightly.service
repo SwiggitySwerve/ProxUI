@@ -1,7 +1,7 @@
 # Installed disabled by scripts/deploy-homelab.sh; the coordinator enables the timer.
 # Runs the bundles that deploy built from the deployed commit, never a source checkout.
 [Unit]
-Description=Serial Prox usage prune, reconcile, backup and parity
+Description=Serial ProxUI usage prune, reconcile, backup and parity
 After=prox-usage.service
 
 [Service]

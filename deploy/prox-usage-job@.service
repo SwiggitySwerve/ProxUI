@@ -1,5 +1,5 @@
 [Unit]
-Description=Submit Prox usage %i job
+Description=Submit ProxUI usage %i job
 After=prox-usage.service
 
 [Service]

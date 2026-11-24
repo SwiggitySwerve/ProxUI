@@ -23,7 +23,7 @@ An audit on 2026-11-24 found these causes:
 
 ## The rule
 
-> Every fact has exactly one owner, which computes it once. Prox serves it from one read model. The browser holds one copy, and one component turns it into words. Below the point where Prox parses a backend answer, nothing computes the fact again, and no component fetches or forces a refresh of it.
+> Every fact has exactly one owner, which computes it once. ProxUI serves it from one read model. The browser holds one copy, and one component turns it into words. Below the point where ProxUI parses a backend answer, nothing computes the fact again, and no component fetches or forces a refresh of it.
 
 ## Owners
 
@@ -44,7 +44,7 @@ An audit on 2026-11-24 found these causes:
 
 Every fact on this page needs a row in this table. A fact without a row has no owner yet: add the row before you add code.
 
-## Sign-in required: the hub keeps it, Prox copies it
+## Sign-in required: the hub keeps it, ProxUI copies it
 
 ### What the hub forgets today
 
@@ -52,7 +52,7 @@ Every fact on this page needs a row in this table. A fact without a row has no o
 - After a hub restart a file-backed credential loads as `active` unless it is disabled (`internal/watcher/synthesizer/file.go:263`). It looks healthy until its next refresh fails, which can be hours away.
 - No persisted field reliably marks recovery. `last_refresh` is runtime `LastRefreshedAt`, which file loading leaves unset and a file replacement can carry over (`auth_files.go:751`, `conductor_lifecycle.go:494`). After a same-file sign-in on 2026-11-24 the hub still reported the old `last_refresh`.
 
-Guessing around that in Prox (a regex over messages, or a latch with an unreliable clear signal) is how the drift started. The owner has to stop forgetting.
+Guessing around that in ProxUI (a regex over messages, or a latch with an unreliable clear signal) is how the drift started. The owner has to stop forgetting.
 
 ### The rule (migration step 0, in ProxD)
 
@@ -70,9 +70,9 @@ The hub already decides sign-in correctly while it runs, including the per-grant
 - **Clear on the hub's own recovery rule.** The flag is cleared, and the file saved, only when the hub's existing logic clears it in memory: the rejected grant refreshes, or there is a new sign-in.
 - The hub's `requires_sign_in` output then means the same thing before and after a restart.
 
-### In Prox
+### In ProxUI
 
-- **Prox copies `requires_sign_in`; it never infers sign-in from status text.**
+- **ProxUI copies `requires_sign_in`; it never infers sign-in from status text.**
   - The collector stores it as `quota_accounts.signInRequired` in the same upsert as `disabled`, on every inventory read. It does not wait for a failed poll, and it does not keep it in memory.
   - The browser reads the same field from the hub list it already holds, in the auth-file normaliser (`src/services/api/authFiles.ts`), as `file.signInRequired`.
   - Both copies come from one owner through one field.
@@ -90,7 +90,7 @@ The hub already decides sign-in correctly while it runs, including the per-grant
 
 There are three kinds of change, and each has one path:
 
-- **Inventory changes** (a credential added, removed, disabled or needing sign-in; a provider added or removed within a source) reach every screen through the `/v1/inventory` version. The browser polls it every 5 seconds and re-reads the hub lists, the pool and the served accounts in one commit. An action in Prox (add, remove, edit) also calls `notifyAuthFilesChanged`, which runs `commitChange`.
+- **Inventory changes** (a credential added, removed, disabled or needing sign-in; a provider added or removed within a source) reach every screen through the `/v1/inventory` version. The browser polls it every 5 seconds and re-reads the hub lists, the pool and the served accounts in one commit. An action in ProxUI (add, remove, edit) also calls `notifyAuthFilesChanged`, which runs `commitChange`.
 - **Source membership changes** (a hub added to or dropped from the manifest) reach the browser through `/prox/sources.json`, which the registry polls every 60 seconds. Every screen follows the registry; see below.
 - **Quota-reading updates** (numbers, read status, resets, billing) reach screens through the served-accounts store and the pool resource. An action (refresh, reset, claim) calls `src/features/quotaPool/accountSync.ts`: `refreshPoolAccountAfterReset` until step 6, `refreshAccountEverywhere` after it. Collection cycles reach screens through those stores' own polls.
 
@@ -157,7 +157,7 @@ Its `reader` is what the catalog advertises, limited to readers prox-history act
 - a `builtin` reader only if prox-history ships it (Claude and Codex);
 - otherwise, or when the catalog omits the provider, `none`.
 
-So the hub's `builtin` Antigravity reader becomes `none` in Prox. This is decided in `providerSet` (step 4), and the collector reads quota only for entries whose reader is not `none`. A catalogued provider keeps its reader once its first credential arrives and it leaves the waiting set.
+So the hub's `builtin` Antigravity reader becomes `none` in ProxUI. This is decided in `providerSet` (step 4), and the collector reads quota only for entries whose reader is not `none`. A catalogued provider keeps its reader once its first credential arrives and it leaves the waiting set.
 
 ### A reader is an attribute, not a membership test
 

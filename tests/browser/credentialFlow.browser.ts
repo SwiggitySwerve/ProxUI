@@ -204,7 +204,7 @@ test('add: every screen shows the new credential at once, and the server polls i
     .toBeGreaterThanOrEqual(1);
 });
 
-test('external change: a credential added or removed outside Prox is found by the poll', async ({
+test('external change: a credential added or removed outside ProxUI is found by the poll', async ({
   flow,
   context,
 }) => {
@@ -297,7 +297,7 @@ test('503 inventory: nothing retires, screens keep what they have, other sources
   expect((await flow.state()).accounts.every((account) => !account.retired)).toBe(true);
   await expectEveryScreen(tabs, START, 2000); // nothing disappeared from any screen
 
-  // A healthy source is not held hostage: deleting dave in Prox still purges him everywhere.
+  // A healthy source is not held hostage: deleting dave in ProxUI still purges him everywhere.
   await removeInProx(tabs.files, 'dave');
   await expect
     .poll(async () => (await screens(tabs)).dashboard, { timeout: 5000 })

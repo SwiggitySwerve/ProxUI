@@ -1,4 +1,4 @@
-"""Repeatable browser fixtures for Prox UI review; never reads real credentials."""
+"""Repeatable browser fixtures for ProxUI review; never reads real credentials."""
 
 import argparse
 import asyncio
@@ -4814,7 +4814,7 @@ async def main():
                         await page.screenshot(path=str(out / "navigation-error.png"),full_page=True)
                         if attempt == 2:
                             raise
-                assert await page.title() == "Prox"
+                assert await page.title() == "ProxUI"
                 if state in ("error", "loading", "empty"):
                     await page.locator(
                         '[role="alert"]'

@@ -54,14 +54,14 @@ Before any change to an account, a credential or a provider:
 
 - [ ] **List every surface that shows the fact.** Grep the UI for its words and field names, including the provider or source id, across Auth Files, `/quota/accounts`, `/quota`, Dashboard, Models and OAuth. If the fact is computed in more than one place, move it to its owner first; never add another copy.
 - [ ] **Change the owner, not a screen.**
-  - Sign-in required is the hub's `requires_sign_in`, persisted by ProxD. Prox copies that field, in the collector and the auth-file normaliser, and never infers sign-in from status text.
+  - Sign-in required is the hub's `requires_sign_in`, persisted by ProxD. ProxUI copies that field, in the collector and the auth-file normaliser, and never infers sign-in from status text.
   - Read status, the no-five-hour-limit rule, plan and label live in `server/quota/accountState.ts`.
   - Source membership is the effective manifest; the browser registry is its only client copy.
   - Provider membership within a source is the collector's `sourceCatalogEntries` contract.
 - [ ] **Ask what the backend forgets.** Hub runtime state (for example status and status message) resets on a hub restart. Make the owner persist what must survive; never rebuild it downstream from guesses.
 - [ ] **Never hardcode provider lists or ids** (`'claude'`, `'codex'`, `'antigravity'`) to decide what is read, served or shown. Adding or removing a provider is a manifest or catalog change, plus doc updates in the same PR.
 - [ ] **Never fetch or force a store refresh from a component.** Pick the path by the kind of change:
-  - **Inventory changes** (a credential added, removed, disabled or needing sign-in; a provider added or removed within a source) reach every screen through the `/v1/inventory` version, and through `commitChange` for actions in Prox.
+  - **Inventory changes** (a credential added, removed, disabled or needing sign-in; a provider added or removed within a source) reach every screen through the `/v1/inventory` version, and through `commitChange` for actions in ProxUI.
   - **Source membership changes** (a hub added to or dropped from the manifest) reach the browser only through the registry's `/prox/sources.json` discovery, which every screen follows.
   - **Quota-reading updates** (numbers, read status, resets, billing) go through `src/features/quotaPool/accountSync.ts` for refresh, reset and claim, and through the served-accounts store and pool polls otherwise.
 - [ ] **One sentence per state.** Account state is put into words only by `AccountStateNotice` with the `account_state.*` keys. A refresh toast reports its own operation, not account state.

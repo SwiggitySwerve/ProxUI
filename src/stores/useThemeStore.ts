@@ -1,5 +1,5 @@
 /**
- * Prox has one dark theme. Components still read resolvedTheme to pick dark icon variants.
+ * ProxUI has one dark theme. Components still read resolvedTheme to pick dark icon variants.
  */
 
 import { create } from 'zustand';

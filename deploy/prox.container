@@ -1,5 +1,5 @@
 [Unit]
-Description=Prox management UI (separate upstream fork)
+Description=ProxUI management UI (separate upstream fork)
 After=network-online.target
 Wants=network-online.target
 

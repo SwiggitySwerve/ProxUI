@@ -1,6 +1,6 @@
 # Manual-use unit, installed by scripts/deploy-homelab.sh. Runs the deployed bundle, never a checkout.
 [Unit]
-Description=Prox usage parity evidence for the previous UTC day
+Description=ProxUI usage parity evidence for the previous UTC day
 After=network-online.target
 Wants=network-online.target
 

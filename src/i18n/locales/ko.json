@@ -59,7 +59,7 @@
     "unsaved_changes_message": "저장되지 않은 변경 사항이 있습니다. 지금 나가면 변경 사항이 삭제됩니다. 나가시겠습니까?"
   },
   "title": {
-    "login": "CLI Proxy API 관리 센터",
+    "login": "ProxUI",
     "abbr": "CPAMC"
   },
   "login": {
@@ -2149,7 +2149,7 @@
     "models_catalog_refresh_success": "모델 카탈로그가 업데이트되었습니다.",
     "models_catalog_refresh_failed": "모델 카탈로그 업데이트 실패",
     "title": "관리 센터 정보",
-    "about_title": "CLI Proxy API 관리 센터",
+    "about_title": "ProxUI",
     "models_title": "사용 가능한 모델",
     "models_desc": "“목록 새로고침”을 눌러 최신 사용 가능한 모델을 확인하세요. 새 모델이 보이지 않으면 “모델 카탈로그 업데이트”를 시도하세요.",
     "models_loading": "사용 가능한 모델을 불러오는 중...",
@@ -2194,7 +2194,7 @@
     "refresh_part_models": "{{hub}} 모델 목록",
     "refresh_part_quota": "{{hub}} 할당량({{count}}개 실패)",
     "refresh_part_page": "이 페이지",
-    "refresh_hub_denied": "{{hubs}}에서 관리 키를 거부하여 Prox가 요청을 중단했습니다. 올바른 키로 다시 로그인하세요.",
+    "refresh_hub_denied": "{{hubs}}에서 관리 키를 거부하여 ProxUI가 요청을 중단했습니다. 올바른 키로 다시 로그인하세요.",
     "load_failed": "불러오기 실패",
     "update_failed": "업데이트 실패",
     "add_failed": "추가 실패",
@@ -2735,7 +2735,7 @@
     "expand_graph_label": "그래프 확대 ({{graph}})",
     "window_unavailable": "{{window}} 할당량 사용 불가",
     "signin_expired": "Sign-in expired",
-    "signin_expired_detail": "The provider no longer accepts this account's sign-in, so Prox can't read its quota or use it for requests. The figures shown are from the last reading. Sign in to this account again to fix it.",
+    "signin_expired_detail": "The provider no longer accepts this account's sign-in, so ProxUI can't read its quota or use it for requests. The figures shown are from the last reading. Sign in to this account again to fix it.",
     "signin_again": "Sign in again",
     "saved_observation": "저장된 관측값",
     "forecast_unavailable": "사용 불가",
@@ -2752,7 +2752,7 @@
     "runtime_scope": "이 페이지는 {{provider}} 런타임을 사용합니다. 통합 할당량에는 두 제공자가 모두 포함됩니다.",
     "runtime_switching": "런타임 전환 중…",
     "runtime_switch_error": "런타임을 전환하지 못했습니다. 연결을 확인하고 다시 시도하세요.",
-    "eyebrow": "Prox · 통합 할당량",
+    "eyebrow": "ProxUI · 통합 할당량",
     "title": "할당량 관리",
     "show_emails": "이메일 표시",
     "auto_refresh_in": "{{seconds}}초 후 자동 새로고침",
@@ -3110,7 +3110,7 @@
     "loading": "분석 불러오는 중…",
     "error_title": "분석을 사용할 수 없음",
     "errors": {
-      "unsupported": "이 연결은 Analytics 보조 엔드포인트를 지원하지 않습니다. Analytics가 활성화된 Prox 서버에 연결하세요.",
+      "unsupported": "이 연결은 Analytics 보조 엔드포인트를 지원하지 않습니다. Analytics가 활성화된 ProxUI 서버에 연결하세요.",
       "unavailable": "로컬 분석 데이터셋이 설정되지 않았거나 일시적으로 사용할 수 없습니다. 서버의 데이터셋 연결을 확인한 뒤 다시 시도하세요.",
       "failed": "분석 쿼리에 실패했습니다. 보조 서비스 연결을 확인한 뒤 다시 시도하세요."
     },

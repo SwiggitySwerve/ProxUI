@@ -86,4 +86,4 @@ process.once('SIGTERM', exit);
 process.once('SIGINT', exit);
 collectors.forEach((collector) => collector.start());
 startEventLoopLagProbe(console.warn, eventLoopLag);
-console.log('Prox usage listening on loopback port 18320');
+console.log('ProxUI usage listening on loopback port 18320');

@@ -5,7 +5,7 @@ import { useAuthStore } from '../src/stores/useAuthStore';
 import { useConfigStore } from '../src/stores/useConfigStore';
 import { apiClient } from '../src/services/api/client';
 
-describe('Prox management runtime routes', () => {
+describe('ProxUI management runtime routes', () => {
   const { discovery } = loadSourceManifest(
     new URL('../deploy/provider-sources.json', import.meta.url).pathname
   );

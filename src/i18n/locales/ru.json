@@ -59,7 +59,7 @@
     "unsaved_changes_message": "У вас есть несохранённые изменения. Если вы уйдёте, они будут потеряны. Выйти?"
   },
   "title": {
-    "login": "Центр управления CLI Proxy API",
+    "login": "ProxUI",
     "abbr": "CPAMC"
   },
   "login": {
@@ -2156,7 +2156,7 @@
     "models_catalog_refresh_success": "Каталог моделей обновлён.",
     "models_catalog_refresh_failed": "Не удалось обновить каталог моделей",
     "title": "Информация о центре управления",
-    "about_title": "CLI Proxy API Management Center",
+    "about_title": "ProxUI",
     "models_title": "Доступные модели",
     "models_desc": "Нажмите «Обновить список», чтобы увидеть актуальные доступные модели. Если новой модели нет в списке, попробуйте «Обновить каталог моделей».",
     "models_loading": "Загрузка доступных моделей...",
@@ -2201,7 +2201,7 @@
     "refresh_part_models": "списки моделей {{hub}}",
     "refresh_part_quota": "квота {{hub}} (ошибок: {{count}})",
     "refresh_part_page": "эта страница",
-    "refresh_hub_denied": "{{hubs}}: ключ управления отклонён, Prox больше не отправляет туда запросы. Войдите снова с правильным ключом.",
+    "refresh_hub_denied": "{{hubs}}: ключ управления отклонён, ProxUI больше не отправляет туда запросы. Войдите снова с правильным ключом.",
     "load_failed": "Не удалось загрузить",
     "update_failed": "Не удалось обновить",
     "add_failed": "Не удалось добавить",
@@ -2742,7 +2742,7 @@
     "expand_graph_label": "Развернуть график ({{graph}})",
     "window_unavailable": "Квота {{window}} недоступна",
     "signin_expired": "Sign-in expired",
-    "signin_expired_detail": "The provider no longer accepts this account's sign-in, so Prox can't read its quota or use it for requests. The figures shown are from the last reading. Sign in to this account again to fix it.",
+    "signin_expired_detail": "The provider no longer accepts this account's sign-in, so ProxUI can't read its quota or use it for requests. The figures shown are from the last reading. Sign in to this account again to fix it.",
     "signin_again": "Sign in again",
     "saved_observation": "Сохранённое наблюдение",
     "forecast_unavailable": "Недоступно",
@@ -2759,7 +2759,7 @@
     "runtime_scope": "Эта страница использует среду {{provider}}. Общие квоты объединяют обоих провайдеров.",
     "runtime_switching": "Переключение среды…",
     "runtime_switch_error": "Не удалось переключить среду. Проверьте соединение и повторите попытку.",
-    "eyebrow": "Prox · общий пул квот",
+    "eyebrow": "ProxUI · общий пул квот",
     "title": "Управление квотами",
     "show_emails": "Показать почту",
     "auto_refresh_in": "Автообновление через {{seconds}} с",
@@ -3120,7 +3120,7 @@
     "loading": "Загрузка аналитики…",
     "error_title": "Аналитика недоступна",
     "errors": {
-      "unsupported": "Это подключение не поддерживает Analytics. Подключитесь к серверу Prox с включённой аналитикой.",
+      "unsupported": "Это подключение не поддерживает Analytics. Подключитесь к серверу ProxUI с включённой аналитикой.",
       "unavailable": "Локальный набор данных не настроен или временно недоступен. Проверьте привязку на сервере и повторите.",
       "failed": "Не удалось выполнить запрос аналитики. Проверьте подключение и повторите."
     },

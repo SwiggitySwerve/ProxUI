@@ -1,4 +1,4 @@
-/** CPA owns calculations; Prox renders these versioned, safe query results. */
+/** prox-usage owns calculations; ProxUI renders these versioned, safe query results. */
 export interface AnalyticsQuery {
   from_ms: number;
   to_ms: number;

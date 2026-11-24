@@ -5,7 +5,7 @@ Claude credentials on port 8319. They have separate auth directories. Canonical
 filenames and auth indices must stay unchanged when moving an account, because
 the usage dashboard uses them to attribute existing history.
 
-Prox pooled quota reads both runtimes. The detailed account and log pages use
+ProxUI pooled quota reads both runtimes. The detailed account and log pages use
 one runtime at a time, selected by the **Management source** control. Selecting
 Claude uses the same-origin `/claude` management route; selecting Codex uses
 `/codex`. The control is unavailable for arbitrary external backend connections,
@@ -33,7 +33,7 @@ Do not suppress that check or rename credentials to work around it.
    account is not a refresh drain, and an access-token check alone does not prove
    its refresh grant remains usable. Do not describe a live copy as race-free.
 6. Recheck both runtime inventories, both catalogs, the usage dashboard's merged
-   inventory and quotas, and Prox pools. Repeat after the ranking job runs. Read
+   inventory and quotas, and ProxUI pools. Repeat after the ranking job runs. Read
    existing usage history without consuming the production usage queue.
 
 ## Recovery on 2026-10-27

@@ -59,7 +59,7 @@
     "unsaved_changes_message": "You have unsaved changes. Leaving now will discard them. Do you want to leave?"
   },
   "title": {
-    "login": "CLI Proxy API Management Center",
+    "login": "ProxUI",
     "abbr": "CPAMC"
   },
   "login": {
@@ -2149,7 +2149,7 @@
     "models_catalog_refresh_success": "Model catalog updated.",
     "models_catalog_refresh_failed": "Model catalog update failed",
     "title": "Management Center Info",
-    "about_title": "CLI Proxy API Management Center",
+    "about_title": "ProxUI",
     "models_title": "Available Models",
     "models_desc": "Click “Refresh list” to see the latest available models. If a new model is missing, try “Update model catalog”.",
     "models_loading": "Loading available models...",
@@ -2194,7 +2194,7 @@
     "refresh_part_models": "{{hub}} model lists",
     "refresh_part_quota": "{{hub}} quota ({{count}} failed)",
     "refresh_part_page": "this page",
-    "refresh_hub_denied": "{{hubs}} rejected the management key, so Prox stopped calling it. Sign in again with the right key.",
+    "refresh_hub_denied": "{{hubs}} rejected the management key, so ProxUI stopped calling it. Sign in again with the right key.",
     "load_failed": "Load failed",
     "update_failed": "Update failed",
     "add_failed": "Add failed",
@@ -2735,14 +2735,14 @@
     "expand_graph_label": "Expand graph ({{graph}})",
     "window_unavailable": "{{window}} quota unavailable",
     "signin_expired": "Sign-in expired",
-    "signin_expired_detail": "The provider no longer accepts this account's sign-in, so Prox can't read its quota or use it for requests. The figures shown are from the last reading. Sign in to this account again to fix it.",
+    "signin_expired_detail": "The provider no longer accepts this account's sign-in, so ProxUI can't read its quota or use it for requests. The figures shown are from the last reading. Sign in to this account again to fix it.",
     "signin_again": "Sign in again",
     "saved_observation": "Saved observation",
     "forecast_unavailable": "Unavailable",
     "saved_forecast": "Forecast saved",
     "snapshot": "Snapshot",
     "saved_snapshot": "Saved snapshot",
-    "load_error_initial": "The server did not return quota data. Try again in a moment; if it keeps failing, check that the Prox service is running.",
+    "load_error_initial": "The server did not return quota data. Try again in a moment; if it keeps failing, check that the ProxUI service is running.",
     "window_remaining": "{{window}} quota remaining",
     "history_forecast": "History and forecast",
     "forecast_status": "Forecast {{state}}",
@@ -2752,7 +2752,7 @@
     "runtime_scope": "This page uses the {{provider}} runtime. Pooled quotas combine both providers.",
     "runtime_switching": "Switching runtime…",
     "runtime_switch_error": "Could not switch runtimes. Check the connection and try again.",
-    "eyebrow": "Prox · pooled quota",
+    "eyebrow": "ProxUI · pooled quota",
     "title": "Quota Management",
     "show_emails": "Show emails",
     "auto_refresh_in": "Auto-refresh in {{seconds}}s",
@@ -3110,7 +3110,7 @@
     "loading": "Loading analytics…",
     "error_title": "Analytics unavailable",
     "errors": {
-      "unsupported": "This connection does not support the Analytics companion endpoint. Connect to a Prox server with Analytics enabled.",
+      "unsupported": "This connection does not support the Analytics companion endpoint. Connect to a ProxUI server with Analytics enabled.",
       "unavailable": "The local analytics dataset is not configured or is temporarily unavailable. Check the server dataset binding, then retry.",
       "failed": "The analytics query failed. Check the companion connection and retry."
     },

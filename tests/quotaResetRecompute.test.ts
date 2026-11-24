@@ -1,5 +1,5 @@
 /**
- * A Fable reset gives back Fable usage and the weekly usage Fable had spent. Prox does not model
+ * A Fable reset gives back Fable usage and the weekly usage Fable had spent. ProxUI does not model
  * that: after a claim it re-reads the provider, and everything shown is recomputed from the new
  * reading. This drives one claim through the real pieces with a pair of Claude usage responses
  * (before and after, shaped like the live 38% -> 86% weekly jump): the client claim, the targeted
@@ -258,7 +258,7 @@ test('a Fable claim recomputes pool points, forecast, resets and every page from
     expect(remaining(store, 'seven-day-fable')).toBe(60);
   }
 
-  // Claim from a page. Prox asks the provider again, right away, and does not model the refund.
+  // Claim from a page. ProxUI asks the provider again, right away, and does not model the refund.
   clock += 60_000;
   const answer = await createSourceResetGrants(authFiles.session).operations.run(
     'carol.json',

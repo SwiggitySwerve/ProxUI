@@ -114,7 +114,7 @@ describe('cells', () => {
   });
 });
 
-describe('the writes Prox computes', () => {
+describe('the writes ProxUI computes', () => {
   test('column off reaches the account that has its own list', () => {
     const inv = inventory();
     const plan = planAccessWrites(inv, stage(inv, column(inv, 'claude-haiku-4-5', false)));

@@ -87,7 +87,7 @@ test('the splash shows on the deep link while the session restores', async ({ pa
     await route.fallback();
   });
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Prox', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'ProxUI', exact: true })).toBeVisible();
   await expect(page).toHaveURL(linkUrl);
   await expect(page.locator('input[type=password]')).toHaveCount(0);
   release();
