@@ -366,6 +366,17 @@ def fixture(state):
     )
 
 
+def fixture_reset_events(state, url):
+    """g13: in real-open every Claude row has used a weekly reset, so "Last used" shows as it does live."""
+    if state != "real-open" or "provider=claude" not in url:
+        return []
+    claude = next(pool for pool in fixture(state)["pools"] if pool["provider"] == "claude")
+    return [dict(id=index + 1, accountId=account["id"], provider="claude", kind="weekly", outcome="reset",
+                 requestedAtMs=NOW - 2 * DAY + index * 3_600_000, settledAtMs=NOW - 2 * DAY + index * 3_600_000,
+                 cooldownCleared=None)
+            for index, account in enumerate(claude["accounts"])]
+
+
 GEOMETRY = r"""(providedRoot) => {
   const root=providedRoot||document.querySelector('[class*="QuotaPoolPage"][class*="__page___"]');
   const origin=providedRoot?root.getBoundingClientRect():{x:-scrollX,y:-scrollY};
@@ -1206,14 +1217,8 @@ async def open_fixture_page(browser, url, state, width, lng, view, height=1000, 
             await route.fulfill(json={"version": "fixture", "syncedAtMs": NOW, "sources": []})
         elif "/prox/refresh" in request_url:
             await route.fulfill(json=fixture(state))
-        elif "/prox/resets/events" in request_url and state == "real-open" and "provider=claude" in request_url:
-            # g13: every opened Claude row has used a weekly reset, so "Last used" shows as it does live.
-            claude = next(pool for pool in fixture(state)["pools"] if pool["provider"] == "claude")
-            await route.fulfill(json={"events": [
-                dict(id=index + 1, accountId=account["id"], provider="claude", kind="weekly", outcome="reset",
-                     requestedAtMs=NOW - 2 * DAY + index * 3_600_000, settledAtMs=NOW - 2 * DAY + index * 3_600_000,
-                     cooldownCleared=None)
-                for index, account in enumerate(claude["accounts"])]})
+        elif "/prox/resets/events" in request_url:
+            await route.fulfill(json={"events": fixture_reset_events(state, request_url)})
         elif "/prox/pools" in request_url and failing:
             await route.fulfill(status=503, json={"error": "Fixture unavailable"})
         elif "/prox/pools" in request_url:
@@ -2917,7 +2922,7 @@ async def check_header_consistency(browser, url, page, name, state, width):
 
 # D checks (round d1): the account details panel and the reset dialog. Each has its own JSON key, registered in
 # D_KEYS for the summary and the exit gate. A check that finds nothing to measure where it applies fails.
-D_KEYS = ("factPanelGapFailures", "predictedEmptyFailures", "resetReasonFailures", "resetDialogFailures")
+D_KEYS = ("factPanelGapFailures", "predictedEmptyFailures", "resetReasonFailures", "resetDialogFailures", "lastUsedFailures")
 D_GAP_WIDTHS = (390, 820, 1100, 1280, 1440, 1920)
 D_PRELUDE = C1_PRELUDE + r"""
 const textRight = el => { // the right edge of the painted text, not of its box
@@ -3044,6 +3049,31 @@ async def check_predicted_empty(page, state, width):
       const labels = rows.flatMap(row => [...row.querySelectorAll('[class*="__accountFacts___"] dt')].filter(shown).map(dt => dt.textContent.trim()).filter(t => /^Predicted empty/.test(t)));
       if (!labels.length) return [{why: 'no Predicted empty label to measure'}];
       return labels.filter(t => !/^Predicted empty \((weekly|5-hour)\)$/.test(t)).map(t => ({why: 'Predicted empty does not name its window', label: t}));
+    }""")
+
+
+async def check_last_used(page, state):
+    """g13: in an opened row of real-open (every Claude row has used a reset), "Last used" and its date each hold one
+    line, with the reset kind on the line under the date, at every width (live, the label wrapped to "Last / used"
+    beside "Weekly reset · Nov 21, 10:47 AM UTC")."""
+    if state != "real-open":
+        return []
+    return await page.evaluate("""() => {
+      const fails = [], lines = e => { const r = document.createRange(); r.selectNodeContents(e); const tops = [];
+        for (const q of r.getClientRects()) if (q.width > 0 && !tops.some(t => Math.abs(t - q.top) < 6)) tops.push(q.top); return tops.length; };
+      const labels = [...document.querySelectorAll('article details[open] section[data-tone="accent"] dt')]
+        .filter(dt => dt.textContent.trim() === 'Last used' && dt.getBoundingClientRect().width > 0);
+      if (!labels.length) fails.push({why: 'no opened row shows Last used'});
+      for (const dt of labels) {
+        const value = dt.parentElement.querySelector('dd:not([class*="__detail___"])'), kind = dt.parentElement.querySelector('dd[class*="__detail___"]');
+        if (lines(dt) !== 1) fails.push({why: `the Last used label takes ${lines(dt)} lines`});
+        if (!value || lines(value) !== 1) fails.push({why: 'the Last used date does not hold one line', text: value?.textContent});
+        // The kind is its own single line, below the date (not beside or above it), and names the reset.
+        const below = kind && value && kind.getBoundingClientRect().top >= value.getBoundingClientRect().bottom - 1;
+        if (!kind || !/reset/i.test(kind.textContent) || lines(kind) !== 1 || !below)
+          fails.push({why: 'the reset kind is not one line under the date', text: kind?.textContent, lines: kind && lines(kind)});
+      }
+      return fails;
     }""")
 
 
@@ -4636,6 +4666,7 @@ async def main():
         ("real-1100", "real", 1100, 900),
         ("real-narrow", "real", 390, 844),
         ("real-open", "real-open", 1440, 1000),
+        ("real-open-narrow", "real-open", 390, 844),
         ("real-retired", "real-retired", 1440, 1000),
         ("real-retired-narrow", "real-retired", 390, 844),
         ("drain", "drain", 1440, 1000),
@@ -4746,7 +4777,7 @@ async def main():
                         await route.fulfill(json={"accounts": []})
                         return
                     if "/prox/resets/events" in url:
-                        await route.fulfill(json={"events": []})
+                        await route.fulfill(json={"events": fixture_reset_events(state, url)})
                         return
                     if "/prox/pools" in url:
                         if state == "loading":
@@ -5030,6 +5061,7 @@ async def main():
                 results[name]["factPanelGapFailures"] = await check_fact_panel_gap(page, state, width)
                 results[name]["predictedEmptyFailures"] = await check_predicted_empty(page, state, width)
                 results[name]["resetReasonFailures"] = reset_reason_failures
+                results[name]["lastUsedFailures"] = await check_last_used(page, state)
                 results[name]["resetDialogFailures"] = dialog_failures
                 results[name]["resetDialogFactsFailures"] = dialog_facts_failures
                 results[name]["captionFailures"] = await check_captions(page, name, state, width)
