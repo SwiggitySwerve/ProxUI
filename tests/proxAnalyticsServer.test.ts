@@ -117,7 +117,7 @@ const request = (body: unknown = query, key = 'synthetic-view-key', headers = {}
     body: JSON.stringify(body),
   });
 
-describe('Prox analytics bridge', () => {
+describe('ProxUI analytics bridge', () => {
   test('authenticates before querying any source', async () => {
     const f = fixture();
     try {

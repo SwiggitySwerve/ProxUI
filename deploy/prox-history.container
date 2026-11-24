@@ -1,5 +1,5 @@
 [Unit]
-Description=Prox quota snapshots and forecasts
+Description=ProxUI quota snapshots and forecasts
 After=network-online.target
 Wants=network-online.target
 

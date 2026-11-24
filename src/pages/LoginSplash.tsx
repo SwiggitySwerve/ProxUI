@@ -30,7 +30,7 @@ export function LoginSplash() {
       <span className={styles.splashLogo}>
         <BrandMark animated />
       </span>
-      <h1 className={styles.splashTitle}>Prox</h1>
+      <h1 className={styles.splashTitle}>ProxUI</h1>
       <p className={styles.splashSubtitle}>{t('sidebar.subtitle')}</p>
       <div className={styles.splashLoader}>
         <div className={styles.splashLoaderBar} />

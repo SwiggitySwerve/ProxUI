@@ -2,7 +2,7 @@
 # instances.json changes and by prox-sources-apply.timer every 10 minutes. Runs the bundle built
 # from the deployed commit, never a source checkout.
 [Unit]
-Description=Probe ProxD hubs and publish Prox source routes
+Description=Probe ProxD hubs and publish ProxUI source routes
 After=prox.service
 
 [Service]

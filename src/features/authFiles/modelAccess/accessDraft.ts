@@ -1,7 +1,7 @@
 /**
- * The on/off grid of the Models screen: staged switches, and the list writes Prox computes for them.
+ * The on/off grid of the Models screen: staged switches, and the list writes ProxUI computes for them.
  *
- * Every cell means "this account serves this model". The user never chooses a list: Prox works out
+ * Every cell means "this account serves this model". The user never chooses a list: ProxUI works out
  * which lists to write from the result they asked for (accessRule.ts has the backend rule):
  *
  * - The provider list is the shared default. Every account without a list of its own follows it,

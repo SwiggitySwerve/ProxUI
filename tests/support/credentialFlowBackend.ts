@@ -1,7 +1,7 @@
 /**
  * Backend for the credential-flow browser test. Run with Bun (the real store needs bun:sqlite):
  * two fake CLI-Proxy instances plus the REAL prox-history handler, store and collector pointed at
- * them, and a small control API the test uses to change credentials "from outside Prox", make an
+ * them, and a small control API the test uses to change credentials "from outside ProxUI", make an
  * instance fail, and move the server clock. Everything is synthetic and bound to loopback;
  * no real CLI-Proxy, prox-history or credential file is read.
  *

@@ -59,7 +59,7 @@
     "unsaved_changes_message": "你有未保存的更改，离开后将丢失这些更改。确定要离开吗？"
   },
   "title": {
-    "login": "CLI Proxy API Management Center",
+    "login": "ProxUI",
     "abbr": "CPAMC"
   },
   "login": {
@@ -2147,7 +2147,7 @@
     "models_catalog_refresh_success": "模型目录更新完成。",
     "models_catalog_refresh_failed": "模型目录更新失败",
     "title": "管理中心信息",
-    "about_title": "CLI Proxy API Management Center",
+    "about_title": "ProxUI",
     "models_title": "可用模型列表",
     "models_desc": "点击“刷新列表”查看最新可用模型；找不到新模型时，可尝试“更新模型目录”。",
     "models_loading": "正在加载可用模型...",
@@ -2192,7 +2192,7 @@
     "refresh_part_models": "{{hub}} 模型列表",
     "refresh_part_quota": "{{hub}} 额度（{{count}} 个失败）",
     "refresh_part_page": "当前页面",
-    "refresh_hub_denied": "{{hubs}} 拒绝了管理密钥，Prox 已停止向其发送请求。请使用正确的密钥重新登录。",
+    "refresh_hub_denied": "{{hubs}} 拒绝了管理密钥，ProxUI 已停止向其发送请求。请使用正确的密钥重新登录。",
     "load_failed": "加载失败",
     "update_failed": "更新失败",
     "add_failed": "添加失败",
@@ -2733,7 +2733,7 @@
     "expand_graph_label": "展开图表 ({{graph}})",
     "window_unavailable": "{{window}}配额不可用",
     "signin_expired": "Sign-in expired",
-    "signin_expired_detail": "The provider no longer accepts this account's sign-in, so Prox can't read its quota or use it for requests. The figures shown are from the last reading. Sign in to this account again to fix it.",
+    "signin_expired_detail": "The provider no longer accepts this account's sign-in, so ProxUI can't read its quota or use it for requests. The figures shown are from the last reading. Sign in to this account again to fix it.",
     "signin_again": "Sign in again",
     "saved_observation": "已保存的观测",
     "forecast_unavailable": "不可用",
@@ -2750,7 +2750,7 @@
     "runtime_scope": "此页面使用 {{provider}} 实例。汇总额度包含两个提供商。",
     "runtime_switching": "正在切换实例…",
     "runtime_switch_error": "无法切换实例。请检查连接后重试。",
-    "eyebrow": "Prox · 共享额度",
+    "eyebrow": "ProxUI · 共享额度",
     "title": "额度管理",
     "show_emails": "显示邮箱",
     "auto_refresh_in": "{{seconds}} 秒后自动刷新",
@@ -3108,7 +3108,7 @@
     "loading": "正在加载分析…",
     "error_title": "分析不可用",
     "errors": {
-      "unsupported": "此连接不支持分析伴随服务端点。请连接已启用分析的 Prox 服务器。",
+      "unsupported": "此连接不支持分析伴随服务端点。请连接已启用分析的 ProxUI 服务器。",
       "unavailable": "本地分析数据集未配置或暂时不可用。请检查服务器数据集绑定后重试。",
       "failed": "分析查询失败。请检查伴随服务连接后重试。"
     },

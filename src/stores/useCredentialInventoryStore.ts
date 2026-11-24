@@ -9,7 +9,7 @@
  *
  * Changes arrive three ways: the acting tab awaits the server sync and refreshes at once
  * (`commitChange`), other tabs hear it on a BroadcastChannel, and anything else (another device,
- * a file changed outside Prox) is found by the 5 s ETag poll. The server is the source of truth:
+ * a file changed outside ProxUI) is found by the 5 s ETag poll. The server is the source of truth:
  * an event only says "look again".
  */
 import { create } from 'zustand';

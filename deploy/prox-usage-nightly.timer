@@ -1,6 +1,6 @@
 # Template only: deployment installs disabled. No catch-up run at login.
 [Unit]
-Description=Serial Prox usage nightly maintenance at 04:20 UTC
+Description=Serial ProxUI usage nightly maintenance at 04:20 UTC
 
 [Timer]
 OnCalendar=*-*-* 04:20:00 UTC

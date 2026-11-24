@@ -1074,13 +1074,13 @@ export function MainLayout() {
           className={`sidebar ${sidebarOpen ? 'open' : ''} ${sidebarCollapsed ? 'collapsed' : ''}`}
         >
           <div className="sidebar-header">
-            <div className="sidebar-brand" title="Prox">
+            <div className="sidebar-brand" title="ProxUI">
               <span className="sidebar-brand-mark" aria-hidden="true">
                 <BrandMark />
               </span>
               {showSidebarLabels && (
                 <span className="sidebar-brand-text">
-                  <span className="sidebar-brand-title">Prox</span>
+                  <span className="sidebar-brand-title">ProxUI</span>
                   <span className="sidebar-brand-subtitle">{t('sidebar.subtitle')}</span>
                 </span>
               )}

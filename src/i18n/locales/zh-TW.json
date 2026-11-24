@@ -59,7 +59,7 @@
     "unsaved_changes_message": "你有未儲存的變更，離開後將遺失這些變更。確定要離開嗎？"
   },
   "title": {
-    "login": "CLI Proxy API Management Center",
+    "login": "ProxUI",
     "abbr": "CPAMC"
   },
   "login": {
@@ -2175,7 +2175,7 @@
     "models_catalog_refresh_success": "模型目錄更新完成。",
     "models_catalog_refresh_failed": "模型目錄更新失敗",
     "title": "管理中心資訊",
-    "about_title": "CLI Proxy API Management Center",
+    "about_title": "ProxUI",
     "models_title": "可用模型清單",
     "models_desc": "點選「重新整理清單」查看最新可用模型；找不到新模型時，可嘗試「更新模型目錄」。",
     "models_loading": "正在載入可用模型...",
@@ -2220,7 +2220,7 @@
     "refresh_part_models": "{{hub}} 模型清單",
     "refresh_part_quota": "{{hub}} 配額（{{count}} 個失敗）",
     "refresh_part_page": "目前頁面",
-    "refresh_hub_denied": "{{hubs}} 拒絕了管理金鑰，Prox 已停止向其傳送請求。請使用正確的金鑰重新登入。",
+    "refresh_hub_denied": "{{hubs}} 拒絕了管理金鑰，ProxUI 已停止向其傳送請求。請使用正確的金鑰重新登入。",
     "load_failed": "載入失敗",
     "update_failed": "更新失敗",
     "add_failed": "新增失敗",
@@ -2761,7 +2761,7 @@
     "expand_graph_label": "展開圖表 ({{graph}})",
     "window_unavailable": "{{window}}配額無法使用",
     "signin_expired": "Sign-in expired",
-    "signin_expired_detail": "The provider no longer accepts this account's sign-in, so Prox can't read its quota or use it for requests. The figures shown are from the last reading. Sign in to this account again to fix it.",
+    "signin_expired_detail": "The provider no longer accepts this account's sign-in, so ProxUI can't read its quota or use it for requests. The figures shown are from the last reading. Sign in to this account again to fix it.",
     "signin_again": "Sign in again",
     "saved_observation": "已儲存的觀測",
     "forecast_unavailable": "無法使用",
@@ -2778,7 +2778,7 @@
     "runtime_scope": "此頁面使用 {{provider}} 執行個體。彙總額度包含兩個供應商。",
     "runtime_switching": "正在切換執行個體…",
     "runtime_switch_error": "無法切換執行個體。請檢查連線後重試。",
-    "eyebrow": "Prox · 共用額度",
+    "eyebrow": "ProxUI · 共用額度",
     "title": "額度管理",
     "show_emails": "顯示電子郵件",
     "auto_refresh_in": "{{seconds}} 秒後自動重新整理",
@@ -3136,7 +3136,7 @@
     "loading": "正在載入分析…",
     "error_title": "分析無法使用",
     "errors": {
-      "unsupported": "此連線不支援分析伴隨服務端點。請連線至已啟用分析的 Prox 伺服器。",
+      "unsupported": "此連線不支援分析伴隨服務端點。請連線至已啟用分析的 ProxUI 伺服器。",
       "unavailable": "本機分析資料集未設定或暫時無法使用。請檢查伺服器資料集綁定後重試。",
       "failed": "分析查詢失敗。請檢查伴隨服務連線後重試。"
     },

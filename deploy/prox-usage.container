@@ -1,5 +1,5 @@
 [Unit]
-Description=Prox usage collection
+Description=ProxUI usage collection
 After=network-online.target
 Wants=network-online.target
 

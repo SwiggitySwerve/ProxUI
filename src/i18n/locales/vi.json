@@ -59,7 +59,7 @@
     "unsaved_changes_message": "Bạn có thay đổi chưa lưu. Rời đi bây giờ sẽ mất các thay đổi đó. Bạn có muốn rời đi không?"
   },
   "title": {
-    "login": "Trung tâm Quản lý CLI Proxy API",
+    "login": "ProxUI",
     "abbr": "CPAMC"
   },
   "login": {
@@ -2105,7 +2105,7 @@
     "models_catalog_refresh_success": "Đã cập nhật danh mục mô hình.",
     "models_catalog_refresh_failed": "Cập nhật danh mục mô hình thất bại",
     "title": "Thông tin Trung tâm Quản lý",
-    "about_title": "Trung tâm Quản lý CLI Proxy API",
+    "about_title": "ProxUI",
     "models_title": "Model khả dụng",
     "models_desc": "Nhấn “Làm mới danh sách” để xem các mô hình khả dụng mới nhất. Nếu thiếu mô hình mới, hãy thử “Cập nhật danh mục mô hình”.",
     "models_loading": "Đang tải model khả dụng...",
@@ -2144,7 +2144,7 @@
     "refresh_part_models": "danh sách mô hình {{hub}}",
     "refresh_part_quota": "hạn mức {{hub}} ({{count}} thất bại)",
     "refresh_part_page": "trang này",
-    "refresh_hub_denied": "{{hubs}} đã từ chối khóa quản lý, Prox đã ngừng gửi yêu cầu tới đó. Hãy đăng nhập lại bằng khóa đúng.",
+    "refresh_hub_denied": "{{hubs}} đã từ chối khóa quản lý, ProxUI đã ngừng gửi yêu cầu tới đó. Hãy đăng nhập lại bằng khóa đúng.",
     "load_failed": "Tải thất bại",
     "update_failed": "Cập nhật thất bại",
     "add_failed": "Thêm thất bại",
@@ -2741,7 +2741,7 @@
     "expand_graph_label": "Mở rộng biểu đồ ({{graph}})",
     "window_unavailable": "Không có hạn mức {{window}}",
     "signin_expired": "Sign-in expired",
-    "signin_expired_detail": "The provider no longer accepts this account's sign-in, so Prox can't read its quota or use it for requests. The figures shown are from the last reading. Sign in to this account again to fix it.",
+    "signin_expired_detail": "The provider no longer accepts this account's sign-in, so ProxUI can't read its quota or use it for requests. The figures shown are from the last reading. Sign in to this account again to fix it.",
     "signin_again": "Sign in again",
     "saved_observation": "Quan sát đã lưu",
     "forecast_unavailable": "Không khả dụng",
@@ -2758,7 +2758,7 @@
     "runtime_scope": "Trang này sử dụng môi trường {{provider}}. Hạn mức tổng hợp bao gồm cả hai nhà cung cấp.",
     "runtime_switching": "Đang chuyển môi trường…",
     "runtime_switch_error": "Không thể chuyển môi trường. Kiểm tra kết nối và thử lại.",
-    "eyebrow": "Prox · hạn mức gộp",
+    "eyebrow": "ProxUI · hạn mức gộp",
     "title": "Quản lý hạn mức",
     "show_emails": "Hiện email",
     "auto_refresh_in": "Tự làm mới sau {{seconds}} giây",
@@ -3116,7 +3116,7 @@
     "loading": "Đang tải phân tích…",
     "error_title": "Phân tích không khả dụng",
     "errors": {
-      "unsupported": "Kết nối này không hỗ trợ điểm cuối Analytics. Hãy kết nối máy chủ Prox đã bật Analytics.",
+      "unsupported": "Kết nối này không hỗ trợ điểm cuối Analytics. Hãy kết nối máy chủ ProxUI đã bật Analytics.",
       "unavailable": "Tập dữ liệu cục bộ chưa được cấu hình hoặc tạm thời không khả dụng. Kiểm tra liên kết dữ liệu trên máy chủ rồi thử lại.",
       "failed": "Truy vấn phân tích thất bại. Kiểm tra kết nối dịch vụ rồi thử lại."
     },

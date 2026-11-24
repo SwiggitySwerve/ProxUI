@@ -73,7 +73,7 @@ export class SourceRegistry {
   armAuthProbes(): void {
     this.sessions.armAuthProbes();
   }
-  /** Hubs that refused this session's management key; Prox no longer calls them. */
+  /** Hubs that refused this session's management key; ProxUI no longer calls them. */
   deniedSources(): string[] {
     return this.sessions.deniedSources();
   }

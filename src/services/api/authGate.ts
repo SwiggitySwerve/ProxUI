@@ -1,6 +1,6 @@
 /**
  * One hub's management-key gate. A hub bans an address after five wrong-key attempts in a row, and
- * every Prox request reaches it from the same address, so a wrong key must cost at most one
+ * every ProxUI request reaches it from the same address, so a wrong key must cost at most one
  * failed request per refresh:
  *
  *   unverified ──first request──▶ probing ──answer──▶ verified

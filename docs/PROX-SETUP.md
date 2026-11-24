@@ -360,7 +360,7 @@ change installs, enables and runs no live maintenance unit.
 
 ## Runtime hub discovery
 
-Every deploy sets this up; nothing is done by hand. Prox serves its source routes and
+Every deploy sets this up; nothing is done by hand. ProxUI serves its source routes and
 `/prox/sources.json` from `~/.local/share/prox/sources/`, and prox-history reads its
 manifest from there. A hub that ProxD lists in `~/.config/proxd/instances.json` joins
 without an image rebuild. (`~/.config/cli-proxy` is only a legacy symlink to
