@@ -239,6 +239,9 @@ describe('pool card reads the sign-in state it shows', () => {
     expect(card).toContain('}, [sourceOwnerId, errorIds]);');
     expect(card).not.toContain('ensureLoaded(sourceOwner)');
   });
+  test("signing in again opens OAuth Login on the pool's own hub", () => {
+    expect(card).toContain("to={oauthPath(pool.instanceId ?? '')}");
+  });
   test('the status line stays visible on an expired sign-in row at every width', () => {
     expect(card).toContain('data-signin-expired={signInExpiredIds.has(account.id) || undefined}');
     // Phones hide the line when the block says a window is unavailable; wide tables when a cell does.

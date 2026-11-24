@@ -1,6 +1,7 @@
 import { useId, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
+import { oauthPath } from '@/features/oauth/oauthPath';
 import type {
   AccountQuotaWindow,
   PoolDashboard,
@@ -38,10 +39,7 @@ export function DiscoveredQuota({
                   {displayName} <small>· {sourceLabel}</small>
                 </h3>
                 {/* Sign in on the hub that is waiting, not whichever hub is selected. */}
-                <Link
-                  className={styles.accountLink}
-                  to={`/oauth?source=${encodeURIComponent(instanceId)}`}
-                >
+                <Link className={styles.accountLink} to={oauthPath(instanceId)}>
                   {t('provider_catalog.connect_action')} <span aria-hidden="true">→</span>
                 </Link>
               </div>

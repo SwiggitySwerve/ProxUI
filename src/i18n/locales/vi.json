@@ -394,7 +394,7 @@
     "status_limit_resets": "{{limit}} · đặt lại lúc {{time}}",
     "status_rate_limited": "Bị giới hạn tốc độ · thử lại sau",
     "status_rate_limited_until": "Bị giới hạn tốc độ · thử lại sau {{time}}",
-    "status_signin_expired": "Sign-in expired · sign in to this account again from OAuth Login",
+    "status_signin_expired": "Sign-in expired",
     "cooldown_models_one": "{{count}} model đang cooldown",
     "cooldown_models_other": "{{count}} model đang cooldown",
     "cooldown_credential": "Cooldown toàn bộ credential",

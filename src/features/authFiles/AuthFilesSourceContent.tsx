@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { oauthPath } from '@/features/oauth/oauthPath';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
 import { useInterval } from '@/hooks/useInterval';
@@ -554,7 +555,7 @@ export function AuthFilesSourceContent({
   const isNoResults =
     !loading && files.length > 0 && pageItems.length === 0 && shownAwaiting.length === 0;
   const openOAuth = () =>
-    navigate(`/oauth?source=${encodeURIComponent(instanceId)}`, {
+    navigate(oauthPath(instanceId), {
       state: { sourceOwner: sourceScope.session.owner },
     });
   const linkState = { fromAuthFiles: true, sourceOwner: sourceScope.session.owner };
