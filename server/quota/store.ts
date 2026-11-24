@@ -24,6 +24,7 @@ import {
   type StoredCatalogProvider,
 } from './types';
 import { legacyAccountId, sourceAccountId, type LegacySourceMapping } from './identity';
+import type { AccountErrorReason } from '../../src/domain/quotaPool/errorReason';
 import { parsePoolProfile, type PoolProfileKey } from './poolProfiles';
 
 type AccountRow = Omit<
@@ -36,7 +37,7 @@ type AccountRow = Omit<
 };
 
 const QUOTA_ACCOUNT_COLUMNS =
-  'id, provider, name, email, disabled, retired, lastSeenAtMs, lastErrorAtMs, retiredAtMs';
+  'id, provider, name, email, disabled, retired, lastSeenAtMs, lastErrorAtMs, retiredAtMs, lastErrorReason';
 const OBSERVATION_COLUMNS =
   'accountId, window, observedAtMs, remainingPercent, resetAtMs, periodHours';
 
@@ -51,7 +52,8 @@ function quotaAccountsTableSql(tableName: string, ifNotExists = false): string {
         retired INTEGER NOT NULL CHECK (retired IN (0, 1)),
         lastSeenAtMs INTEGER NOT NULL,
         lastErrorAtMs INTEGER,
-        retiredAtMs INTEGER
+        retiredAtMs INTEGER,
+        lastErrorReason TEXT
       );`;
 }
 
@@ -174,6 +176,9 @@ export class QuotaStore {
           .all();
         if (!columns.some((column) => column.name === 'retiredAtMs')) {
           this.db.exec('ALTER TABLE quota_accounts ADD COLUMN retiredAtMs INTEGER');
+        }
+        if (!columns.some((column) => column.name === 'lastErrorReason')) {
+          this.db.exec('ALTER TABLE quota_accounts ADD COLUMN lastErrorReason TEXT');
         }
         if (
           !this.db
@@ -727,7 +732,8 @@ export class QuotaStore {
     this.db
       .query(
         `
-      UPDATE quota_accounts SET lastErrorAtMs = NULL WHERE id = ? AND lastErrorAtMs <= ?
+      UPDATE quota_accounts SET lastErrorAtMs = NULL, lastErrorReason = NULL
+      WHERE id = ? AND lastErrorAtMs <= ?
     `
       )
       .run(accountId, observedAtMs);
@@ -766,8 +772,10 @@ export class QuotaStore {
       .run(accountId, plan, latest ? fromMs : 0);
   }
 
-  markAccountError(id: string, nowMs: number): void {
-    this.db.query('UPDATE quota_accounts SET lastErrorAtMs = ? WHERE id = ?').run(nowMs, id);
+  markAccountError(id: string, nowMs: number, reason: AccountErrorReason | null = null): void {
+    this.db
+      .query('UPDATE quota_accounts SET lastErrorAtMs = ?, lastErrorReason = ? WHERE id = ?')
+      .run(nowMs, reason, id);
   }
 
   /** Drops old samples and purges accounts retired for the whole grace period; returns their ids. */

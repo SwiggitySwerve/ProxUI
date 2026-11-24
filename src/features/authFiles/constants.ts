@@ -17,6 +17,7 @@ import type { AuthFileItem, ResolvedTheme, ThemeColors } from '@/types';
 import { normalizeOAuthProviderKey } from '@/utils/providerKeys';
 import { parseTimestamp } from '@/utils/timestamp';
 import { TYPE_COLORS } from '@/utils/quota';
+import { isSignInExpiredMessage } from '@/domain/quotaPool/errorReason';
 
 export type { ResolvedTheme, ThemeColors, TypeColorSet } from '@/types';
 export type AuthFileModelItem = {
@@ -131,13 +132,9 @@ export type AuthFileStatusSummary =
   | { kind: 'signin_expired' }
   | { kind: 'message'; text: string };
 
-// The hub's status for a rejected refresh token (ProxD conductor_refresh.go) and the provider's
-// own answer, e.g. Anthropic's {"error": "invalid_grant", "error_description": "Refresh token expired"}.
-const SIGNIN_EXPIRED = /refresh token (invalid|expired)|invalid_grant/i;
-
 /** Upstream errors arrive as raw JSON; reduce them to what the card should say. */
 export const summarizeAuthFileStatusMessage = (raw: string): AuthFileStatusSummary => {
-  if (SIGNIN_EXPIRED.test(raw)) return { kind: 'signin_expired' };
+  if (isSignInExpiredMessage(raw)) return { kind: 'signin_expired' };
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);

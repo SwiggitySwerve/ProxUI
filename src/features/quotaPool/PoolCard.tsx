@@ -36,10 +36,6 @@ import { profileWindowId } from '@/domain/quotaWindows/normalized';
 import { isBuiltInPoolProvider } from '@/domain/quotaPool/providers';
 import { heldResetKinds, wasSpent, type ResetKindCount } from './resetAccounts';
 import { PoolAccountResets, ResetKindCounts } from './PoolAccountResets';
-import { useProviderSources } from '@/stores/useProviderSources';
-import { useCredentialInventoryStore, useSourceFiles } from '@/stores/useCredentialInventoryStore';
-import { sourceOwnerKey } from '@/services/api/sourceSession';
-import { signInExpired } from './model/signInExpired';
 import { oauthPath } from '@/features/oauth/oauthPath';
 import { PoolChart } from './PoolChart';
 import { PoolGraph } from './PoolGraph';
@@ -296,26 +292,10 @@ export function PoolCard({
     (account) => account.status === 'error' || account.status === 'missing-window'
   );
   const staleAccounts = pool.accounts.filter((account) => account.status === 'stale');
-  // An unreadable account may have lost its sign-in; the hub's credential list says so. It is
-  // read only when a row needs it.
-  const registry = useProviderSources();
-  const sourceView = registry.sources.find((view) => view.source.instanceId === pool.instanceId);
-  const errorIds = pool.accounts
-    .filter((account) => account.status === 'error')
-    .map((account) => account.id)
-    .join(',');
-  const sourceOwner =
-    sourceView?.status === 'ready' && errorIds ? sourceView.session?.owner : undefined;
-  const sourceOwnerId = sourceOwner ? sourceOwnerKey(sourceOwner) : null;
-  const sourceFiles = useSourceFiles(sourceOwner);
-  // Re-read the list whenever another account fails, even if it is cached: a credential can lose
-  // its sign-in after the list was read, and the inventory poll only notices added or removed ones.
-  useEffect(() => {
-    if (sourceOwnerId) void useCredentialInventoryStore.getState().refresh();
-  }, [sourceOwnerId, errorIds]);
+  // The server says why an unreadable account failed when the hub told it.
   const signInExpiredIds = new Set(
     pool.accounts
-      .filter((account) => signInExpired(sourceFiles, pool.instanceId, pool.provider, account))
+      .filter((account) => account.errorReason === 'signin-expired')
       .map((account) => account.id)
   );
   // The accounts holding the total back. The notice counts them and its action shows them in

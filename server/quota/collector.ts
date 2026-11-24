@@ -59,6 +59,7 @@ import {
 import { CODE_ASSIST_REQUEST_BODY } from '../../src/services/api/antigravitySubscription';
 import { QuotaStore } from './store';
 import type { InventorySourceState, InventorySourceStatus } from './inventory';
+import { isSignInExpiredMessage } from '../../src/domain/quotaPool/errorReason';
 import { codexCreditExpiries, readAccountResets, withCodexCreditDetails } from './resets';
 import { normalizeCodexResetCreditsPayload } from '../../src/utils/quota/resetCredits';
 import {
@@ -161,6 +162,8 @@ interface InventoryAccount {
   chatgptAccountId: string | null;
   /** Antigravity's Cloud Code project, which its quota read names. */
   projectId: string | null;
+  /** The hub says the provider rejected this credential's refresh token. */
+  signInExpired: boolean;
 }
 
 interface InventoryGroup {
@@ -256,6 +259,8 @@ function inventory(payload: unknown, provider: PoolProviderId, nowMs: number): I
           ? file.id_token.chatgpt_account_id
           : null,
       projectId: boundedString(file.project_id, 256) ? file.project_id : null,
+      signInExpired:
+        typeof file.status_message === 'string' && isSignInExpiredMessage(file.status_message),
       account: {
         id,
         provider,
@@ -453,6 +458,8 @@ export class QuotaCollector {
   private readonly billingAttempts = new Map<string, number>();
   private readonly latestBilling = new Map<string, AccountBilling>();
   private readonly latestWindows = new Map<string, AccountQuotaWindow[]>();
+  /** Accounts whose hub, at its latest inventory read, said their sign-in expired. */
+  private readonly signInExpired = new Set<string>();
   /** Each account's last pool samples, compared with the next poll's (`planChangeSuspected`). */
   private readonly latestPoolSamples = new Map<string, QuotaSample[]>();
   /**
@@ -757,6 +764,7 @@ export class QuotaCollector {
       this.billingAttempts.delete(id);
       this.latestBilling.delete(id);
       this.latestWindows.delete(id);
+      this.signInExpired.delete(id);
       this.latestPoolSamples.delete(id);
       this.suspectedPlanChanges.delete(id);
       this.latestBalances.delete(id);
@@ -899,6 +907,10 @@ export class QuotaCollector {
         ({ authIndex }) =>
           this.store.accountIdFor(source.instanceId!, account.provider, authIndex) === account.id
       );
+    if (entry) {
+      if (entry.signInExpired) this.signInExpired.add(account.id);
+      else this.signInExpired.delete(account.id);
+    }
     return entry && !entry.account.disabled ? { key, entry } : null;
   }
 
@@ -1281,7 +1293,7 @@ export class QuotaCollector {
       if (!signal.aborted && this.store.isLive(account.id)) {
         console.error(`Quota request failed: ${account.provider} ${failureDetail(upstream)}`);
         this.addIssue(source, account.provider, 'quota-unavailable');
-        this.store.markAccountError(account.id, this.now());
+        this.store.markAccountError(account.id, this.now(), this.errorReason(account.id));
       }
       return false;
     }
@@ -1368,7 +1380,7 @@ export class QuotaCollector {
     } catch {
       if (!signal.aborted && this.store.isLive(account.id)) {
         this.addIssue(source, account.provider, 'quota-unavailable');
-        this.store.markAccountError(account.id, this.now());
+        this.store.markAccountError(account.id, this.now(), this.errorReason(account.id));
       }
       return false;
     }
@@ -1545,6 +1557,11 @@ export class QuotaCollector {
     return { key, groups };
   }
 
+  /** What a failed read records as its cause: only what the hub itself said. */
+  private errorReason(accountId: string) {
+    return this.signInExpired.has(accountId) ? ('signin-expired' as const) : null;
+  }
+
   private stateKey(source: CollectionSource, provider: PoolProviderId): string {
     return JSON.stringify([source.instanceId ?? source.label, provider]);
   }
@@ -1609,6 +1626,10 @@ export class QuotaCollector {
               entry.authIndex
             );
           }
+        }
+        for (const { account, signInExpired } of accounts) {
+          if (signInExpired) this.signInExpired.add(account.id);
+          else this.signInExpired.delete(account.id);
         }
         const changed = this.store.recordInventory(
           provider,

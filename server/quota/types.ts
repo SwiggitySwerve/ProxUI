@@ -1,5 +1,6 @@
 import type { ProviderLifecycleState } from '../../src/domain/providerCatalog';
 import type { PoolProviderId, PoolWindow, ResetProviderId } from '../../src/domain/quotaPool/types';
+import type { AccountErrorReason } from '../../src/domain/quotaPool/errorReason';
 
 export interface StoredAccount {
   id: string;
@@ -15,6 +16,8 @@ export interface StoredAccount {
   retiredAtMs?: number;
   lastSeenAtMs: number;
   lastErrorAtMs: number | null;
+  /** Why the last read failed, when the hub said why; cleared with `lastErrorAtMs`. */
+  lastErrorReason?: AccountErrorReason | null;
   /** Latest plan the provider reported, e.g. "promax" or "default_claude_max_20x". */
   plan?: string;
   planObservedAtMs?: number;

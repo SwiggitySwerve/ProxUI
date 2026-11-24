@@ -246,6 +246,20 @@ describe('dashboard evidence and privacy', () => {
       expect(pool.remainingPoints).toBe(total);
     }
   });
+  test('a failed account says why when the hub did, and only while it is failing', () => {
+    const stale = [sample(now - STALE_MS - 1, 50)];
+    const expired = { lastErrorAtMs: now, lastErrorReason: 'signin-expired' as const };
+    const failing = dashboard([account('a', expired)], stale).pools[0].accounts[0];
+    expect(failing.status).toBe('error');
+    expect(failing.errorReason).toBe('signin-expired');
+    // A fresh sample outranks an older failure: the account is ok and gives no reason.
+    const fresh = [sample(now - 120_000, 50)];
+    expect(dashboard([account('a', expired)], fresh).pools[0].accounts[0]).not.toHaveProperty(
+      'errorReason'
+    );
+    const generic = dashboard([account('a', { lastErrorAtMs: now })], stale).pools[0].accounts[0];
+    expect(generic).not.toHaveProperty('errorReason');
+  });
   test('inventory failure preserves uncertainty even when previous quota samples are current', () => {
     const result = buildDashboard([account()], [sample(now, 50)], options, {
       ...collection,

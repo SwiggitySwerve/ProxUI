@@ -685,3 +685,54 @@ describe('QuotaCollector', () => {
     expect(profileCalls()).toHaveLength(2);
   });
 });
+
+describe('why a read failed', () => {
+  const rejected = (request: CapturedRequest) =>
+    request.url.pathname.endsWith('/credentials')
+      ? Response.json({
+          files: [
+            {
+              ...credential(request.provider),
+              status: 'error',
+              status_message: 'unauthorized (refresh token invalid)',
+            },
+          ],
+        })
+      : Response.json({ status_code: 401, body: '{"type":"error"}' });
+
+  test('a failed read on a credential the hub says lost its sign-in records that reason', async () => {
+    const { collector, store } = harness(rejected);
+    await collector.refresh();
+    const accounts = store.listAccounts();
+    expect(accounts.length).toBeGreaterThan(0);
+    for (const account of accounts) {
+      expect(account.lastErrorAtMs).toBe(NOW);
+      expect(account.lastErrorReason).toBe('signin-expired');
+    }
+  });
+
+  test('any other failure records no reason, and a good read clears the error and its reason', async () => {
+    let mode: 'expired' | 'other' | 'ok' = 'expired';
+    const { collector, store, advance } = harness((request) =>
+      mode === 'expired'
+        ? rejected(request)
+        : mode === 'other' && !request.url.pathname.endsWith('/credentials')
+          ? Response.json({ status_code: 500, body: '{}' })
+          : respond(request)
+    );
+    await collector.refresh();
+    expect(store.listAccounts().every((a) => a.lastErrorReason === 'signin-expired')).toBe(true);
+    mode = 'other';
+    advance(REFRESH_INTERVAL_MS);
+    await collector.refresh();
+    expect(
+      store.listAccounts().every((a) => a.lastErrorAtMs !== null && a.lastErrorReason === null)
+    ).toBe(true);
+    mode = 'ok';
+    advance(REFRESH_INTERVAL_MS);
+    await collector.refresh();
+    expect(
+      store.listAccounts().every((a) => a.lastErrorAtMs === null && a.lastErrorReason === null)
+    ).toBe(true);
+  });
+});

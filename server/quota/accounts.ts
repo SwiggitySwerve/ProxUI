@@ -138,6 +138,9 @@ export function buildAccounts(input: AccountsInput): ServerAccountsBody {
       provider: account.provider,
       disabled: account.disabled,
       status,
+      ...(status === 'error' && account.lastErrorReason
+        ? { errorReason: account.lastErrorReason }
+        : {}),
       observedAtMs,
       label: `${account.provider === 'claude' ? 'Claude' : 'Codex'} ${position.get(account.id)}`,
       identifier: maskIdentifier(account.email || account.name),

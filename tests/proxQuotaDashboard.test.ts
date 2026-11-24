@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, jest, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { readFileSync } from 'node:fs';
 import i18n from '../src/i18n';
 import type { PoolDashboard, PoolPoint, QuotaPool } from '../src/domain/quotaPool/types';
@@ -902,6 +903,33 @@ describe('stacked chart geometry', () => {
     expect(markup).not.toContain('Default order');
     expect(markup.indexOf('Roster A')).toBeLessThan(markup.indexOf('Roster B'));
     expect(markup.indexOf('Roster B')).toBeLessThan(markup.indexOf('Roster J'));
+  });
+  test("an account the server says lost its sign-in says so, and links to its hub's sign-in", async () => {
+    await i18n.changeLanguage('en');
+    const render = (errorReason?: 'signin-expired') =>
+      renderToStaticMarkup(
+        createElement(
+          MemoryRouter,
+          null,
+          createElement(PoolCard, {
+            pool: {
+              ...pool,
+              instanceId: 'claude-primary',
+              accounts: [{ ...pool.accounts[0], status: 'error', ...(errorReason ? { errorReason } : {}) }],
+            },
+            dashboard,
+            mode: 'remaining',
+            reveal: false,
+          })
+        )
+      );
+    const expired = render('signin-expired');
+    expect(expired).toContain('data-signin-expired="true"');
+    expect(expired).toContain('Sign-in expired');
+    expect(expired).toContain('href="/oauth?source=claude-primary"');
+    const generic = render();
+    expect(generic).not.toContain('Sign-in expired');
+    expect(generic).toContain('Weekly quota unavailable');
   });
   test('every view groups the one measured fact as Now beside the Forecast', async () => {
     await i18n.changeLanguage('en');

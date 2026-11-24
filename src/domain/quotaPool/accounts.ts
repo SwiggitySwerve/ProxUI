@@ -2,6 +2,7 @@ import type { AccountBilling } from '../accountBilling';
 import type { ClaudeDollarWindow, ClaudeExtraUsage } from '../../types/quota';
 import type { QuotaLane } from '../quotaWindows/lanes';
 import type { AccountResets } from './types';
+import type { AccountErrorReason } from './errorReason';
 
 /** Providers served from prox-history's `/v1/accounts` read model (Antigravity stays hub-direct). */
 export type ServerAccountProvider = 'claude' | 'codex';
@@ -34,6 +35,8 @@ export interface ServerAccount {
    * collector never reads a disabled account. `stale`: no reading in the last 15 minutes.
    */
   status: 'ok' | 'stale' | 'error' | 'disabled';
+  /** With `error`: why the last read failed, when the hub said why. */
+  errorReason?: AccountErrorReason;
   /** When the newest window reading was taken; null when the account has none yet. */
   observedAtMs: number | null;
   /** As /v1/pools: a default label and a masked identifier; `email` only with `reveal=true`. */

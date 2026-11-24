@@ -452,6 +452,9 @@ function buildPool(
       ...(options.reveal ? { email: account.email || account.name } : {}),
       disabled: account.disabled,
       status,
+      ...(status === 'error' && account.lastErrorReason
+        ? { errorReason: account.lastErrorReason }
+        : {}),
       observedAtMs: latest?.observedAtMs ?? null,
       remainingPercent: latest?.remainingPercent ?? null,
       resetAtMs: latest?.resetAtMs ?? null,

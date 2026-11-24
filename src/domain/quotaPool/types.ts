@@ -1,5 +1,6 @@
 import type { AccountBilling } from '../accountBilling';
 import type { NormalizedQuotaBucketScope, PoolProfile } from '../providerCatalog';
+import type { AccountErrorReason } from './errorReason';
 /** Public contract for the server-owned quota history and forecast domain. */
 /** `antigravity` is the Gemini (Google AI) pool, read from an Antigravity hub. */
 export type BuiltInPoolProviderId = 'claude' | 'codex' | 'antigravity';
@@ -39,6 +40,8 @@ export interface PoolAccount {
   disabled: boolean;
   /** `no-limit`: the provider answered and the account has no limit in this window (Ultra or weekly-only Codex, 5-hour). */
   status: 'ok' | 'stale' | 'error' | 'disabled' | 'missing-window' | 'no-limit';
+  /** With `error`: why the last read failed, when the hub said why. */
+  errorReason?: AccountErrorReason;
   observedAtMs: number | null;
   remainingPercent: number | null;
   resetAtMs: number | null;

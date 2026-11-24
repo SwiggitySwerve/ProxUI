@@ -13,7 +13,6 @@ import {
   markSpent,
   wasSpent,
 } from '../src/features/quotaPool/resetAccounts';
-import { signInExpired } from '../src/features/quotaPool/model/signInExpired';
 import type { AuthFileItem } from '../src/types';
 
 const id = (source: string, provider: string, index: string) =>
@@ -210,35 +209,9 @@ test('identical resets group into one line with a count, keeping where each run 
   expect(groupHeldResets([{ at: 5 }, { at: 5 }])).toEqual([{ at: 5, count: 2, first: 0 }]);
 });
 
-describe('pool row sign-in expiry', () => {
-  const account = { status: 'error' as const, sourceAccountId: id('s', 'claude', '42') };
-  const rejected = {
-    ...file('42', 'claude'),
-    status: 'error',
-    statusMessage: 'unauthorized (refresh token invalid)',
-  } as AuthFileItem;
-  test('an unreadable account whose hub credential lost its refresh token must sign in again', () => {
-    expect(signInExpired([rejected], 's', 'claude', account)).toBe(true);
-  });
-  test('any other failure, a healthy row or an unknown credential stays generic', () => {
-    const rateLimited = { ...rejected, statusMessage: '{"error":{"type":"rate_limit_error"}}' };
-    expect(signInExpired([rateLimited], 's', 'claude', account)).toBe(false);
-    expect(signInExpired([rejected], 's', 'claude', { ...account, status: 'stale' })).toBe(false);
-    expect(signInExpired([rejected], 'other', 'claude', account)).toBe(false);
-    expect(signInExpired(undefined, 's', 'claude', account)).toBe(false);
-    expect(signInExpired([rejected], undefined, 'claude', account)).toBe(false);
-  });
-});
-
 describe('pool card reads the sign-in state it shows', () => {
   const card = readFileSync('src/features/quotaPool/PoolCard.tsx', 'utf8');
   const css = readFileSync('src/features/quotaPool/QuotaPoolPage.module.scss', 'utf8');
-  test('a newly failing account re-reads a credential list that may be cached from before', () => {
-    // ensureLoaded keeps a cached list, and the poll only notices added or removed credentials.
-    expect(card).toContain('useCredentialInventoryStore.getState().refresh();');
-    expect(card).toContain('}, [sourceOwnerId, errorIds]);');
-    expect(card).not.toContain('ensureLoaded(sourceOwner)');
-  });
   test("signing in again opens OAuth Login on the pool's own hub", () => {
     expect(card).toContain("to={oauthPath(pool.instanceId ?? '')}");
   });
