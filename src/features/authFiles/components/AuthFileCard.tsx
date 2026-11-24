@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import { getAuthFileRefreshKey } from '@/features/authFiles/manualRefresh';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
@@ -44,6 +45,7 @@ import { quotaUnavailableReason } from '@/features/authFiles/quotaSlot';
 import { AuthFileCooldownSection } from './AuthFileCooldownSection';
 import { getSiwcBindingStatus, supportsSiwcBinding } from '@/features/oauth/siwcBinding';
 import { SiwcStatusBadge } from '@/features/oauth/components/SiwcStatusBadge';
+import { useAuthFilesSource } from '../AuthFilesSourceContext';
 import styles from './AuthFileCard.module.scss';
 
 export type AuthFileCardProps = {
@@ -72,6 +74,8 @@ export type AuthFileCardProps = {
 
 export function AuthFileCard(props: AuthFileCardProps) {
   const { t, i18n } = useTranslation();
+  // Signing in again must reach this credential's hub, not the default one.
+  const { session } = useAuthFilesSource();
   const {
     file,
     compact,
@@ -326,6 +330,14 @@ export function AuthFileCard(props: AuthFileCardProps) {
               <div className={styles.warning} title={rawStatusMessage}>
                 <IconInfo className={styles.warningIcon} size={14} />
                 <span>{describeStatus(statusWarning)}</span>
+                {statusWarning.kind === 'signin_expired' && (
+                  <Link
+                    className={styles.warningAction}
+                    to={`/oauth?source=${encodeURIComponent(session.owner.instanceId)}`}
+                  >
+                    {t('auth_files.signin_again')}
+                  </Link>
+                )}
               </div>
             )}
 

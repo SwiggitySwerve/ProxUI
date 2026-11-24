@@ -190,6 +190,20 @@
   margin-top: 2px;
 }
 
+/* An expired sign-in's way out, at the end of its warning. */
+.warningAction {
+  flex-shrink: 0;
+  align-self: center;
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
 /* ---------- 健康区：eyebrow + 计数 + 状态条 ---------- */
 
 .health {

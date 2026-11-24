@@ -91,3 +91,16 @@ describe('auth file card presentation contract', () => {
     expect(source).toContain('file.disabled ||');
   });
 });
+
+describe('auth file card sign-in expiry', () => {
+  test('an expired sign-in offers a way to sign in again, from the warning itself', () => {
+    const warning = source.split('{statusWarning && (')[1].split('<AuthFileCooldownSection')[0];
+    expect(warning).toContain("statusWarning.kind === 'signin_expired'");
+    // OAuth Login signs in on the hub it is given, so the link names this credential's hub.
+    expect(warning).toContain(
+      'to={`/oauth?source=${encodeURIComponent(session.owner.instanceId)}`}'
+    );
+    expect(warning).toContain("{t('auth_files.signin_again')}");
+    expect(styles).toContain('.warningAction {');
+  });
+});

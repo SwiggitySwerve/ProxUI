@@ -1188,7 +1188,10 @@ export function PoolCard({
                   {signInExpiredIds.has(account.id) && (
                     <p className={styles.stateNote} data-state="stale" role="status">
                       {t('quota_pool.signin_expired_detail')}
-                      <Link className={styles.noteAction} to="/oauth">
+                      <Link
+                        className={styles.noteAction}
+                        to={`/oauth?source=${encodeURIComponent(pool.instanceId ?? '')}`}
+                      >
                         {t('quota_pool.signin_again')}
                       </Link>
                     </p>
