@@ -13,10 +13,11 @@ export function poolChip(
   icon: PoolChipIcon;
   tone: 'neutral' | 'warning';
 } {
+  // A retired source is no longer read on purpose and has no forecast to save, so nothing about it
+  // needs attention, a failed refresh included (the page banner reports that).
+  if (retired) return { state: 'retired', icon: 'retired', tone: 'neutral' };
   // Saved data shown during a retry is expected, so its chip stays neutral; the banner explains it.
   if (savedData) return { state: 'saved', icon: 'saved', tone: 'neutral' };
-  // A retired source is no longer read on purpose, so nothing about it needs attention.
-  if (retired) return { state: 'retired', icon: 'retired', tone: 'neutral' };
   switch (forecastState) {
     case 'ready':
       return { state: forecastState, icon: 'check', tone: 'neutral' };

@@ -368,7 +368,8 @@ export function PoolCard({
   };
   const forecastWithheld = pool.forecastState !== 'ready' && pool.forecastState !== 'no-limit';
   // A withheld forecast with no burn rate has nothing measured to add beside the headline.
-  const showNow = mode !== 'remaining' || !(forecastWithheld && pool.burnPointsPerHour === null);
+  const showNow =
+    !retired && (mode !== 'remaining' || !(forecastWithheld && pool.burnPointsPerHour === null));
   // Claude names its weekly windows "7-day"; the page calls that window Weekly everywhere.
   // The columns show remaining percentages, so the headings say "remaining", not "limit".
   const limitLabel = (limit: (typeof pool.accounts)[number]['windows'][number]) => {
@@ -505,11 +506,12 @@ export function PoolCard({
           },
     { available: 0, usable: 0 }
   );
+  // A retired pool reads nothing on purpose, so no account of it is missing.
   const coverageMissing =
-    pool.loadedCount !== pool.accountCount || pool.eligibleCount !== pool.accountCount;
+    !retired &&
+    (pool.loadedCount !== pool.accountCount || pool.eligibleCount !== pool.accountCount);
   // Accounts without a 5-hour limit are not missing: with all the rest reporting there is no coverage fact.
   const showCoverage =
-    !retired &&
     coverageMissing &&
     !(staleAccounts.length === 0 && noLimitCount > 0 && pool.loadedCount >= pool.eligibleCount);
   const chip = poolChip(pool.forecastState, savedData, retired);
@@ -626,10 +628,10 @@ export function PoolCard({
                 data-tone={chip.tone}
               >
                 <ChipIcon size={13} aria-hidden="true" />
-                {savedData
-                  ? t('quota_pool.saved_forecast')
-                  : retired
+                {retired
                   ? t('quota_pool.history_only')
+                  : savedData
+                  ? t('quota_pool.saved_forecast')
                   : t('quota_pool.forecast_status', {
                       state: t(`quota_pool.state.${pool.forecastState}`).toLocaleLowerCase(
                         i18n.language
@@ -648,20 +650,23 @@ export function PoolCard({
           <div className={styles.leadCard}>
             <div
               className={styles.headline}
-              data-unavailable={pool[metricField[mode]] === null}
+              data-unavailable={retired || pool[metricField[mode]] === null}
               data-rate={mode !== 'remaining'}
               data-no-limit={pool.forecastState === 'no-limit'}
             >
               {/* Unified label-above-value hero across Remaining and Rate views: metric label on top,
                   figure + baseline unit/capacity below. */}
-              {pool.forecastState !== 'no-limit' && headlineContext}
+              {(retired || pool.forecastState !== 'no-limit') && headlineContext}
               <strong>
-                {pool.forecastState === 'no-limit' ? (
+                {/* A retired pool's server balance can be 0 (no eligible accounts), never a value to show. */}
+                {retired ? (
+                  <span className={styles.unavailableValue}>{t('quota_pool.value_retired')}</span>
+                ) : pool.forecastState === 'no-limit' ? (
                   <span className={styles.unavailableValue}>{noLimitLabel}</span>
                 ) : pool[metricField[mode]] === null ? (
                   // A muted word in the number slot, so a withheld total never passes for a value.
                   <span className={styles.unavailableValue}>
-                    {t(retired ? 'quota_pool.value_retired' : 'quota_pool.value_withheld')}
+                    {t('quota_pool.value_withheld')}
                   </span>
                 ) : (
                   <>

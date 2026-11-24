@@ -81,6 +81,36 @@ describe('a retired source', () => {
     expect(markup).not.toContain('counts toward total');
   });
 
+  test('a readable inventory with no eligible account (balance 0) still reads as not collected', async () => {
+    await i18n.changeLanguage('en');
+    const markup = card({
+      ...retired,
+      forecastState: 'no-accounts',
+      remainingPoints: 0,
+      burnPointsPerHour: 0,
+      drainPointsPerHour: 0,
+    });
+    expect(markup).toContain('Not collected');
+    expect(markup).not.toContain('of 0');
+    expect(markup).not.toContain('data-group="now"');
+  });
+
+  test('held resets cached on its account never bring back a coverage count', async () => {
+    await i18n.changeLanguage('en');
+    const resets = { available: 1, usable: 0, blocker: null, nextExpiryAtMs: null, observedAtMs: 300 };
+    const markup = card({ ...retired, accounts: [{ ...account, resets }] });
+    expect(markup).not.toContain('Reporting');
+  });
+
+  test('a failed refresh keeps its chip as history only', async () => {
+    await i18n.changeLanguage('en');
+    const markup = renderToStaticMarkup(
+      createElement(PoolCard, { pool: retired, dashboard, mode: 'remaining', reveal: false, savedData: true })
+    );
+    expect(markup).toContain('History only');
+    expect(markup).not.toContain('Forecast saved');
+  });
+
   test('a pool with one live account is not retired', async () => {
     await i18n.changeLanguage('en');
     const live = { ...account, id: 'opaque-live', disabled: false, status: 'error' as const };
@@ -96,8 +126,8 @@ describe('a retired source', () => {
       icon: 'retired',
       tone: 'neutral',
     });
-    // Saved data during a retry still wins: the page-wide banner explains it.
-    expect(poolChip('partial', true, true).state).toBe('saved');
+    // A failed refresh doesn't make it a saved forecast: it has none (the page banner reports the failure).
+    expect(poolChip('partial', true, true).state).toBe('retired');
   });
 
   test('the Combined legend calls its layer history only, not partial', async () => {

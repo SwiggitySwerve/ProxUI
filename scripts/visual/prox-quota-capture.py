@@ -336,7 +336,14 @@ def fixture(state):
                      # On the shared timeline the server reads a retired layer as 0 after its last point.
                      recorded=[dict(item) for item in history] + [
                          dict(atMs=at, remainingPoints=0, burnPointsPerHour=0, drainPointsPerHour=0)
-                         for at in times[len(history):]])
+                         for at in times[len(history):]],
+                     # Its forecast is zeros on the total's projected timestamps, so the stack stays aligned.
+                     projected=[dict(atMs=item["atMs"], remainingPoints=0, burnPointsPerHour=None,
+                                     drainPointsPerHour=None) for item in total["projected"]])
+        # The total adds the retired history, as the server's does, and keeps the live forecast.
+        added = {item["atMs"]: item["remainingPoints"] for item in history}
+        total["recorded"] = [dict(item, remainingPoints=item["remainingPoints"] + added.get(item["atMs"], 0))
+                             if item["remainingPoints"] is not None else item for item in total["recorded"]]
         combined["all"]["layers"].append(layer)
         combined["antigravity"] = dict(series={key: layer[key] for key in total}, layers=[layer],
                                        unavailableReason=None)

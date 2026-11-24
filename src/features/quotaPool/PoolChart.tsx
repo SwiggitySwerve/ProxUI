@@ -72,16 +72,21 @@ function PoolChartView({
   const unit = t(`quota_pool.${mode === 'remaining' ? 'points' : 'points_hour'}`);
   // The Remaining axis tops out at the larger of capacity and the data (chartGeometry), so its widest
   // label is that number: a retired pool has no capacity, and its top label is its largest reading.
+  // Stacked layers add up at each reading. Projections never pass capacity, so recorded points suffice.
+  const recordedTop = () => {
+    const points = pools.flatMap((pool) => pool.recorded);
+    if (!stackedTotal) return Math.max(0, ...points.map((point) => point.remainingPoints ?? 0));
+    const sums = new Map<number, number>();
+    points.forEach((point) =>
+      sums.set(point.atMs, (sums.get(point.atMs) ?? 0) + (point.remainingPoints ?? 0))
+    );
+    return Math.max(0, ...sums.values());
+  };
   const numberChars = formatPoolNumber(
     Math.max(
-      0,
       stackedTotal?.capacityPoints ?? 0,
-      ...pools.map((pool) =>
-        Math.max(
-          pool.capacityPoints,
-          ...(mode === 'remaining' ? pool.recorded.map((point) => point.remainingPoints ?? 0) : [])
-        )
-      )
+      ...pools.map((pool) => pool.capacityPoints),
+      mode === 'remaining' ? recordedTop() : 0
     ),
     i18n.language
   ).length;
