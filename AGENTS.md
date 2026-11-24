@@ -52,20 +52,25 @@ Account, credential and provider state has one owner per fact: computed once, se
 
 Before any change to an account, a credential or a provider:
 
-- [ ] **List every surface that shows the fact.** Grep the UI for its words and field names, including the provider id, across Auth Files, `/quota/accounts`, `/quota`, Dashboard, Models and OAuth. If the fact is computed in more than one place, move it to its owner first; never add another copy.
+- [ ] **List every surface that shows the fact.** Grep the UI for its words and field names, including the provider or source id, across Auth Files, `/quota/accounts`, `/quota`, Dashboard, Models and OAuth. If the fact is computed in more than one place, move it to its owner first; never add another copy.
 - [ ] **Change the owner, not a screen.**
-  - Hub facts (exists, disabled, sign-in) are parsed only in `src/services/api/authFiles.ts` and the collector's inventory parser, through the shared function in `src/domain/accountState/`.
-  - prox-history facts (read status, no-five-hour-limit, plan, label) live in `server/quota/accountState.ts`.
-  - Provider sets come from `server/quota/providerSet.ts` (manifest plus catalog) and, in the browser, the inventory store's `sources`.
+  - Sign-in required is latched by the prox-history collector from hub evidence (`src/domain/accountState/signIn.ts`), and the browser reads it from `/v1/inventory`.
+  - Read status, the no-five-hour-limit rule, plan and label live in `server/quota/accountState.ts`.
+  - Source membership is the effective manifest; the browser registry is its only client copy.
+  - Provider membership within a source is the collector's `sourceCatalogEntries` contract.
+- [ ] **Ask what the backend forgets.** Hub runtime state (for example `requires_sign_in`, status, status message) resets on a hub restart. Say what survives, and latch or persist what must.
 - [ ] **Never hardcode provider lists or ids** (`'claude'`, `'codex'`, `'antigravity'`) to decide what is read, served or shown. Adding or removing a provider is a manifest or catalog change, plus doc updates in the same PR.
-- [ ] **Never fetch or force a store refresh from a component.**
-  - A change that must reach other screens changes `inventoryVersion`.
-  - Otherwise it goes through `commitChange` (credentials) or `src/features/quotaPool/accountSync.ts` (refresh, reset, claim).
-- [ ] **One sentence per state.** Account state is put into words only by `AccountStateNotice` with the `account_state.*` keys; never write a screen-specific sentence for it.
+- [ ] **Never fetch or force a store refresh from a component.** Pick the path by the kind of change:
+  - **Inventory changes** (a credential added, removed, disabled or needing sign-in; a source or provider added or removed) reach every screen through the `/v1/inventory` version, and through `commitChange` for actions in Prox.
+  - **Quota-reading updates** (numbers, read status, resets, billing) go through `src/features/quotaPool/accountSync.ts` for refresh, reset and claim, and through the served-accounts store and pool polls otherwise.
+- [ ] **One sentence per state.** Account state is put into words only by `AccountStateNotice` with the `account_state.*` keys. A refresh toast reports its own operation, not account state.
 - [ ] **Make the rule executable.** Add a behaviour test at the owner and keep the whole-repo scans listed in the design doc passing. Extend a scan rather than an allow-list. Every allow-list entry carries a one-line reason.
-- [ ] **Prove it on the deploy, on every surface.** The same account must show the same state on Auth Files, `/quota/accounts` and `/quota` within one poll. Update `server/quota/RULES.md`, `src/features/quota/RULES.md`, `README.md` and `docs/PROX-SETUP.md` in the same PR when a rule or a provider changes.
+- [ ] **Verify before deploy, then on the deploy.**
+  - In the PR: tests, and a build served against the live hubs on every surface that shows the fact.
+  - After operator-approved deployment: the same account shows the same state on Auth Files, `/quota/accounts` and `/quota` within one poll.
+  - Update `server/quota/RULES.md`, `src/features/quota/RULES.md`, `README.md` and `docs/PROX-SETUP.md` in the same PR when a rule, a source or a provider changes.
 
-Until the migration in the design doc completes, some of the named modules do not exist yet. New work follows the target design: do not extend the old paths it lists under "Replaces".
+Until the migration in the design doc completes, some of the named modules do not exist yet. New work follows the target design: do not extend the old paths it lists under "Replaces". The quota-store rule in § API Contracts & State (Claude/Codex served routing, `refreshPoolAccountAfterReset`) stays in force until migration steps 5 and 6 replace it, including its hub-direct exceptions.
 
 ## Coding Style & UI Conventions
 
