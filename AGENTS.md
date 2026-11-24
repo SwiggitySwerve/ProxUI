@@ -46,6 +46,27 @@ Preserve hash routing and single-file deployment. Changes to assets, imports, co
 - Preserve stale-request guards and cache cleanup when switching connections or logging out. Old asynchronous responses must not overwrite the new session's state.
 - Provider UI capabilities live in `src/features/providers/descriptors.ts`; `adapters.ts` maps provider configs to the shared resource model. Extend these existing abstractions rather than scattering provider-specific conditionals across components.
 
+## Account State and Providers
+
+Account, credential and provider state has one owner per fact: computed once, served once, held in one client store, rendered by one component. The owner table, the rules and the migration status are in `docs/design/account-state.md`. Read it before touching any of this.
+
+Before any change to an account, a credential or a provider:
+
+- [ ] **List every surface that shows the fact.** Grep the UI for its words and field names, including the provider id, across Auth Files, `/quota/accounts`, `/quota`, Dashboard, Models and OAuth. If the fact is computed in more than one place, move it to its owner first; never add another copy.
+- [ ] **Change the owner, not a screen.**
+  - Hub facts (exists, disabled, sign-in) are parsed only in `src/services/api/authFiles.ts` and the collector's inventory parser, through the shared function in `src/domain/accountState/`.
+  - prox-history facts (read status, no-five-hour-limit, plan, label) live in `server/quota/accountState.ts`.
+  - Provider sets come from `server/quota/providerSet.ts` (manifest plus catalog) and, in the browser, the inventory store's `sources`.
+- [ ] **Never hardcode provider lists or ids** (`'claude'`, `'codex'`, `'antigravity'`) to decide what is read, served or shown. Adding or removing a provider is a manifest or catalog change, plus doc updates in the same PR.
+- [ ] **Never fetch or force a store refresh from a component.**
+  - A change that must reach other screens changes `inventoryVersion`.
+  - Otherwise it goes through `commitChange` (credentials) or `src/features/quotaPool/accountSync.ts` (refresh, reset, claim).
+- [ ] **One sentence per state.** Account state is put into words only by `AccountStateNotice` with the `account_state.*` keys; never write a screen-specific sentence for it.
+- [ ] **Make the rule executable.** Add a behaviour test at the owner and keep the whole-repo scans listed in the design doc passing. Extend a scan rather than an allow-list. Every allow-list entry carries a one-line reason.
+- [ ] **Prove it on the deploy, on every surface.** The same account must show the same state on Auth Files, `/quota/accounts` and `/quota` within one poll. Update `server/quota/RULES.md`, `src/features/quota/RULES.md`, `README.md` and `docs/PROX-SETUP.md` in the same PR when a rule or a provider changes.
+
+Until the migration in the design doc completes, some of the named modules do not exist yet. New work follows the target design: do not extend the old paths it lists under "Replaces".
+
 ## Coding Style & UI Conventions
 
 Use 2-space indentation, semicolons, single quotes, ES5 trailing commas, and 100-character line width. Prefer typed React components and `unknown` with narrowing for untrusted data; avoid introducing `any` unless an unavoidable boundary requires it. Use the `@/` alias for `src` imports.

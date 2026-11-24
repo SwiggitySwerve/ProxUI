@@ -1,5 +1,7 @@
 # OMO Council: credential changes reach every screen at once
 
+> **Superseded in part (2026-11-24):** [docs/design/account-state.md](account-state.md) owns account, credential and provider state, the inventory version tuple and the provider set. Where this document disagrees, that one wins.
+
 **Headline:** Prox doesn't need a credential manager. It already has one store per proxy (each CLI-Proxy's auth files). What's missing is one versioned read model of that store, plus a single commit that every metadata screen reads from. Today five screens fetch the list separately, one listener hears the change event, and the quota history waits up to 5 minutes.
 
 **Brief:** The user's words: "Remove everywhere, at once"; "remove auth event should populate throughout the entire UI in one go"; "anything that is a direct metadata/config screen should be updated" (Analytics request, usage and dollar metrics may keep history); "test everything around adding or removing credentials"; and move the architecture toward "event driven sequences and centralized sources that are easy for things to read from".
