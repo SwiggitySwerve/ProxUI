@@ -112,7 +112,7 @@ function ResetExpiries({ resets }: { resets: AccountResets }) {
   );
 }
 
-function ResetFact({
+export function ResetFact({
   account,
   name,
   provider,
