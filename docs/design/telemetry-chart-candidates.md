@@ -55,7 +55,8 @@ needs a new grouping.
 ## Recommended order
 
 1. **Failure-share bars (10).** Reads only `models` and `providers`, which every Analytics
-   response already has. Draw the failed calls as the coloured part of each existing bar and put
+   response already has. Draw the failed calls as the coloured part of each call-count bar on
+   Overview ("By provider", "By model") and put
    calls and failure % in tabular columns. UI-only change. Vendor colour on "By model" (9) waits
    for a model → vendor mapping.
 2. **Data line and reading key on every Analytics and Quota chart.** Copy and a small shared chart
