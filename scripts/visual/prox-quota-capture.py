@@ -345,7 +345,9 @@ def fixture(state):
         total["recorded"] = [dict(item, remainingPoints=item["remainingPoints"] + added.get(item["atMs"], 0))
                              if item["remainingPoints"] is not None else item for item in total["recorded"]]
         combined["all"]["layers"].append(layer)
-        combined["antigravity"] = dict(series={key: layer[key] for key in total}, layers=[layer],
+        # Selected alone, every source is retired and the server sends no forecast at all.
+        alone = dict(layer, projected=[])
+        combined["antigravity"] = dict(series={key: alone[key] for key in total}, layers=[alone],
                                        unavailableReason=None)
     return dict(
         combined=combined,
