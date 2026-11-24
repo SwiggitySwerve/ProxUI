@@ -1,5 +1,7 @@
 # ProxD ↔ ProxUI Auto-Discovery & Expansion Roadmap
 
+> **Superseded in part (2026-11-24):** [docs/design/account-state.md](design/account-state.md) owns account, credential and provider state, the inventory version tuple and the provider set. Where this document disagrees, that one wins.
+
 Council-approved architecture (2026-11-21; unanimous across Proposer, Adversary, and Codebase Explorer).
 **Deploy gate:** All workstreams below are built and verified on feature branches / PRs only. **Do not deploy or restart live services until explicit operator approval.**
 
