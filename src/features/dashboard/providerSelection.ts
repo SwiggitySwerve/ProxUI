@@ -8,7 +8,8 @@ import type {
   TrafficBucket,
   TrafficWindow,
 } from './types';
-import { providerFill, providerInk, providerLabel } from '@/features/providers/identity';
+import { providerFill, providerInk } from '@/features/providers/identity';
+import { providerLabel } from './utils';
 
 /** A provider's ink from the shared identity; others stay neutral. */
 export const providerColor = (brand: string | null): string =>

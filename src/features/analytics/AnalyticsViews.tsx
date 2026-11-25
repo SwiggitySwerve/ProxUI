@@ -404,6 +404,7 @@ export function AnalyticsViews({
               }))}
               onSelect={onProvider}
               failures={failureSplit && { onSelect: failureSplit.onProvider }}
+              providers
             />
             <AnalyticsChart
               title={`${t('analytics.by_model')} · ${breakdownTitle}`}

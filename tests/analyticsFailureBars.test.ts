@@ -18,6 +18,7 @@ const chart = (data: Parameters<typeof AnalyticsChart>[0]['data']) =>
       data,
       onSelect: noop,
       failures: { onSelect: noop },
+      providers: true,
     })
   );
 
@@ -44,8 +45,11 @@ describe('failure bars', () => {
       { key: 'claude', label: 'Claude', value: 200, failed: 50 },
       { key: 'codex', label: 'GPT / Codex', value: 100, failed: 0 },
     ]);
-    expect(markup).toContain('aria-label="Show the 50 failed events for Claude"');
-    expect(markup).not.toContain('failed events for GPT / Codex');
+    // Visible text first, then the row it belongs to, read by screen readers only.
+    expect(markup).toMatch(
+      /<button[^>]*title="50"[^>]*>50 failed <span[^>]*>for Claude<\/span><\/button>/
+    );
+    expect(markup).not.toContain('for GPT / Codex');
     expect(markup).toContain('0 failed');
     // The name's button names both counts, so a screen reader hears what the bar shows.
     expect(markup).toContain('aria-label="Claude: 200 events, 50 failed"');
@@ -64,6 +68,16 @@ describe('failure bars', () => {
     );
   });
 
+  test('only provider rows take a provider colour; a model named like a provider does not', () => {
+    const markup = renderToStaticMarkup(
+      createElement(AnalyticsChart, {
+        title: 'By model',
+        data: [{ key: 'gemini', label: 'gemini', value: 3 }],
+      })
+    );
+    expect(markup).not.toContain('--gemini-');
+  });
+
   const views = (failures: boolean, tab: 'overview' | 'tokens' = 'overview') =>
     renderToStaticMarkup(
       createElement(AnalyticsViews, {
@@ -80,12 +94,12 @@ describe('failure bars', () => {
     const overview = views(true);
     expect(overview).toContain('By provider · Events and failures');
     expect(overview).toContain('By model · Events and failures');
-    expect(overview).toContain('aria-label="Show the 8 failed events for Claude"');
+    expect(overview).toContain('8 failed <span>for Claude</span>');
 
     const filtered = views(false);
     expect(filtered).toContain('By provider · Retained events');
     expect(filtered).not.toContain('data-split');
-    expect(filtered).not.toContain('failed events for');
+    expect(filtered).not.toContain(' failed <span>');
 
     const tokens = views(true, 'tokens');
     expect(tokens).not.toContain('Events and failures');

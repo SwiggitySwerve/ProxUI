@@ -3175,7 +3175,7 @@
     "by_model": "依模型",
     "events_and_failures": "事件與失敗",
     "failed_count": "{{value}} 次失敗",
-    "show_failed": "查看 {{label}} 的 {{value}} 個失敗事件",
+    "failed_for": "（{{label}}）",
     "failure_readout": "{{label}}：{{events}} 個事件，{{failed}} 個失敗",
     "timestamp": "時間 · UTC",
     "provider_model": "供應商 / 模型",

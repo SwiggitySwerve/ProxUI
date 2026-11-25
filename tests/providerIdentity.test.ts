@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { providerFill, providerInk, providerLabel } from '../src/features/providers/identity';
+import { providerFill, providerInk } from '../src/features/providers/identity';
 import {
   connectedProviderPills,
   providerBarFill,
@@ -25,7 +25,7 @@ describe('provider identity', () => {
   });
 
   test('a provider without a hue is null, so each screen keeps its own neutral', () => {
-    for (const id of ['xai', 'unknown', '', null, undefined]) {
+    for (const id of ['xai', 'unknown', 'constructor', '__proto__', '', null, undefined]) {
       expect(providerInk(id)).toBeNull();
       expect(providerFill(id)).toBeNull();
     }
@@ -38,12 +38,6 @@ describe('provider identity', () => {
       expect(themes).toMatch(new RegExp(`--${token}-fill:`));
     for (const token of ['--codex-fill', '--gemini-fill', '--viz-failure-fill'])
       expect(themes).toMatch(new RegExp(`${token}:\\s*(repeating-linear|radial)-gradient`));
-  });
-
-  test('labels keep their proper nouns and the caller words unknown', () => {
-    expect(providerLabel('xai', 'Unattributed')).toBe('xAI');
-    expect(providerLabel('unknown', 'Unattributed')).toBe('Unattributed');
-    expect(providerLabel('newone', 'Unattributed')).toBe('Newone');
   });
 
   test('Dashboard and Quota read the same identity, including Gemini', () => {

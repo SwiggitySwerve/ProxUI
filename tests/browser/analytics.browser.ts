@@ -336,9 +336,10 @@ test('a failed count opens Requests with only that provider’s failed events', 
   const chart = page.locator('section').filter({
     has: page.getByRole('heading', { name: 'By provider · Events and failures', exact: true }),
   });
-  await app.change(() =>
-    chart.getByRole('button', { name: 'Show the 8 failed events for Claude', exact: true }).click()
-  );
+  await chart.getByRole('button', { name: '8 failed for Claude', exact: true }).focus();
+  await app.change(() => page.keyboard.press('Enter'));
+  // The chart unmounts; focus moves on to the requests rather than dropping to the page.
+  await expect(page.locator('#analytics-panel')).toBeFocused();
   await expect(page.getByRole('tab', { name: 'Requests', exact: true })).toHaveAttribute(
     'aria-selected',
     'true'
@@ -352,7 +353,81 @@ test('a failed count opens Requests with only that provider’s failed events', 
   await expect(
     page.getByRole('heading', { name: 'By provider · Retained events', exact: true })
   ).toBeVisible();
-  await expect(page.getByRole('button', { name: /failed events for/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: / failed for / })).toHaveCount(0);
+});
+
+test('a provider too long for the address still opens Requests', async ({ page, app }) => {
+  app.scenario = 'long-provider';
+  await app.login();
+  await app.loaded();
+  const chart = page.locator('section').filter({
+    has: page.getByRole('heading', { name: 'By provider · Events and failures', exact: true }),
+  });
+  await app.change(() =>
+    chart.getByRole('button', { name: '8 failed for Claude', exact: true }).click()
+  );
+  await expect(page.getByRole('tab', { name: 'Requests', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  );
+  expect(app.queries.at(-1)).toMatchObject({ provider: 'p'.repeat(201), outcome: 'failed' });
+});
+
+test('a tab chosen before a drilldown lands wins, and provider sync carries on', async ({
+  page,
+  app,
+}) => {
+  await app.login();
+  await app.loaded();
+  // Both clicks land before React commits either one.
+  await app.change(() =>
+    page.evaluate(() => {
+      const button = (name: string) =>
+        [...document.querySelectorAll('button')].find(
+          (element) => element.textContent?.trim() === name
+        )!;
+      button('8 failed for Claude').click();
+      document.getElementById('analytics-tab-tokens')!.click();
+    })
+  );
+  await expect(page.getByRole('tab', { name: 'Tokens & Cache', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  );
+  // An address edited afterwards still drives the provider filter.
+  await app.change(() =>
+    page.evaluate(() => {
+      location.hash = location.hash.replace(/provider=[^&]*/, 'provider=codex');
+    })
+  );
+  await expect(page.getByRole('combobox', { name: 'Provider', exact: true })).toHaveValue('codex');
+});
+
+test('after a drilldown, a hand-edited address still drives the provider', async ({
+  app,
+  page,
+}) => {
+  await app.login();
+  await app.loaded();
+  // Hand-edited hash addresses all carry React Router's "default" key.
+  await app.change(() =>
+    page.evaluate(() => {
+      location.hash = '/analytics?tab=overview&range=7d&bucket=auto';
+    })
+  );
+  await app.change(() =>
+    page.getByRole('button', { name: '8 failed for Claude', exact: true }).click()
+  );
+  const provider = page.getByRole('combobox', { name: 'Provider', exact: true });
+  await expect(provider).toHaveValue('claude');
+  await page.evaluate(() => {
+    location.hash = '/analytics?tab=tokens&range=7d&bucket=auto&provider=codex';
+  });
+  await expect(page.getByRole('tab', { name: 'Tokens & Cache', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  );
+  await expect(provider).toHaveValue('codex');
 });
 
 test('logging out while analytics is pending hides the previous session', async ({ page, app }) => {

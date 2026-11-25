@@ -663,6 +663,7 @@ describe('Analytics SSR presentation', () => {
           { key: 'other', label: 'Missing measurement', value: null },
         ],
         onSelect: noop,
+        providers: true,
       })
     );
     expect(markup.indexOf('Claude')).toBeLessThan(markup.indexOf('GPT / Codex'));

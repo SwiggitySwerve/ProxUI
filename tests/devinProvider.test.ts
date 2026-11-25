@@ -4,7 +4,7 @@ import {
   OAUTH_PROVIDER_PRESETS,
   supportsAuthFileManualRefresh,
 } from '@/features/authFiles/constants';
-import { providerLabel } from '@/features/providers/identity';
+import { providerLabel } from '@/features/dashboard/utils';
 import { PROVIDER_LOGOS } from '@/features/providers/brandLogos';
 import { normalizeAuthFilesResponse } from '@/services/api/authFiles';
 import type { AuthFileItem, AuthFileType } from '@/types/authFile';

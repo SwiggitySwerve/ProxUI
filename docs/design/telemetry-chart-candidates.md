@@ -66,8 +66,8 @@ charts go on Analytics; the Dashboard is not extended (`/` opens Quota).
 | Peak concurrency (8), per account | Analytics › Performance | Step 6 |
 | Big-number header (1) | Nowhere: it would repeat the Overview cards and the Dashboard header | Dropped |
 
-1. **One owner for provider identity.** `src/features/providers/identity.ts` gives every screen
-   a provider's name, ink and textured fill (tokens in `src/styles/themes.scss`). Codex is
+1. **One owner for provider colour.** `src/features/providers/identity.ts` gives every screen
+   a provider's ink and textured fill (tokens in `src/styles/themes.scss`). Codex is
    hatched and Gemini dotted, because those two hues fail colour-blind separation; failures carry
    their own hatch, because failure red sits close to Claude's orange.
 2. **Failure bars.** Each bar is a category's events with its failed events drawn first, on the

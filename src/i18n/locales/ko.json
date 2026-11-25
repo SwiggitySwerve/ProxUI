@@ -3149,7 +3149,7 @@
     "by_model": "모델별",
     "events_and_failures": "이벤트 및 실패",
     "failed_count": "{{value}}건 실패",
-    "show_failed": "{{label}}의 실패 이벤트 {{value}}건 보기",
+    "failed_for": "({{label}})",
     "failure_readout": "{{label}}: 이벤트 {{events}}건, 실패 {{failed}}건",
     "timestamp": "시간 · UTC",
     "provider_model": "제공업체 / 모델",

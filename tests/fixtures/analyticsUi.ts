@@ -162,7 +162,14 @@ export const analyticsUiResponse: AnalyticsResponse = {
   ],
 };
 
-export type AnalyticsScenario = 'ready' | 'empty' | 'unknown' | 'zero' | 'large';
+export type AnalyticsScenario =
+  | 'ready'
+  | 'empty'
+  | 'unknown'
+  | 'zero'
+  | 'large'
+  /** A provider key longer than the address accepts (200 characters). */
+  | 'long-provider';
 
 /** Canned transport scenarios, not a replacement for CPA accounting or query tests. */
 export function analyticsScenario(
@@ -214,6 +221,7 @@ export function analyticsScenario(
     data.requests.next_before_ms = null;
     data.requests.next_before_id = null;
   }
+  if (scenario === 'long-provider') data.providers[0].key = 'p'.repeat(201);
   if (scenario === 'large') {
     data.summary.input_tokens = 3_500_360_831;
     data.summary.output_tokens = 14_480_164;

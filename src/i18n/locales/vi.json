@@ -3155,7 +3155,7 @@
     "by_model": "Theo mô hình",
     "events_and_failures": "Sự kiện và lỗi",
     "failed_count": "{{value}} lỗi",
-    "show_failed": "Xem {{value}} sự kiện lỗi của {{label}}",
+    "failed_for": "của {{label}}",
     "failure_readout": "{{label}}: {{events}} sự kiện, {{failed}} lỗi",
     "timestamp": "Thời gian · UTC",
     "provider_model": "Nhà cung cấp / mô hình",

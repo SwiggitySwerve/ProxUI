@@ -3159,7 +3159,7 @@
     "by_model": "По модели",
     "events_and_failures": "События и сбои",
     "failed_count": "сбоев: {{value}}",
-    "show_failed": "Показать сбойные события ({{value}}) для {{label}}",
+    "failed_for": "— {{label}}",
     "failure_readout": "{{label}}: событий {{events}}, сбоев {{failed}}",
     "timestamp": "Время · UTC",
     "provider_model": "Провайдер / модель",

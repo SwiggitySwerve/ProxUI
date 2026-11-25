@@ -19,6 +19,7 @@ export function AnalyticsChart({
   format = 'compact',
   onSelect,
   failures,
+  providers = false,
 }: {
   title: string;
   data: ChartDatum[];
@@ -27,6 +28,8 @@ export function AnalyticsChart({
   onSelect?: (key: string) => void;
   /** Draw each datum's `failed` count; `onSelect` opens a category's failed events. */
   failures?: { onSelect: (key: string) => void };
+  /** Keys are provider ids, so rows take the provider's colour and texture. */
+  providers?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const id = useId();
@@ -57,12 +60,14 @@ export function AnalyticsChart({
       <button
         type="button"
         className={styles.failedLink}
-        aria-label={t('analytics.show_failed', { label: d.label, value: exact(failedOf(d)) })}
+        title={exact(failedOf(d))}
         onClick={() => failures?.onSelect(d.key)}
       >
+        {/* The visible text starts the accessible name, so voice control can say what it sees. */}
         {t('analytics.failed_count', {
           value: compact ? analyticsCompact(failedOf(d), i18n.language) : exact(failedOf(d)),
-        })}
+        })}{' '}
+        <span className={styles.srOnly}>{t('analytics.failed_for', { label: d.label })}</span>
       </button>
     ) : (
       <span className={styles.failedNone}>{t('analytics.failed_count', { value: exact(0) })}</span>
@@ -76,7 +81,8 @@ export function AnalyticsChart({
         <>
           <ol className={styles.ranked}>
             {ranked.map((d) => {
-              const ink = providerInk(d.key);
+              // Only provider rows take a provider's colour; a model alias may share its name.
+              const ink = providers ? providerInk(d.key) : null;
               const label = (
                 <span className={styles.rankedLabel} title={d.label}>
                   {ink && (
@@ -88,11 +94,6 @@ export function AnalyticsChart({
                   )}
                   {d.label}
                 </span>
-              );
-              const value = (
-                <strong title={exact(d.value)} data-unavailable={d.value === null}>
-                  {shown(d.value)}
-                </strong>
               );
               // A missing value draws no track: an empty track would read as zero.
               const track = d.value !== null && (
@@ -112,63 +113,39 @@ export function AnalyticsChart({
                       width: failures
                         ? width(Math.max(0, d.value - failedOf(d)))
                         : `${maximum > 0 ? Math.max(0.5, (d.value / maximum) * 100) : 0}%`,
-                      background: providerFill(d.key) ?? undefined,
+                      background: (providers && providerFill(d.key)) || undefined,
                     }}
                   />
                 </span>
               );
               const inspect = () => setInspectedKey(d.key);
-              if (failures) {
-                // Two actions per row, so the row is a group: the name opens every event, the
-                // failed count opens only the failed ones. The name's hit area covers the row.
-                return (
-                  <li key={d.key}>
-                    <div className={styles.rankedRow} data-failures="true" onMouseEnter={inspect}>
-                      {onSelect ? (
-                        <button
-                          type="button"
-                          className={styles.rankedHit}
-                          aria-label={described(d)}
-                          onFocus={inspect}
-                          onClick={() => onSelect(d.key)}
-                        >
-                          {label}
-                        </button>
-                      ) : (
-                        label
-                      )}
-                      {value}
-                      {failedButton(d, true)}
-                      {track}
-                    </div>
-                  </li>
-                );
-              }
-              const content = (
-                <>
-                  {label}
-                  {track}
-                  {value}
-                </>
-              );
+              // The name's button covers the row; the failed count sits above it as a second action.
               return (
                 <li key={d.key}>
-                  {onSelect ? (
-                    <button
-                      type="button"
-                      className={styles.rankedRow}
-                      aria-label={described(d)}
-                      onFocus={inspect}
-                      onMouseEnter={inspect}
-                      onClick={() => onSelect(d.key)}
-                    >
-                      {content}
-                    </button>
-                  ) : (
-                    <div className={styles.rankedRow} onMouseEnter={inspect}>
-                      {content}
-                    </div>
-                  )}
+                  <div
+                    className={styles.rankedRow}
+                    data-failures={failures ? 'true' : undefined}
+                    onMouseEnter={inspect}
+                  >
+                    {onSelect ? (
+                      <button
+                        type="button"
+                        className={styles.rankedHit}
+                        aria-label={described(d)}
+                        onFocus={inspect}
+                        onClick={() => onSelect(d.key)}
+                      >
+                        {label}
+                      </button>
+                    ) : (
+                      label
+                    )}
+                    <strong title={exact(d.value)} data-unavailable={d.value === null}>
+                      {shown(d.value)}
+                    </strong>
+                    {failures && failedButton(d, true)}
+                    {track}
+                  </div>
                 </li>
               );
             })}
