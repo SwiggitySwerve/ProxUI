@@ -12,6 +12,7 @@ import type {
 } from '@/types';
 import { parseIsoToMs } from '@/utils/quota';
 import { formatPoolDate } from '@/features/quotaPool/presentation';
+import { providerInk } from '@/features/providers/identity';
 import type { QuotaCardState } from '../providers';
 import type { QuotaProviderType } from '../providers/types';
 import type { useClaudeResetGrants } from '../providers/claude/ClaudeResetGrants';
@@ -135,12 +136,7 @@ export function AccountDetails({
       open={defaultOpen}
       style={
         {
-          '--fact-accent':
-            provider === 'claude'
-              ? 'var(--claude-color)'
-              : provider === 'codex'
-                ? 'var(--codex-color)'
-                : 'var(--text-secondary)',
+          '--fact-accent': providerInk(provider) ?? 'var(--text-secondary)',
         } as CSSProperties
       }
     >

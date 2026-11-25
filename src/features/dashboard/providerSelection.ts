@@ -8,22 +8,19 @@ import type {
   TrafficBucket,
   TrafficWindow,
 } from './types';
+import { providerFill, providerInk } from '@/features/providers/identity';
 import { providerLabel } from './utils';
 
-/** The provider hues the app already uses (Quota, Analytics); others stay neutral. */
+/** A provider's ink from the shared identity; others stay neutral. */
 export const providerColor = (brand: string | null): string =>
-  brand === 'claude'
-    ? 'var(--claude-color)'
-    : brand === 'codex'
-      ? 'var(--codex-color)'
-      : 'var(--text-tertiary)';
+  providerInk(brand) ?? 'var(--text-tertiary)';
+/** The same provider with its texture, for bars and their legend swatches. */
+export const providerBarFill = (brand: string | null): string =>
+  providerFill(brand) ?? 'var(--text-tertiary)';
 
 /** "All providers", or one connected source's instance id. */
 export type ProviderSelection = 'all' | string;
 export const ALL_PROVIDERS = 'all';
-
-/** Marks the app already ships; other providers show the name without a logo. */
-const BRANDS = new Set(['claude', 'codex']);
 
 export interface ProviderPill {
   /** Source instance id */
@@ -32,7 +29,7 @@ export interface ProviderPill {
   label: string;
   /** Provider name(s) the source serves, or the source label when it declares none */
   name: string;
-  /** Logo and colour key, when the source serves exactly one known provider */
+  /** Colour key, and logo key for Claude and Codex, when the source serves exactly one provider with a hue */
   brand: string | null;
 }
 
@@ -55,7 +52,7 @@ export function connectedProviderPills(
         name: providers.length
           ? providers.map((id) => providerLabel(id, unknownLabel)).join(' + ')
           : source.label,
-        brand: single && BRANDS.has(single) ? single : null,
+        brand: single && providerInk(single) ? single : null,
       };
     });
 }

@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 import type { TFunction } from 'i18next';
 import { isBuiltInPoolProvider } from '@/domain/quotaPool/providers';
 import type { AccountQuotaWindow } from '@/domain/quotaPool/types';
-import styles from './QuotaPoolPage.module.scss';
+import { providerInk } from '@/features/providers/identity';
 
 export function poolProviderLabel(t: TFunction, provider: string, displayName?: string): string {
   return isBuiltInPoolProvider(provider) || (provider === 'all' && !displayName)
@@ -11,7 +11,8 @@ export function poolProviderLabel(t: TFunction, provider: string, displayName?: 
 }
 
 export function poolProviderStyle(provider: string) {
-  if (isBuiltInPoolProvider(provider)) return { className: styles[provider] };
+  const ink = providerInk(provider);
+  if (ink) return { style: { '--pool-accent': ink } as CSSProperties };
   let hash = 0;
   for (const character of provider) hash = Math.imul(hash, 31) + character.charCodeAt(0);
   return { style: { '--pool-accent': `hsl(${(hash >>> 0) % 360} 58% 65%)` } as CSSProperties };

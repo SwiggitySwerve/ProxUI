@@ -1,6 +1,8 @@
+import type { CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { AnalyticsResponse } from '@/domain/analytics/types';
 import { analyticsNumber, analyticsTime } from './format';
+import { providerInk } from '@/features/providers/identity';
 import styles from './AnalyticsPage.module.scss';
 
 export function ModelRates({ data }: { data: AnalyticsResponse }) {
@@ -56,7 +58,15 @@ export function ModelRates({ data }: { data: AnalyticsResponse }) {
                   <tr key={`${rate.instance_id}:${rate.provider}:${rate.id}:${index}`}>
                     <td data-label={t('analytics.source_provider')}>
                       {rate.instance_label}
-                      <small className={styles.providerName} data-provider={rate.provider}>
+                      <small
+                        className={styles.providerName}
+                        data-provider={rate.provider}
+                        style={
+                          {
+                            '--provider-ink': providerInk(rate.provider) ?? undefined,
+                          } as CSSProperties
+                        }
+                      >
                         {providerLabels.get(rate.provider) ?? rate.provider}
                       </small>
                     </td>

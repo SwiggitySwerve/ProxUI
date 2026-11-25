@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Collapsible } from '@/components/ui/Collapsible';
 import { formatPercent } from '@/utils/format';
 import { TRAFFIC_BUCKET_MINUTES, type TrafficWindow } from '../types';
-import { providerColor, type TrafficSeries } from '../providerSelection';
+import { providerBarFill, type TrafficSeries } from '../providerSelection';
 import { axisMax } from '../utils';
 import styles from './ThroughputChart.module.scss';
 
@@ -85,7 +85,7 @@ export function ThroughputChart({ traffic, series }: ThroughputChartProps) {
           <span key={entry.id} className={styles.legendItem}>
             <span
               className={styles.legendSwatch}
-              style={{ background: providerColor(entry.brand) }}
+              style={{ background: providerBarFill(entry.brand) }}
               aria-hidden="true"
             />
             {entry.name}
@@ -189,7 +189,7 @@ export function ThroughputChart({ traffic, series }: ThroughputChartProps) {
                             }`}
                             style={{
                               height: `${(value / scaleMax) * 100}%`,
-                              background: providerColor(entry.brand),
+                              background: providerBarFill(entry.brand),
                             }}
                           />
                         );
@@ -242,7 +242,7 @@ export function ThroughputChart({ traffic, series }: ThroughputChartProps) {
                   <span key={entry.id} className={styles.tooltipRow}>
                     <span
                       className={styles.legendSwatch}
-                      style={{ background: providerColor(entry.brand) }}
+                      style={{ background: providerBarFill(entry.brand) }}
                       aria-hidden="true"
                     />
                     {entry.name}

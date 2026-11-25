@@ -86,15 +86,6 @@ $pool-error: #ff5252;
     color: #fff;
   }
 }
-.claude {
-  --pool-accent: var(--claude-color);
-}
-.codex {
-  --pool-accent: var(--codex-color);
-}
-.antigravity {
-  --pool-accent: var(--gemini-color);
-}
 .pageHeader {
   display: flex;
   align-items: center;

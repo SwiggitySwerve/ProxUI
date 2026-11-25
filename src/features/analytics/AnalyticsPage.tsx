@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { AnalyticsQuery, AnalyticsRequest } from '@/domain/analytics/types';
 import { Button } from '@/components/ui/Button';
@@ -79,6 +79,7 @@ function Pills<T extends string>({
 export function AnalyticsPage() {
   const { t, i18n } = useTranslation();
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
   // The address wins, then the last view on this machine, then the defaults.
   const [saved] = useState(readAnalyticsUiState);
   const tab = analyticsTab(params.get('tab') ?? saved.tab ?? null);
@@ -151,8 +152,29 @@ export function AnalyticsPage() {
   const drilldown = (next: AnalyticsQuery) => {
     setSelected(null);
     setPages([next]);
-    setTab('requests');
+    // One address write carries the tab and the provider. Separate writes each start from the
+    // address as last rendered, so the provider's write would put the old tab back.
+    appliedProvider.current = next.provider;
+    setPendingFrom({ key: location.key, search: location.search });
+    // The chart that was clicked unmounts; keyboard focus moves on to the requests.
+    focusRequests.current = true;
+    setParams(
+      (previous) => {
+        const address = new URLSearchParams(previous);
+        address.set('tab', 'requests');
+        if (next.provider) address.set('provider', next.provider);
+        else address.delete('provider');
+        return address;
+      },
+      { replace: true }
+    );
   };
+  const focusRequests = useRef(false);
+  useEffect(() => {
+    if (tab !== 'requests' || !focusRequests.current) return;
+    focusRequests.current = false;
+    document.getElementById('analytics-panel')?.focus();
+  }, [tab]);
   const next = data ? nextPageQuery(query, data.requests) : null;
   // The query was last built for this view; a new view in the address rebuilds it once.
   const builtFor = useRef(`${range}:${bucket}`);
@@ -173,7 +195,20 @@ export function AnalyticsPage() {
   // The address owns the provider too: one that arrives in it (a link, an edited address) starts
   // a fresh view, and otherwise the address follows the filter, so a copied link opens this view.
   const appliedProvider = useRef(query.provider);
+  // The address a drilldown started from. While the router still shows it, the address is stale,
+  // so the provider is not synced from it; the first other address ends the wait, the
+  // drilldown's own or one that won instead. Hand-edited addresses all share the key "default",
+  // so the address is compared too, and the marker is cleared once a new address commits.
+  const [pendingFrom, setPendingFrom] = useState<{ key: string; search: string } | null>(null);
+  const holding =
+    pendingFrom !== null &&
+    pendingFrom.key === location.key &&
+    pendingFrom.search === location.search;
   useEffect(() => {
+    if (pendingFrom && !holding) setPendingFrom(null);
+  }, [pendingFrom, holding]);
+  useEffect(() => {
+    if (holding) return;
     if (urlProvider && urlProvider !== appliedProvider.current) {
       appliedProvider.current = urlProvider;
       setBucketSelected(false);
@@ -192,7 +227,7 @@ export function AnalyticsPage() {
         { replace: true }
       );
     }
-  }, [urlProvider, query.provider, range, bucket, setParams]);
+  }, [holding, urlProvider, query.provider, range, bucket, setParams]);
   // Pills, followed links and edited addresses all change the view through the address.
   useEffect(() => {
     if (builtFor.current !== `${range}:${bucket}`) applyView(range, bucket);
@@ -551,6 +586,16 @@ export function AnalyticsPage() {
                 }}
                 onModel={(model) => drilldown({ ...withoutCursor(query), model })}
                 onProvider={(provider) => drilldown({ ...withoutCursor(query), provider })}
+                failures={
+                  query.outcome === 'all'
+                    ? {
+                        onModel: (model) =>
+                          drilldown({ ...withoutCursor(query), model, outcome: 'failed' }),
+                        onProvider: (provider) =>
+                          drilldown({ ...withoutCursor(query), provider, outcome: 'failed' }),
+                      }
+                    : undefined
+                }
               />
             )}
           </>

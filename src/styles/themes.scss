@@ -41,6 +41,13 @@
   --claude-color: #ed9877;
   --codex-color: #83adff;
   --gemini-color: #b9a0f5;
+  // Fills for bars: a texture on the ink, because Codex and Gemini fail colour-blind
+  // separation. Claude stays solid. Read them through src/features/providers/identity.ts.
+  --claude-fill: var(--claude-color);
+  --codex-fill: repeating-linear-gradient(135deg, rgb(0 0 0 / 0.3) 0 1.5px, transparent 1.5px 4.5px)
+    var(--codex-color);
+  --gemini-fill: radial-gradient(rgb(0 0 0 / 0.34) 0.9px, transparent 1.3px) 0 0 / 3.5px 3.5px
+    var(--gemini-color);
 
   --success-color: #34c58f;
   --quota-medium-color: #e5c270;
@@ -95,6 +102,13 @@
   // Charts: green only for live traffic
   --viz-success: #34c58f;
   --viz-failure: #f2766b;
+  // Failure red sits close to Claude's orange, so filled failures carry their own hatch.
+  --viz-failure-fill: repeating-linear-gradient(
+      45deg,
+      rgb(0 0 0 / 0.36) 0 1.5px,
+      transparent 1.5px 3.5px
+    )
+    var(--viz-failure);
 
   --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
   --dur-press: 160ms;

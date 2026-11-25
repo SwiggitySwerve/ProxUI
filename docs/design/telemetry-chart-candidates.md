@@ -52,26 +52,50 @@ needs a new grouping.
 | 11 | App features used | Treemap, area = uses | Cost or tokens by model | `models` | **Skip**; areas are hard to compare and bars already do this |
 | 12 | Devices and operating systems | Two waffles, each square = 1 % | Share of requests per hub or per account | Hub: needs a grouping on `instance_id` with an unattributed bucket (`source_attribution` is only a coverage flag). Account: needs a grouping | **Maybe**; bars read faster. Use only where "share of 100 %" is the point |
 
-## Recommended order
+## Placement and order (decided 2026-11-25)
 
-1. **Failure-share bars (10).** Reads only `models` and `providers`, which every Analytics
-   response already has. Draw the failed calls as the coloured part of each call-count bar on
-   Overview ("By provider", "By model") and put
-   calls and failure % in tabular columns. UI-only change. Vendor colour on "By model" (9) waits
-   for a model → vendor mapping.
-2. **Data line and reading key on every Analytics and Quota chart.** Copy and a small shared chart
-   frame component. UI-only change.
-3. **Stacked daily bars by provider (2).** prox-usage returns `timeline` split by provider
-   (one more grouping in the query worker). Sits beside the Overview usage trend.
-4. **Hour-of-week heatmap (3).** prox-usage groups by weekday and hour, in UTC first: the query
-   contract accepts only `time_zone: "UTC"` today (`server/usage/validate.ts`). Local time needs
-   that contract and the bucketing changed. Answers "when do we burn quota", which also helps
-   plan resets.
-5. **Requested → served sankey (6)** and **peak concurrency (8).** Both need new prox-usage
-   aggregates. Do them after 1 to 4 have shipped and been used.
+A review against today's screens, and the owner's answers, settled where each chart goes. New
+charts go on Analytics; the Dashboard is not extended (`/` opens Quota).
 
-Each step that changes prox-usage needs its own parity check against the existing totals: the sum
-of the split timeline must equal today's `timeline` for the same query.
+| Chart | Place | When |
+|-------|-------|------|
+| Failure bars (10), by provider and by model | Analytics › Overview, replacing the two plain breakdowns | Step 2 (shipped with this note) |
+| Tokens per day by provider (2) | Analytics › Tokens & Cache, under the token trend | Step 4 |
+| Hour heatmap (3) | Analytics › Overview, full width at the end; date × hour first | Step 3 |
+| Model → account (6) | A new Analytics "Routing" tab, as a grid or per-account bars rather than a sankey | Step 5 |
+| Peak concurrency (8), per account | Analytics › Performance | Step 6 |
+| Big-number header (1) | Nowhere: it would repeat the Overview cards and the Dashboard header | Dropped |
+
+1. **One owner for provider colour.** `src/features/providers/identity.ts` gives every screen
+   a provider's ink and textured fill (tokens in `src/styles/themes.scss`). Codex is
+   hatched and Gemini dotted, because those two hues fail colour-blind separation; failures carry
+   their own hatch, because failure red sits close to Claude's orange.
+2. **Failure bars.** Each bar is a category's events with its failed events drawn first, on the
+   one shared scale. The failed count is a link to Requests filtered to those failures. Counts
+   only: a failure rate would be a UI-computed ratio, which `RULES.md` forbids, so a rate waits
+   for prox-usage to return one. With an outcome filter set, the bars are plain counts again.
+3. **Date × hour heatmap** from the hourly timeline, with no backend change.
+4. **prox-usage: `provider` on `models[]` and a timeline split by provider**, with a parity check
+   that the split sums to today's totals. Unlocks vendor colour on "By model" (9) and the stacked
+   daily bars (2).
+5. **prox-usage: per-account breakdown**, then the Routing tab and an Auth Files link that opens
+   one account (Auth Files keeps its view in browser storage today, so it has no such link).
+6. **Local time.** The owner reads in local time, so the query contract (UTC only today,
+   `server/usage/validate.ts`) and the bucketing move to a time zone, with one app-wide UTC/local
+   setting. Hour-of-week grouping and per-account peak concurrency follow.
+
+## Acting on what a chart shows
+
+Charts never edit anything. Each one links to the screen that owns the action: a failed count to
+Requests, a provider to Quota, a heatmap cell to that hour's requests, a model → account cell to
+Models, an account's failures to Auth Files. Account links use the source instance and auth
+index, never label text. Concurrency stays read-only: ProxUI has no concurrency-limit setting.
+
+The charts themselves need little management. Tab, range, bucket and filters already live in the
+address and in per-browser storage. Two preferences are worth having: **Show emails** becomes one
+setting that Quota and Analytics both follow, and the UTC/local setting above. Per-chart hiding,
+reordering, pinning to the Dashboard and a hide-provider switch are not planned; a legend click
+can set the provider filter instead.
 
 ## Not recommended
 

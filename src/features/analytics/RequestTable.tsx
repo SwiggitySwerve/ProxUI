@@ -1,9 +1,11 @@
+import type { CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { AnalyticsRequest, AnalyticsResponse } from '@/domain/analytics/types';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { CopyButton } from '@/features/oauth/components/CopyButton';
 import { analyticsNumber, analyticsTime } from './format';
+import { providerInk } from '@/features/providers/identity';
 import styles from './AnalyticsPage.module.scss';
 
 /** Explicit projection: extra transport properties never become a raw-data inspector. */
@@ -213,7 +215,13 @@ export function RequestTable({
                   </td>
                   <td data-label={t('analytics.provider_model')}>
                     <strong>{r.model}</strong>
-                    <small className={styles.providerName} data-provider={r.provider}>
+                    <small
+                      className={styles.providerName}
+                      data-provider={r.provider}
+                      style={
+                        { '--provider-ink': providerInk(r.provider) ?? undefined } as CSSProperties
+                      }
+                    >
                       {providerLabels?.get(r.provider) ?? r.provider}
                     </small>
                     {r.requested_model && r.requested_model !== r.model && (

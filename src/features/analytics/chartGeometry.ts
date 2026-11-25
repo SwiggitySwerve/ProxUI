@@ -2,6 +2,8 @@ export interface ChartDatum {
   key: string;
   label: string;
   value: number | null;
+  /** Failed events within `value`, as prox-usage counted them. */
+  failed?: number;
   at?: number;
 }
 export interface LinePoint {
