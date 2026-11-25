@@ -3177,6 +3177,15 @@
     "failed_count": "{{value}} 次失敗",
     "failed_for": "（{{label}}）",
     "failure_readout": "{{label}}：{{events}} 個事件，{{failed}} 個失敗",
+    "heatmap": {
+      "title": "按小時的事件 · UTC",
+      "events": "{{value}} 個事件",
+      "unmeasured": "未測量",
+      "daily": "小時圖需要按小時分桶。",
+      "show_hourly": "按小時顯示",
+      "keys": "方向鍵在小時之間移動；Enter 開啟該小時的請求。",
+      "day": "日期 (UTC)"
+    },
     "timestamp": "時間 · UTC",
     "provider_model": "供應商 / 模型",
     "tokens_in_out": "輸入 / 輸出權杖",

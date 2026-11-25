@@ -586,6 +586,7 @@ export function AnalyticsPage() {
                 }}
                 onModel={(model) => drilldown({ ...withoutCursor(query), model })}
                 onProvider={(provider) => drilldown({ ...withoutCursor(query), provider })}
+                onShowHourly={() => resetRange(range, 'hour')}
                 failures={
                   query.outcome === 'all'
                     ? {

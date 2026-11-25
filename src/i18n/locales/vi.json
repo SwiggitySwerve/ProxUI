@@ -3157,6 +3157,15 @@
     "failed_count": "{{value}} lỗi",
     "failed_for": "của {{label}}",
     "failure_readout": "{{label}}: {{events}} sự kiện, {{failed}} lỗi",
+    "heatmap": {
+      "title": "Sự kiện theo giờ · UTC",
+      "events": "{{value}} sự kiện",
+      "unmeasured": "chưa đo",
+      "daily": "Bản đồ giờ cần nhóm theo giờ.",
+      "show_hourly": "Xem theo giờ",
+      "keys": "Phím mũi tên di chuyển giữa các giờ; Enter mở yêu cầu của giờ đó.",
+      "day": "Ngày (UTC)"
+    },
     "timestamp": "Thời gian · UTC",
     "provider_model": "Nhà cung cấp / mô hình",
     "tokens_in_out": "Token đầu vào / đầu ra",

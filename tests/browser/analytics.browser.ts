@@ -430,6 +430,37 @@ test('after a drilldown, a hand-edited address still drives the provider', async
   await expect(provider).toHaveValue('codex');
 });
 
+test('the hour map opens an hour’s requests, and a daily view switches to hours', async ({
+  page,
+  app,
+}) => {
+  await app.login();
+  await app.loaded();
+  const map = page.locator('section').filter({
+    has: page.getByRole('heading', { name: 'Events by hour · UTC', exact: true }),
+  });
+  // One tab stop: the busiest hour. Arrow keys move, Enter opens.
+  const start = map.locator('button[tabindex="0"]');
+  await start.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(map.locator('output')).toContainText('UTC:');
+  await app.change(() => page.keyboard.press('Enter'));
+  await expect(page.getByRole('tab', { name: 'Requests', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  );
+  expect(app.queries.at(-1)!.to_ms - app.queries.at(-1)!.from_ms).toBe(3_600_000);
+  await app.tab('Overview');
+  await app.change(() => page.getByRole('button', { name: 'Last 7 days', exact: true }).click());
+  await app.change(() => map.getByRole('button', { name: 'Show by hour', exact: true }).click());
+  await expect(page.getByRole('button', { name: 'Hourly', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  );
+  expect(app.queries.at(-1)).toMatchObject({ granularity: 'hour' });
+  expect(app.queries.at(-1)!.to_ms - app.queries.at(-1)!.from_ms).toBe(7 * 86_400_000);
+});
+
 test('logging out while analytics is pending hides the previous session', async ({ page, app }) => {
   await app.login();
   await app.loaded();

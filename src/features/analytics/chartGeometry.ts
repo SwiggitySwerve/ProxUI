@@ -123,3 +123,42 @@ export function smoothPath(points: Array<[number, number]>) {
   }
   return path;
 }
+
+export type HourCellState = 'value' | 'quiet' | 'gap' | 'outside';
+export interface HourCell {
+  at: number;
+  value: number | null;
+  state: HourCellState;
+}
+/**
+ * Hourly buckets as one row per UTC day and one column per UTC hour. Hours outside the window
+ * are `outside`; an absent hour is `quiet` (a real zero) only when coverage is complete,
+ * otherwise a `gap`, as on every other chart.
+ */
+export function hourGrid(
+  values: ReadonlyMap<number, number | null>,
+  from: number,
+  to: number,
+  rawComplete: boolean
+): { day: number; cells: HourCell[] }[] {
+  const HOUR = 3_600_000;
+  const DAY = 24 * HOUR;
+  const rows: { day: number; cells: HourCell[] }[] = [];
+  if (to <= from) return rows;
+  for (let day = Math.floor(from / DAY) * DAY; day < to; day += DAY) {
+    const cells: HourCell[] = [];
+    for (let hour = 0; hour < 24; hour++) {
+      const at = day + hour * HOUR;
+      if (at + HOUR <= from || at >= to) cells.push({ at, value: null, state: 'outside' });
+      else if (values.has(at)) cells.push({ at, value: values.get(at) ?? null, state: 'value' });
+      else cells.push({ at, value: rawComplete ? 0 : null, state: rawComplete ? 'quiet' : 'gap' });
+    }
+    rows.push({ day, cells });
+  }
+  return rows;
+}
+/** Four shades above zero, so a cell reads as a band rather than an exact amount. */
+export function heatLevel(value: number | null, maximum: number): 0 | 1 | 2 | 3 | 4 {
+  if (!value || value <= 0 || maximum <= 0) return 0;
+  return Math.min(4, Math.max(1, Math.ceil((value / maximum) * 4))) as 1 | 2 | 3 | 4;
+}

@@ -3151,6 +3151,15 @@
     "failed_count": "{{value}} failed",
     "failed_for": "for {{label}}",
     "failure_readout": "{{label}}: {{events}} events, {{failed}} failed",
+    "heatmap": {
+      "title": "Events by hour · UTC",
+      "events": "{{value}} events",
+      "unmeasured": "not measured",
+      "daily": "The hour map needs hourly buckets.",
+      "show_hourly": "Show by hour",
+      "keys": "Arrow keys move between hours; Enter opens that hour's requests.",
+      "day": "Day (UTC)"
+    },
     "timestamp": "Time · UTC",
     "provider_model": "Provider / model",
     "tokens_in_out": "Input / output tokens",
