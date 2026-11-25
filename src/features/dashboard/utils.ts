@@ -1,32 +1,5 @@
 import { TRAFFIC_BUCKET_MINUTES } from './types';
 
-/** 供应商展示名。均为专有名词，不进入 i18n。 */
-const PROVIDER_LABELS: Record<string, string> = {
-  gemini: 'Gemini',
-  'gemini-interactions': 'Interactions API',
-  aistudio: 'AI Studio',
-  codex: 'Codex',
-  claude: 'Claude',
-  devin: 'Devin',
-  meta: 'Muse (Meta)',
-  xai: 'xAI',
-  vertex: 'Vertex AI',
-  openai: 'OpenAI Compatible',
-  'openai-compatibility': 'OpenAI Compatible',
-  qwen: 'Qwen',
-  kimi: 'Kimi',
-  iflow: 'iFlow',
-  antigravity: 'Antigravity',
-};
-
-/**
- * 解析供应商展示名；未知 id 首字母大写兜底，`unknown` 交给调用方本地化。
- */
-export function providerLabel(id: string, unknownLabel: string): string {
-  if (id === 'unknown' || !id) return unknownLabel;
-  return PROVIDER_LABELS[id] ?? id.charAt(0).toUpperCase() + id.slice(1);
-}
-
 export interface WindowParts {
   hours: number;
   minutes: number;

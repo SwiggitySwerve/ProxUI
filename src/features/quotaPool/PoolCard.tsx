@@ -593,7 +593,7 @@ export function PoolCard({
   );
   return (
     <article
-      className={`${styles.pool} ${appearance.className ?? ''}`}
+      className={styles.pool}
       style={appearance.style}
       aria-labelledby={`${id}-title`}
       data-forecast-state={pool.forecastState}

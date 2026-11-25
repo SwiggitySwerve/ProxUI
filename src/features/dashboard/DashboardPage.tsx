@@ -36,9 +36,9 @@ import {
   type SourceOverview,
 } from './providerSelection';
 import { useCountUp, useRevealGroup, useRevealOnScroll } from '@/hooks/motion';
+import { providerLabel } from '@/features/providers/identity';
 import {
   formatBucketLength,
-  providerLabel,
   splitWindowMinutes,
   toneForSuccessRate,
   type MeterTone,

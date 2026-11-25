@@ -11,10 +11,10 @@ import {
   axisMax,
   formatBucketLength,
   niceCeil,
-  providerLabel,
   splitWindowMinutes,
   toneForSuccessRate,
 } from '../src/features/dashboard/utils';
+import { providerLabel } from '../src/features/providers/identity';
 
 describe('formatCompactNumber', () => {
   test('leaves values below one thousand alone', () => {

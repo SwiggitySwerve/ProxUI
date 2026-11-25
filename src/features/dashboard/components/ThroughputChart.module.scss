@@ -44,7 +44,7 @@
 }
 
 .swatchFailure {
-  background: var(--viz-failure);
+  background: var(--viz-failure-fill);
 }
 
 /* ---------- 绘图区 ---------- */
@@ -163,7 +163,7 @@
 }
 
 .segmentFailure {
-  background: var(--viz-failure);
+  background: var(--viz-failure-fill);
 }
 
 /* 堆叠段之间留 2px 表面色间隙 —— 用留白而不是描边来分隔 */
