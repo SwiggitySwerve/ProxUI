@@ -297,15 +297,62 @@ test('chart inspection follows the selected metric instead of retaining an old v
   await app.login();
   await app.loaded();
   const chart = page.locator('section').filter({
-    has: page.getByRole('heading', { name: 'By provider · Retained events', exact: true }),
+    has: page.getByRole('heading', { name: 'By provider · Events and failures', exact: true }),
   });
   await chart.getByRole('button', { name: /^Claude: / }).focus();
-  await expect(chart.locator('output')).toHaveText('Claude: 128');
+  await expect(chart.locator('output')).toHaveText('Claude: 128 events, 8 failed');
   await app.tab('Tokens & Cache');
   const changed = page.locator('section').filter({
     has: page.getByRole('heading', { name: 'By provider · Reported output tokens', exact: true }),
   });
   await expect(changed.locator('output')).toHaveText('Claude: 12,500');
+});
+
+test('a provider row opens Requests for that provider, with the tab and provider in the address', async ({
+  page,
+  app,
+}) => {
+  await app.login();
+  await app.loaded();
+  const chart = page.locator('section').filter({
+    has: page.getByRole('heading', { name: 'By provider · Events and failures', exact: true }),
+  });
+  await app.change(() => chart.getByRole('button', { name: /^Claude: / }).click());
+  await expect(page.getByRole('tab', { name: 'Requests', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  );
+  expect(app.queries.at(-1)).toMatchObject({ provider: 'claude', outcome: 'all' });
+  await expect(page).toHaveURL(/tab=requests/);
+  await expect(page).toHaveURL(/provider=claude/);
+});
+
+test('a failed count opens Requests with only that provider’s failed events', async ({
+  page,
+  app,
+}) => {
+  await app.login();
+  await app.loaded();
+  const chart = page.locator('section').filter({
+    has: page.getByRole('heading', { name: 'By provider · Events and failures', exact: true }),
+  });
+  await app.change(() =>
+    chart.getByRole('button', { name: 'Show the 8 failed events for Claude', exact: true }).click()
+  );
+  await expect(page.getByRole('tab', { name: 'Requests', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  );
+  expect(app.queries.at(-1)).toMatchObject({ provider: 'claude', outcome: 'failed' });
+  await expect(page.getByRole('combobox', { name: 'Recorded outcome', exact: true })).toHaveValue(
+    'failed'
+  );
+  // With an outcome chosen, Overview's bars are plain event counts again.
+  await app.tab('Overview');
+  await expect(
+    page.getByRole('heading', { name: 'By provider · Retained events', exact: true })
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: /failed events for/ })).toHaveCount(0);
 });
 
 test('logging out while analytics is pending hides the previous session', async ({ page, app }) => {

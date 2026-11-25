@@ -151,7 +151,20 @@ export function AnalyticsPage() {
   const drilldown = (next: AnalyticsQuery) => {
     setSelected(null);
     setPages([next]);
-    setTab('requests');
+    // One address write carries the tab and the provider. Separate writes each start from the
+    // address as last rendered, so the provider's write would put the old tab back.
+    appliedProvider.current = next.provider;
+    sentProvider.current = next.provider;
+    setParams(
+      (previous) => {
+        const address = new URLSearchParams(previous);
+        address.set('tab', 'requests');
+        if (next.provider) address.set('provider', next.provider);
+        else address.delete('provider');
+        return address;
+      },
+      { replace: true }
+    );
   };
   const next = data ? nextPageQuery(query, data.requests) : null;
   // The query was last built for this view; a new view in the address rebuilds it once.
@@ -173,7 +186,13 @@ export function AnalyticsPage() {
   // The address owns the provider too: one that arrives in it (a link, an edited address) starts
   // a fresh view, and otherwise the address follows the filter, so a copied link opens this view.
   const appliedProvider = useRef(query.provider);
+  // A provider a drilldown has written but the address does not show yet; null when none.
+  const sentProvider = useRef<string | undefined | null>(null);
   useEffect(() => {
+    if (sentProvider.current !== null) {
+      if (urlProvider !== sentProvider.current) return;
+      sentProvider.current = null;
+    }
     if (urlProvider && urlProvider !== appliedProvider.current) {
       appliedProvider.current = urlProvider;
       setBucketSelected(false);
@@ -551,6 +570,16 @@ export function AnalyticsPage() {
                 }}
                 onModel={(model) => drilldown({ ...withoutCursor(query), model })}
                 onProvider={(provider) => drilldown({ ...withoutCursor(query), provider })}
+                failures={
+                  query.outcome === 'all'
+                    ? {
+                        onModel: (model) =>
+                          drilldown({ ...withoutCursor(query), model, outcome: 'failed' }),
+                        onProvider: (provider) =>
+                          drilldown({ ...withoutCursor(query), provider, outcome: 'failed' }),
+                      }
+                    : undefined
+                }
               />
             )}
           </>

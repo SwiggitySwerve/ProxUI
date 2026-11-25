@@ -135,12 +135,15 @@ export function AnalyticsViews({
   onBucket,
   onModel,
   onProvider,
+  failures,
 }: {
   tab: View;
   data: AnalyticsResponse;
   onBucket: (bucket: number) => void;
   onModel: (model: string) => void;
   onProvider: (provider: string) => void;
+  /** Overview draws failed events in its breakdowns; absent when an outcome filter is set. */
+  failures?: { onModel: (model: string) => void; onProvider: (provider: string) => void };
 }) {
   const { t, i18n } = useTranslation();
   const interval = data.granularity === 'day' ? 86_400_000 : 3_600_000;
@@ -164,6 +167,11 @@ export function AnalyticsViews({
     ...(tab === 'performance' ? (['p95_ttft_ms'] as const) : []),
   ]);
   const breakdownMetric = breakdowns[tab];
+  // With every outcome shown, Overview's event bars carry their failed part.
+  const failureSplit = tab === 'overview' ? failures : undefined;
+  const breakdownTitle = failureSplit
+    ? t('analytics.events_and_failures')
+    : t(`analytics.metrics.${breakdownMetric}`);
   const breakdownFormat =
     breakdownMetric === 'cost' ? 'money' : isDuration(breakdownMetric) ? 'exact' : 'compact';
   const hasSamples = data.timeline.length + data.providers.length + data.models.length > 0;
@@ -386,24 +394,28 @@ export function AnalyticsViews({
           </div>
           <div className={styles.chartGrid}>
             <AnalyticsChart
-              title={`${t('analytics.by_provider')} · ${t(`analytics.metrics.${breakdownMetric}`)}`}
+              title={`${t('analytics.by_provider')} · ${breakdownTitle}`}
               format={breakdownFormat}
               data={data.providers.map((p) => ({
                 key: p.key,
                 label: p.label,
                 value: valueOf(p, breakdownMetric),
+                failed: p.failure_calls,
               }))}
               onSelect={onProvider}
+              failures={failureSplit && { onSelect: failureSplit.onProvider }}
             />
             <AnalyticsChart
-              title={`${t('analytics.by_model')} · ${t(`analytics.metrics.${breakdownMetric}`)}`}
+              title={`${t('analytics.by_model')} · ${breakdownTitle}`}
               format={breakdownFormat}
               data={data.models.map((m) => ({
                 key: m.key,
                 label: m.label,
                 value: valueOf(m, breakdownMetric),
+                failed: m.failure_calls,
               }))}
               onSelect={onModel}
+              failures={failureSplit && { onSelect: failureSplit.onModel }}
             />
           </div>
         </>

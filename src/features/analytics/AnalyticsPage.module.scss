@@ -653,6 +653,76 @@ button.rankedRow {
     border-radius: inherit;
     background: var(--text-secondary);
   }
+  // Failed part first, then the rest, both on the chart's one scale; a hairline keeps them apart.
+  &[data-split='true'] {
+    display: flex;
+    > span {
+      flex: none;
+      border-radius: 0;
+    }
+    > span + span {
+      box-shadow: inset 1px 0 0 var(--bg-primary);
+    }
+  }
+  > span.failedPart {
+    background: var(--viz-failure-fill);
+  }
+}
+// A row with two actions: the name's button covers the row, the failed count sits above it.
+.rankedRow[data-failures='true'] {
+  position: relative;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+.rankedHit {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 6px;
+  }
+  &:focus-visible::after {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: -2px;
+  }
+}
+.failedLink,
+.failedNone {
+  min-width: 7ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.failedLink {
+  position: relative;
+  z-index: 1;
+  // A 24px tall target without changing the row's height.
+  padding: 4px 0;
+  margin: -4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--viz-failure);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  &:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+.failedNone {
+  color: var(--text-tertiary);
 }
 .readout {
   font-size: 11px;
@@ -697,13 +767,7 @@ button.rankedRow {
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: var(--text-tertiary);
-  }
-  &[data-provider='claude']::before {
-    background: var(--claude-color);
-  }
-  &[data-provider='codex']::before {
-    background: var(--codex-color);
+    background: var(--provider-ink, var(--text-tertiary));
   }
 }
 .page .rowAction {

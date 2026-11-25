@@ -1,28 +1,32 @@
-import { useId, useState } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { providerFill, providerInk } from '@/features/providers/identity';
 import { analyticsCompact, analyticsMoney, analyticsNumber } from './format';
 import type { ChartDatum } from './chartGeometry';
 import styles from './AnalyticsPage.module.scss';
 
-/** Provider identity colours; other categories use the neutral bar. */
-const categoryColor = (key: string) =>
-  key === 'claude' ? 'var(--claude-color)' : key === 'codex' ? 'var(--codex-color)' : undefined;
-
 /**
  * Categories ranked by their server-supplied value as horizontal bars, so long names stay
  * readable. Missing values sort last and draw no bar; the table repeats every value.
+ *
+ * With `failures`, each bar is the category's events and its failed events are drawn as a
+ * hatched part from the start of the bar, on the same scale, so failures compare across rows.
+ * The failed count opens those failed events. Counts come from prox-usage; no rate is computed.
  */
 export function AnalyticsChart({
   title,
   data,
   format = 'compact',
   onSelect,
+  failures,
 }: {
   title: string;
   data: ChartDatum[];
   /** compact: 12.5K counts; exact: durations; money: dollars to the cent. */
   format?: 'compact' | 'exact' | 'money';
   onSelect?: (key: string) => void;
+  /** Draw each datum's `failed` count; `onSelect` opens a category's failed events. */
+  failures?: { onSelect: (key: string) => void };
 }) {
   const { t, i18n } = useTranslation();
   const id = useId();
@@ -38,6 +42,31 @@ export function AnalyticsChart({
       : format === 'exact'
         ? analyticsNumber(value, i18n.language)
         : analyticsCompact(value, i18n.language);
+  const width = (value: number) => `${maximum > 0 ? (value / maximum) * 100 : 0}%`;
+  const failedOf = (d: ChartDatum) => d.failed ?? 0;
+  const described = (d: ChartDatum) =>
+    failures
+      ? t('analytics.failure_readout', {
+          label: d.label,
+          events: exact(d.value),
+          failed: exact(failedOf(d)),
+        })
+      : `${d.label}: ${exact(d.value)}`;
+  const failedButton = (d: ChartDatum, compact: boolean): ReactNode =>
+    failedOf(d) > 0 ? (
+      <button
+        type="button"
+        className={styles.failedLink}
+        aria-label={t('analytics.show_failed', { label: d.label, value: exact(failedOf(d)) })}
+        onClick={() => failures?.onSelect(d.key)}
+      >
+        {t('analytics.failed_count', {
+          value: compact ? analyticsCompact(failedOf(d), i18n.language) : exact(failedOf(d)),
+        })}
+      </button>
+    ) : (
+      <span className={styles.failedNone}>{t('analytics.failed_count', { value: exact(0) })}</span>
+    );
   return (
     <section className={`${styles.panel} ${styles.breakdown}`} aria-labelledby={id}>
       <h3 id={id}>{title}</h3>
@@ -47,32 +76,79 @@ export function AnalyticsChart({
         <>
           <ol className={styles.ranked}>
             {ranked.map((d) => {
+              const ink = providerInk(d.key);
+              const label = (
+                <span className={styles.rankedLabel} title={d.label}>
+                  {ink && (
+                    <span
+                      className={styles.categoryDot}
+                      style={{ background: ink }}
+                      aria-hidden="true"
+                    />
+                  )}
+                  {d.label}
+                </span>
+              );
+              const value = (
+                <strong title={exact(d.value)} data-unavailable={d.value === null}>
+                  {shown(d.value)}
+                </strong>
+              );
+              // A missing value draws no track: an empty track would read as zero.
+              const track = d.value !== null && (
+                <span
+                  className={styles.rankedTrack}
+                  data-split={failures ? 'true' : undefined}
+                  aria-hidden="true"
+                >
+                  {failures && failedOf(d) > 0 && (
+                    <span
+                      className={styles.failedPart}
+                      style={{ width: width(Math.min(failedOf(d), d.value)) }}
+                    />
+                  )}
+                  <span
+                    style={{
+                      width: failures
+                        ? width(Math.max(0, d.value - failedOf(d)))
+                        : `${maximum > 0 ? Math.max(0.5, (d.value / maximum) * 100) : 0}%`,
+                      background: providerFill(d.key) ?? undefined,
+                    }}
+                  />
+                </span>
+              );
+              const inspect = () => setInspectedKey(d.key);
+              if (failures) {
+                // Two actions per row, so the row is a group: the name opens every event, the
+                // failed count opens only the failed ones. The name's hit area covers the row.
+                return (
+                  <li key={d.key}>
+                    <div className={styles.rankedRow} data-failures="true" onMouseEnter={inspect}>
+                      {onSelect ? (
+                        <button
+                          type="button"
+                          className={styles.rankedHit}
+                          aria-label={described(d)}
+                          onFocus={inspect}
+                          onClick={() => onSelect(d.key)}
+                        >
+                          {label}
+                        </button>
+                      ) : (
+                        label
+                      )}
+                      {value}
+                      {failedButton(d, true)}
+                      {track}
+                    </div>
+                  </li>
+                );
+              }
               const content = (
                 <>
-                  <span className={styles.rankedLabel} title={d.label}>
-                    {categoryColor(d.key) && (
-                      <span
-                        className={styles.categoryDot}
-                        style={{ background: categoryColor(d.key) }}
-                        aria-hidden="true"
-                      />
-                    )}
-                    {d.label}
-                  </span>
-                  {/* A missing value draws no track: an empty track would read as zero. */}
-                  {d.value !== null && (
-                    <span className={styles.rankedTrack} aria-hidden="true">
-                      <span
-                        style={{
-                          width: `${maximum > 0 ? Math.max(0.5, (d.value / maximum) * 100) : 0}%`,
-                          background: categoryColor(d.key),
-                        }}
-                      />
-                    </span>
-                  )}
-                  <strong title={exact(d.value)} data-unavailable={d.value === null}>
-                    {shown(d.value)}
-                  </strong>
+                  {label}
+                  {track}
+                  {value}
                 </>
               );
               return (
@@ -81,15 +157,15 @@ export function AnalyticsChart({
                     <button
                       type="button"
                       className={styles.rankedRow}
-                      aria-label={`${d.label}: ${exact(d.value)}`}
-                      onFocus={() => setInspectedKey(d.key)}
-                      onMouseEnter={() => setInspectedKey(d.key)}
+                      aria-label={described(d)}
+                      onFocus={inspect}
+                      onMouseEnter={inspect}
                       onClick={() => onSelect(d.key)}
                     >
                       {content}
                     </button>
                   ) : (
-                    <div className={styles.rankedRow} onMouseEnter={() => setInspectedKey(d.key)}>
+                    <div className={styles.rankedRow} onMouseEnter={inspect}>
                       {content}
                     </div>
                   )}
@@ -98,7 +174,7 @@ export function AnalyticsChart({
             })}
           </ol>
           <output className={styles.chartReadout} aria-live="polite">
-            {readout ? `${readout.label}: ${exact(readout.value)}` : null}
+            {readout ? described(readout) : null}
           </output>
           {data.some((d) => d.value !== null) && (
             <details className={styles.readout}>
@@ -109,7 +185,8 @@ export function AnalyticsChart({
                   <thead>
                     <tr>
                       <th scope="col">{t('analytics.bucket_category')}</th>
-                      <th scope="col">{title}</th>
+                      <th scope="col">{failures ? t('analytics.metrics.calls') : title}</th>
+                      {failures && <th scope="col">{t('analytics.metrics.failure_calls')}</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -131,6 +208,7 @@ export function AnalyticsChart({
                         <td>
                           {d.value === null ? t('analytics.unavailable_value') : exact(d.value)}
                         </td>
+                        {failures && <td>{failedButton(d, false)}</td>}
                       </tr>
                     ))}
                   </tbody>
