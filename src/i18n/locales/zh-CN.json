@@ -3159,6 +3159,13 @@
       "keys": "方向键在小时之间移动；Enter 打开该小时的请求。",
       "day": "日期 (UTC)"
     },
+    "provider_split": {
+      "title": "按提供商的令牌",
+      "other": "其他",
+      "none": "无令牌",
+      "unmeasured": "未测量",
+      "open_quota": "在配额中打开 {{provider}}"
+    },
     "timestamp": "时间 · UTC",
     "provider_model": "提供商 / 模型",
     "tokens_in_out": "输入 / 输出令牌",

@@ -19,7 +19,6 @@ export function AnalyticsChart({
   format = 'compact',
   onSelect,
   failures,
-  providers = false,
 }: {
   title: string;
   data: ChartDatum[];
@@ -28,8 +27,6 @@ export function AnalyticsChart({
   onSelect?: (key: string) => void;
   /** Draw each datum's `failed` count; `onSelect` opens a category's failed events. */
   failures?: { onSelect: (key: string) => void };
-  /** Keys are provider ids, so rows take the provider's colour and texture. */
-  providers?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const id = useId();
@@ -81,8 +78,8 @@ export function AnalyticsChart({
         <>
           <ol className={styles.ranked}>
             {ranked.map((d) => {
-              // Only provider rows take a provider's colour; a model alias may share its name.
-              const ink = providers ? providerInk(d.key) : null;
+              // Colour comes from the row's provider, never its key: a model may share a name.
+              const ink = providerInk(d.provider);
               const label = (
                 <span className={styles.rankedLabel} title={d.label}>
                   {ink && (
@@ -113,7 +110,7 @@ export function AnalyticsChart({
                       width: failures
                         ? width(Math.max(0, d.value - failedOf(d)))
                         : `${maximum > 0 ? Math.max(0.5, (d.value / maximum) * 100) : 0}%`,
-                      background: (providers && providerFill(d.key)) || undefined,
+                      background: providerFill(d.provider) ?? undefined,
                     }}
                   />
                 </span>

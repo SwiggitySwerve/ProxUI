@@ -15,10 +15,10 @@ const chart = (data: Parameters<typeof AnalyticsChart>[0]['data']) =>
   renderToStaticMarkup(
     createElement(AnalyticsChart, {
       title: 'By provider',
-      data,
+      // Provider rows: each takes the colour of the provider it names.
+      data: data.map((d) => ({ ...d, provider: d.key })),
       onSelect: noop,
       failures: { onSelect: noop },
-      providers: true,
     })
   );
 
@@ -76,6 +76,36 @@ describe('failure bars', () => {
       })
     );
     expect(markup).not.toContain('--gemini-');
+  });
+
+  test('a model served by one provider takes its colour; one served by several stays neutral', () => {
+    const data = {
+      ...analyticsUiResponse,
+      models: [
+        { ...analyticsUiResponse.models[0], key: 'solo', label: 'solo', providers: ['codex'] },
+        {
+          ...analyticsUiResponse.models[0],
+          key: 'shared',
+          label: 'shared',
+          providers: ['claude', 'codex'],
+        },
+      ],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(AnalyticsViews, {
+        tab: 'overview',
+        data,
+        onBucket: noop,
+        onModel: noop,
+        onProvider: noop,
+        onShowHourly: noop,
+      })
+    );
+    const byModel = markup.slice(markup.indexOf('By model'));
+    const row = (name: string) =>
+      byModel.slice(byModel.indexOf(`title="${name}"`), byModel.indexOf(`title="${name}"`) + 200);
+    expect(row('solo')).toContain('var(--codex-color)');
+    expect(row('shared')).not.toContain('-color)');
   });
 
   const views = (failures: boolean, tab: 'overview' | 'tokens' = 'overview') =>

@@ -3167,6 +3167,13 @@
       "keys": "Phím mũi tên di chuyển giữa các giờ; Enter mở yêu cầu của giờ đó.",
       "day": "Ngày (UTC)"
     },
+    "provider_split": {
+      "title": "Token theo nhà cung cấp",
+      "other": "Khác",
+      "none": "không có token",
+      "unmeasured": "chưa đo",
+      "open_quota": "Mở {{provider}} trong Hạn mức"
+    },
     "timestamp": "Thời gian · UTC",
     "provider_model": "Nhà cung cấp / mô hình",
     "tokens_in_out": "Token đầu vào / đầu ra",

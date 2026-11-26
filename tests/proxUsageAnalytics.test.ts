@@ -271,8 +271,18 @@ test('coverage reports only overlapping gaps, pruning, imports, rate failure and
 test('raw_complete ignores only gaps that an exact import marked filled, and keeps listing them', () => {
   const f = setup();
   f.insert([event(1)]);
-  f.store.recordGap({ instance: 'filled-source', fromMs: BASE + 10, toMs: BASE + 20, reason: 'test' });
-  f.store.recordGap({ instance: 'open-source', fromMs: BASE + 30, toMs: BASE + 40, reason: 'test' });
+  f.store.recordGap({
+    instance: 'filled-source',
+    fromMs: BASE + 10,
+    toMs: BASE + 20,
+    reason: 'test',
+  });
+  f.store.recordGap({
+    instance: 'open-source',
+    fromMs: BASE + 30,
+    toMs: BASE + 40,
+    reason: 'test',
+  });
   const open = queryAnalytics(f.db, query(), rateState());
   expect(open.coverage.raw_complete).toBe(false);
   const [first] = f.store.unfilledGaps();
@@ -403,4 +413,47 @@ test('CPAMP status and reason cases survive SQL grouping and request projection'
   });
   // Unknown presence remains a limitation even when positive counters price its group subtotal.
   expect(response.summary.cost.reasons).toContain('usage-presence-unknown');
+});
+
+test('the provider split adds up to the timeline, and models name the providers that served them', () => {
+  const f = setup();
+  const HOUR = 3600000;
+  const start = Math.floor(BASE / HOUR) * HOUR;
+  f.insert([
+    event(1),
+    event(2, { provider: 'codex', model: 'gpt-5', tsMs: BASE + 1 }),
+    event(3, { provider: 'codex', model: 'gpt-5', tsMs: BASE + HOUR + 5, failed: true }),
+    // The same model through a second provider.
+    event(4, { provider: 'antigravity', model: 'gpt-5', tsMs: BASE + HOUR + 6 }),
+  ]);
+  const response = queryAnalytics(f.db, query(), rateState());
+  const split = response.provider_timeline!;
+  expect(split.map((p) => [p.bucket_ms - start, p.provider, p.calls])).toEqual([
+    [0, 'claude', 1],
+    [0, 'codex', 1],
+    [HOUR, 'antigravity', 1],
+    [HOUR, 'codex', 1],
+  ]);
+  // Parity: per bucket, every counted field sums to the existing timeline.
+  for (const point of response.timeline) {
+    const parts = split.filter((p) => p.bucket_ms === point.bucket_ms);
+    for (const field of [
+      'calls',
+      'failure_calls',
+      'input_tokens',
+      'output_tokens',
+      'cache_read_tokens',
+      'cache_creation_tokens',
+      'reasoning_tokens',
+      'total_tokens',
+    ] as const)
+      expect(parts.reduce((sum, p) => sum + p[field], 0)).toBe(point[field]);
+  }
+  expect(
+    split.find((p) => p.provider === 'codex' && p.bucket_ms === start + HOUR)!.failure_calls
+  ).toBe(1);
+  expect(Object.fromEntries(response.models.map((m) => [m.key, m.providers]))).toEqual({
+    'client-claude': ['claude'],
+    'gpt-5': ['antigravity', 'codex'],
+  });
 });

@@ -1,5 +1,6 @@
 import type {
   AnalyticsMetrics,
+  AnalyticsProviderBucket,
   AnalyticsRequest,
   AnalyticsResponse,
 } from '../../src/domain/analytics/types';
@@ -182,23 +183,22 @@ export function analyticsScenario(
   data.generated_at_ms = query.to_ms;
   data.granularity = query.granularity;
   const step = query.granularity === 'day' ? 86_400_000 : 3_600_000;
-  data.timeline = Array.from(
-    { length: Math.ceil((query.to_ms - query.from_ms) / step) },
-    (_, i) => ({
-      ...data.summary,
-      bucket_ms: query.from_ms + i * step,
-      calls: [0, 3, 7, 12, 6, 9][i % 6],
-      // Volumes move with traffic so trend lines are distinguishable in screenshots.
-      input_tokens: [2_100, 6_400, 9_800, 16_000, 7_300, 11_200][i % 6] * (1 + (i % 4) / 3),
-      output_tokens: [90, 320, 610, 1_050, 410, 700][(i + 1) % 6],
-      cache_read_tokens: [1_200, 4_000, 7_500, 12_800, 5_200, 8_600][(i + 2) % 6],
-      total_tokens: [3_400, 10_700, 17_900, 29_900, 12_900, 20_500][i % 6] * (1 + (i % 4) / 3),
-      cost: { ...data.summary.cost, usd: [0.4, 1.3, 2.6, 4.9, 1.8, 3.2][(i + 3) % 6] },
-      average_latency_ms: [800, 950, 1_400, 1_900, 1_100, 1_250][i % 6],
-      p95_latency_ms: [1_600, 2_100, 2_900, 3_800, 2_400, 2_700][i % 6],
-      p95_ttft_ms: i % 3 === 0 ? null : [150, 210, 320, 480, 260, 300][i % 6],
-    })
-  ).filter((_, i) => i !== 2); // A missing time bucket is different from an explicit zero.
+  // Buckets start on whole UTC hours or days, as prox-usage returns them.
+  const first = Math.floor(query.from_ms / step) * step;
+  data.timeline = Array.from({ length: Math.ceil((query.to_ms - first) / step) }, (_, i) => ({
+    ...data.summary,
+    bucket_ms: first + i * step,
+    calls: [0, 3, 7, 12, 6, 9][i % 6],
+    // Volumes move with traffic so trend lines are distinguishable in screenshots.
+    input_tokens: [2_100, 6_400, 9_800, 16_000, 7_300, 11_200][i % 6] * (1 + (i % 4) / 3),
+    output_tokens: [90, 320, 610, 1_050, 410, 700][(i + 1) % 6],
+    cache_read_tokens: [1_200, 4_000, 7_500, 12_800, 5_200, 8_600][(i + 2) % 6],
+    total_tokens: [3_400, 10_700, 17_900, 29_900, 12_900, 20_500][i % 6] * (1 + (i % 4) / 3),
+    cost: { ...data.summary.cost, usd: [0.4, 1.3, 2.6, 4.9, 1.8, 3.2][(i + 3) % 6] },
+    average_latency_ms: [800, 950, 1_400, 1_900, 1_100, 1_250][i % 6],
+    p95_latency_ms: [1_600, 2_100, 2_900, 3_800, 2_400, 2_700][i % 6],
+    p95_ttft_ms: i % 3 === 0 ? null : [150, 210, 320, 480, 260, 300][i % 6],
+  })).filter((_, i) => i !== 2); // A missing time bucket is different from an explicit zero.
   data.providers.push({ ...data.summary, key: 'codex', label: 'GPT / Codex' });
   data.requests.items.push({
     ...structuredClone(analyticsUiRequest),
@@ -301,5 +301,44 @@ export function analyticsScenario(
     };
     data.catalog_sources = [];
   }
+  data.provider_timeline = providerSplit(data.timeline);
   return data;
+}
+
+/**
+ * Each bucket split across three providers from the final timeline, every counter included;
+ * the last provider takes the rounding remainder, so the parts add up exactly, as prox-usage's do.
+ */
+function providerSplit(timeline: AnalyticsResponse['timeline']) {
+  const counters = [
+    'calls',
+    'failure_calls',
+    'input_tokens',
+    'output_tokens',
+    'cache_read_tokens',
+    'cache_creation_tokens',
+    'reasoning_tokens',
+    'total_tokens',
+  ] as const;
+  return timeline.flatMap((point, i) => {
+    const shares = [
+      ['claude', [0.55, 0.3, 0.6, 0.45][i % 4]],
+      ['codex', [0.3, 0.5, 0.25, 0.35][i % 4]],
+      ['antigravity', 0],
+    ] as const;
+    const given = Object.fromEntries(counters.map((key) => [key, 0])) as Record<
+      (typeof counters)[number],
+      number
+    >;
+    return shares.map(([provider, share], index) => {
+      const part = { provider, bucket_ms: point.bucket_ms } as AnalyticsProviderBucket;
+      for (const key of counters) {
+        const value =
+          index === shares.length - 1 ? point[key] - given[key] : Math.floor(point[key] * share);
+        given[key] += value;
+        part[key] = value;
+      }
+      return part;
+    });
+  });
 }

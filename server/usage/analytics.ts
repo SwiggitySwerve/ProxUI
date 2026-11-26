@@ -115,6 +115,8 @@ export function queryAnalytics(
       const timeline = new Map<number, Metrics>();
       const models = new Map<number, Metrics>();
       const providers = new Map<number, Metrics>();
+      // Each provider's share of each bucket, from the same rows as the totals, so it adds up.
+      const providerBuckets = new Map<string, { provider: string; bucket: number; m: Metrics }>();
       const observed = new Map<string, { provider: string; id: string }>();
       for (const row of rows) {
         const model = names.get(row.model_id)!;
@@ -123,7 +125,12 @@ export function queryAnalytics(
         group(timeline, row.bucket).add(row);
         group(models, row.model_id).add(row);
         group(providers, row.provider_id).add(row);
-        observed.set(`${provider}\0${model}`, { provider, id: model });
+        const split = `${row.provider_id}:${row.bucket}`;
+        if (!providerBuckets.has(split))
+          providerBuckets.set(split, { provider, bucket: row.bucket, m: new Metrics() });
+        providerBuckets.get(split)!.m.add(row);
+        // Keyed by dimension ids: labels are reported text and could collide when joined.
+        observed.set(`${row.provider_id}:${row.model_id}`, { provider, id: model });
       }
 
       const costs = analyticsCosts(rows, names, book, options.onPhase);
@@ -176,6 +183,10 @@ export function queryAnalytics(
         );
       limitations.push('records in flight during a collector or proxy restart may be absent');
       options.onPhase?.('coverage');
+      // The providers each model came through, from the same provider × model pairs as rates.
+      const providersOf = new Map<string, string[]>();
+      for (const { provider, id } of observed.values())
+        (providersOf.get(id) ?? providersOf.set(id, []).get(id)!).push(provider);
       const breakdown = (map: Map<number, Metrics>, ranked: typeof ranks.models) =>
         [...map]
           .map(([id, metrics]) => ({
@@ -209,7 +220,24 @@ export function queryAnalytics(
             ...metrics.value,
             ...ranks.buckets.get(bucket_ms),
           })),
-        models: breakdown(models, ranks.models),
+        models: breakdown(models, ranks.models).map((model) => ({
+          ...model,
+          providers: [...(providersOf.get(model.key) ?? [])].sort(),
+        })),
+        provider_timeline: [...providerBuckets.values()]
+          .sort((a, b) => a.bucket - b.bucket || (a.provider < b.provider ? -1 : 1))
+          .map(({ provider, bucket, m }) => ({
+            provider,
+            bucket_ms: bucket,
+            calls: m.value.calls,
+            failure_calls: m.value.failure_calls,
+            input_tokens: m.value.input_tokens,
+            output_tokens: m.value.output_tokens,
+            cache_read_tokens: m.value.cache_read_tokens,
+            cache_creation_tokens: m.value.cache_creation_tokens,
+            reasoning_tokens: m.value.reasoning_tokens,
+            total_tokens: m.value.total_tokens,
+          })),
         providers: breakdown(providers, ranks.providers),
         filter_options: {
           models: selectorValues('model_id'),

@@ -1406,3 +1406,84 @@ button.heatCell {
     height: 10px;
   }
 }
+
+// Tokens per bucket, stacked by provider.
+.providerStack {
+  margin-top: 14px;
+}
+// Legend entries that open Quota read as links.
+.providerStack .legend a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--border-color);
+  text-underline-offset: 3px;
+  &:hover {
+    text-decoration-color: currentColor;
+  }
+}
+.stackSwatch {
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+}
+.stackPlot {
+  position: relative;
+  margin-top: 12px;
+  padding-top: 16px;
+  padding-bottom: 20px;
+}
+.stackMax {
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.stackBars {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  height: 180px;
+  border-top: 1px dashed var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+}
+.stackBars[data-dense='true'] {
+  gap: 0;
+}
+// A bucket: its provider parts stacked from the baseline.
+.stackBar {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column-reverse;
+  min-width: 0;
+  > span {
+    display: block;
+    flex: none;
+    width: 100%;
+  }
+  > span + span {
+    box-shadow: inset 0 -1px 0 var(--bg-primary);
+  }
+  &:hover {
+    background: var(--bg-hover);
+  }
+  // Unmeasured: hatched, never drawn as zero.
+  &[data-state='gap'] {
+    background: repeating-linear-gradient(135deg, var(--bg-tertiary) 0 2px, transparent 2px 4px);
+  }
+}
+.stackTicks {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 16px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  > span {
+    position: absolute;
+    transform: translateX(-50%);
+    white-space: nowrap;
+  }
+}

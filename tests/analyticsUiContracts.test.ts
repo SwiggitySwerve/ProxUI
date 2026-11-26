@@ -658,12 +658,11 @@ describe('Analytics SSR presentation', () => {
       createElement(AnalyticsChart, {
         title: 'By provider',
         data: [
-          { key: 'codex', label: 'GPT / Codex', value: 2 },
-          { key: 'claude', label: 'Claude', value: 5 },
+          { key: 'codex', label: 'GPT / Codex', value: 2, provider: 'codex' },
+          { key: 'claude', label: 'Claude', value: 5, provider: 'claude' },
           { key: 'other', label: 'Missing measurement', value: null },
         ],
         onSelect: noop,
-        providers: true,
       })
     );
     expect(markup.indexOf('Claude')).toBeLessThan(markup.indexOf('GPT / Codex'));
