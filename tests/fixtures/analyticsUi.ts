@@ -301,6 +301,9 @@ export function analyticsScenario(
     data.summary.cost.usd = 1547.350158;
     const longName = 'synthetic-provider-model-with-a-very-long-qualified-name-and-context-variant';
     data.models[0].label = longName;
+    data.routes.forEach((route) => {
+      route.model = longName;
+    });
     data.rates[0].id = longName;
     data.requests.items[0].model = longName;
     data.requests.items[0].error_summary = 'Synthetic detailed error '.repeat(20);

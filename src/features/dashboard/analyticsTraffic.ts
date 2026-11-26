@@ -5,7 +5,11 @@ import type { TrafficBucket, TrafficWindow } from './types';
 
 const HOUR_MS = 3_600_000;
 
-/** Analytics' own 24 h hourly view, so a click-through lands on the same totals. */
+/**
+ * Analytics' own 24 h hourly view, so a click-through lands on the same totals.
+ * Always includes `provider` and `limit: 1`; `server/analytics/handler.ts` relies on those
+ * fields so Dashboard UTC polls never overwrite the Analytics warmer's learned local zone.
+ */
 export function dashboardAnalyticsQuery(nowMs: number, provider: string): AnalyticsQuery {
   return { ...rangeQuery('24h', nowMs, 'hour'), provider, limit: 1 };
 }

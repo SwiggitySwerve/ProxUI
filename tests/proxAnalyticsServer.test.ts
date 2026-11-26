@@ -466,9 +466,10 @@ describe('ProxUI analytics bridge', () => {
         f.clean();
       }
     });
-    test('warmer seeds the configured local zone on cold start and otherwise follows the visitor zone', async () => {
+    test('warmer seeds the configured local zone on cold start and ignores Dashboard UTC polls in adaptive mode', async () => {
       expect(parseWarmZone('america/denver')).toBe('America/Denver');
-      expect(parseWarmZone('Not/A_Zone')).toBe('UTC');
+      expect(parseWarmZone('Not/A_Zone')).toBeUndefined();
+      expect(parseWarmZone('   ')).toBeUndefined();
       const pinned = fixture('America/New_York');
       try {
         await pinned.handler.warm();
@@ -481,19 +482,74 @@ describe('ProxUI analytics bridge', () => {
       } finally {
         pinned.clean();
       }
-      const adaptive = fixture();
+      // Blank or unknown PROX_ANALYTICS_TIME_ZONE falls back to adaptive mode instead of pinning UTC.
+      const invalidPinned = fixture('Not/A_Zone');
       try {
-        await adaptive.handler(request(live(adaptive, DAY, { time_zone: 'America/Denver' })));
-        adaptive.advance(10 * 60_000);
-        const before = adaptive.calls.length;
-        await adaptive.handler.warm();
+        await invalidPinned.handler(
+          request(live(invalidPinned, DAY, { time_zone: 'America/Denver' }))
+        );
+        invalidPinned.advance(10 * 60_000);
+        const before = invalidPinned.calls.length;
+        await invalidPinned.handler.warm();
         const warmedZones = new Set(
-          adaptive.calls
+          invalidPinned.calls
             .slice(before)
             .filter((call) => call.url.startsWith('http://cpa.test'))
             .map((call) => call.body?.time_zone)
         );
         expect([...warmedZones]).toEqual(['America/Denver']);
+      } finally {
+        invalidPinned.clean();
+      }
+      const adaptive = fixture();
+      try {
+        await adaptive.handler(request(live(adaptive, DAY, { time_zone: 'America/Denver' })));
+        // Dashboard polling (provider + limit 1, UTC) and filtered/paginated UTC queries must not
+        // override the Analytics page's learned local zone.
+        await adaptive.handler(request(dashboardAnalyticsQuery(adaptive.now(), 'claude')));
+        await adaptive.handler(
+          request(live(adaptive, DAY, { time_zone: 'UTC', model: 'same-model' }))
+        );
+        await adaptive.handler(
+          request(live(adaptive, DAY, { time_zone: 'UTC', before_ms: adaptive.now() - 1_000 }))
+        );
+        adaptive.advance(10 * 60_000);
+        const before = adaptive.calls.length;
+        await adaptive.handler.warm();
+        // Unrequested default views (7d, 30d) must all warm in America/Denver even after Dashboard UTC polls.
+        const defaultWarmedZones = new Set(
+          adaptive.calls
+            .slice(before)
+            .filter(
+              ({ url, body }) =>
+                url.startsWith('http://cpa.test') &&
+                !body?.provider &&
+                !body?.model &&
+                body?.limit !== 1 &&
+                Number(body?.to_ms) - Number(body?.from_ms) >= 7 * DAY
+            )
+            .map((call) => call.body?.time_zone)
+        );
+        expect([...defaultWarmedZones]).toEqual(['America/Denver']);
+        // An explicit unfiltered UTC Analytics view still updates the adaptive warm zone.
+        await adaptive.handler(request(live(adaptive, DAY, { time_zone: 'UTC' })));
+        adaptive.advance(10 * 60_000);
+        const beforeUtc = adaptive.calls.length;
+        await adaptive.handler.warm();
+        const utcDefaultZones = new Set(
+          adaptive.calls
+            .slice(beforeUtc)
+            .filter(
+              ({ url, body }) =>
+                url.startsWith('http://cpa.test') &&
+                !body?.provider &&
+                !body?.model &&
+                body?.limit !== 1 &&
+                Number(body?.to_ms) - Number(body?.from_ms) >= 7 * DAY
+            )
+            .map((call) => call.body?.time_zone)
+        );
+        expect([...utcDefaultZones]).toEqual(['UTC']);
       } finally {
         adaptive.clean();
       }

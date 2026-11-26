@@ -3180,7 +3180,9 @@
       "show_hourly": "Xem theo giờ",
       "keys": "Phím mũi tên di chuyển giữa các giờ; Enter mở yêu cầu của giờ đó.",
       "day": "Ngày ({{zone}})",
-      "skipped": "bỏ qua (DST)"
+      "skipped": "bỏ qua (DST)",
+      "partial": "đo một phần",
+      "partial_measured": "đã đo {{measured}}/{{total}}"
     },
     "provider_split": {
       "title": "Token theo nhà cung cấp",

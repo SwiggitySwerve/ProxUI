@@ -269,7 +269,7 @@ export function TrendChart({
                 </g>
               )}
               {points.map((point) => {
-                const left = Math.max(from, point.at);
+                const left = inRangeBucketTime(point.at, from);
                 const right = Math.min(to, point.at + interval);
                 const x = ((left - from) / Math.max(1, to - from)) * FRAME.right;
                 const width = Math.max(1, ((right - left) / Math.max(1, to - from)) * FRAME.right);

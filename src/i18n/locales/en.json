@@ -3174,7 +3174,9 @@
       "show_hourly": "Show by hour",
       "keys": "Arrow keys move between hours; Enter opens that hour's requests.",
       "day": "Day ({{zone}})",
-      "skipped": "skipped (DST)"
+      "skipped": "skipped (DST)",
+      "partial": "partial coverage",
+      "partial_measured": "{{measured}}/{{total}} measured"
     },
     "provider_split": {
       "title": "Tokens by provider",

@@ -1,5 +1,6 @@
 import {
   inRangeBucketTime,
+  localDateKey,
   localDayStart,
   localHour,
   nextLocalDay,
@@ -41,9 +42,9 @@ export function lineSegments(
   const span = Math.max(1, frame.to - frame.from);
   // A bucket sits at the middle of its part inside the range, so partial edge buckets stay on the plot.
   const x = (at: number) => {
-    const start = Math.max(frame.from, at);
+    const start = inRangeBucketTime(at, frame.from);
     const end = Math.min(frame.to, at + frame.interval);
-    const mid = end > start ? (start + end) / 2 : Math.min(Math.max(at, frame.from), frame.to);
+    const mid = end > start ? (start + end) / 2 : Math.min(start, frame.to);
     return frame.left + ((mid - frame.from) / span) * (frame.right - frame.left);
   };
   const y = (value: number) =>
@@ -95,15 +96,22 @@ export function timeTicks(
     steps.find((s) => s >= interval && (to - from) / s <= maxTicks) ?? steps[steps.length - 1];
   const ticks: number[] = [];
   if (step < DAY) {
-    // Step on local wall-clock hours so ticks stay on-grid (and keep local midnight) across DST.
+    // Step on local wall-clock hours so ticks stay on-grid across DST. Deduplicate only
+    // repeated fall-back (local day, local hour) pairs, never spring-forward jumps 1h apart.
+    // Keep localDayStart (e.g. Havana spring-forward 01:00) so the date-change tick survives.
     const stepHours = step / HOUR;
     const firstHour = Math.ceil(from / HOUR) * HOUR;
+    const seenSlots = new Set<string>();
     for (let at = firstHour; at <= to; at += HOUR) {
-      if (
-        localHour(zone, at) % stepHours === 0 &&
-        (stepHours === 1 || ticks.length === 0 || at - ticks[ticks.length - 1] > HOUR)
-      )
-        ticks.push(at);
+      const hour = localHour(zone, at);
+      const isDayStart = at === localDayStart(zone, at);
+      if (hour % stepHours !== 0 && !isDayStart) continue;
+      // Key by local calendar date + wall-clock hour (not localDayStart), so cross-date
+      // rollbacks like America/Goose_Bay 2009 (00:01 -> 23:01 previous day) deduplicate 00:00.
+      const slot = `${localDateKey(zone, at)}:${hour}`;
+      if (stepHours > 1 && seenSlots.has(slot)) continue;
+      seenSlots.add(slot);
+      ticks.push(at);
     }
     return ticks;
   }

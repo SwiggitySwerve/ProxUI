@@ -3186,7 +3186,9 @@
       "show_hourly": "Показать по часам",
       "keys": "Стрелки переходят между часами; Enter открывает запросы за этот час.",
       "day": "День ({{zone}})",
-      "skipped": "пропущен (DST)"
+      "skipped": "пропущен (DST)",
+      "partial": "частичное покрытие",
+      "partial_measured": "измерено {{measured}}/{{total}}"
     },
     "provider_split": {
       "title": "Токены по провайдерам",

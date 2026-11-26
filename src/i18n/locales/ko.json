@@ -3174,7 +3174,9 @@
       "show_hourly": "시간별로 보기",
       "keys": "화살표 키로 시간을 이동하고 Enter로 해당 시간의 요청을 엽니다.",
       "day": "날짜 ({{zone}})",
-      "skipped": "건너뜀(DST)"
+      "skipped": "건너뜀(DST)",
+      "partial": "부분 측정",
+      "partial_measured": "{{measured}}/{{total}} 측정됨"
     },
     "provider_split": {
       "title": "제공업체별 토큰",

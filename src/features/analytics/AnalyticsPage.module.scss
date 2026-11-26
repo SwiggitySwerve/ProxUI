@@ -1380,6 +1380,15 @@
   &[data-state='gap'] {
     background: repeating-linear-gradient(135deg, var(--border-hover) 0 2px, transparent 2px 4px);
   }
+  // A weekday slot mixing measured and unmeasured occurrences keeps its shade plus an opposite-slant hatch.
+  &[data-state='partial'] {
+    background-image: repeating-linear-gradient(
+      45deg,
+      rgb(0 0 0 / 0.42) 0 1.5px,
+      rgb(255 255 255 / 0.18) 1.5px 3px,
+      transparent 3px 6px
+    );
+  }
   &[data-state='outside'] {
     background: transparent;
   }
@@ -1524,6 +1533,9 @@ button.heatCell {
 .routing > p {
   margin: 4px 0 10px;
 }
+.routing .tableScroll {
+  container-type: inline-size;
+}
 .privacyToggle {
   display: inline-flex;
   align-items: center;
@@ -1548,8 +1560,20 @@ button.heatCell {
     position: sticky;
     left: 0;
     z-index: 1;
+    min-width: min(140px, 40cqi);
+    width: min(220px, 45cqi);
+    max-width: min(220px, 45cqi);
+    white-space: normal;
+    overflow-wrap: anywhere;
     background: var(--bg-primary);
     box-shadow: 1px 0 0 var(--border-color);
+    button {
+      display: block;
+      max-width: min(204px, calc(45cqi - 16px));
+      white-space: normal;
+      overflow-wrap: anywhere;
+      text-align: left;
+    }
   }
   thead th {
     vertical-align: bottom;

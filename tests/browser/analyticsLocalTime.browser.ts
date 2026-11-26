@@ -45,12 +45,72 @@ test.describe('in a New York browser', () => {
       'true'
     );
     await expect(map.getByText('Mon', { exact: true }).first()).toBeVisible();
-    // Weekday view shares the scale key and marks out-of-range days outside rather than 0 events.
+    // Weekday view shares the scale key, clears hover readout over blank out-of-range cells,
+    // and marks out-of-range days outside rather than 0 events.
     await expect(map).toContainText('not measured');
+    await map.locator('[data-state="value"]').first().hover();
+    await expect(map.locator('output')).toContainText(/Thu/);
+    await map.locator('[data-state="outside"]').first().hover();
+    await expect(map.locator('output')).toHaveText('');
     await map.getByText('View data table', { exact: true }).click();
     const monRow = map.locator('tbody tr', { hasText: 'Mon' });
     await expect(monRow.locator('td').first()).toHaveText('');
   });
+});
+
+test('Routing sticky Model column stays readable for short and long names and keeps account cells visible at 390px', async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await app.login();
+  await app.loaded();
+  await app.tab('Routing');
+  const routing = page.locator('section').filter({
+    has: page.getByRole('heading', { name: 'Which account served each model', exact: true }),
+  });
+  const scroll = routing.locator('[role="region"]');
+  const measure = () =>
+    scroll.evaluate((container) => {
+      container.scrollLeft = container.scrollWidth;
+      const th = container.querySelector('tbody th[scope="row"]')!.getBoundingClientRect();
+      const row = container.querySelector('tbody tr')!.getBoundingClientRect();
+      const td = container.querySelector('tbody tr td:last-child')!.getBoundingClientRect();
+      const box = container.getBoundingClientRect();
+      return {
+        clientWidth: container.clientWidth,
+        thWidth: th.width,
+        thRight: th.right,
+        rowHeight: row.height,
+        tdLeft: td.left,
+        tdRight: td.right,
+        boxRight: box.right,
+      };
+    });
+
+  // Short model name ("ready") must not collapse to vertical glyphs.
+  await expect(routing.locator('tbody th[scope="row"]').first()).toBeVisible();
+  const readyGeo = await measure();
+  expect(readyGeo.thWidth).toBeGreaterThanOrEqual(110);
+  expect(readyGeo.thWidth).toBeLessThanOrEqual(readyGeo.clientWidth * 0.55);
+  expect(readyGeo.rowHeight).toBeLessThanOrEqual(70);
+  expect(readyGeo.tdRight).toBeGreaterThan(readyGeo.thRight + 20);
+  expect(readyGeo.tdLeft).toBeGreaterThanOrEqual(readyGeo.thRight - 2);
+  expect(readyGeo.tdRight).toBeLessThanOrEqual(readyGeo.boxRight + 1);
+
+  // Long model name ("large") wraps cleanly inside the capped sticky column without covering accounts.
+  app.scenario = 'large';
+  await page.getByRole('button', { name: /^Shared filters/ }).click();
+  await app.change(() => page.getByRole('button', { name: 'Refresh', exact: true }).click());
+  await expect(routing.getByRole('button', { name: /very-long-qualified-name/ })).toBeVisible();
+  const largeGeo = await measure();
+  expect(largeGeo.thWidth).toBeGreaterThanOrEqual(110);
+  expect(largeGeo.thWidth).toBeLessThanOrEqual(largeGeo.clientWidth * 0.55);
+  expect(largeGeo.rowHeight).toBeLessThanOrEqual(220);
+  expect(largeGeo.tdRight).toBeGreaterThan(largeGeo.thRight + 20);
+  expect(largeGeo.tdLeft).toBeGreaterThanOrEqual(largeGeo.thRight - 2);
+  expect(largeGeo.tdRight).toBeLessThanOrEqual(largeGeo.boxRight + 1);
+  await expect(routing.locator('tbody tr').first().locator('td').last()).toBeVisible();
 });
 
 test('the Performance tab shows each account’s peak requests in flight, source, and peak time', async ({

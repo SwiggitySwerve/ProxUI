@@ -26,9 +26,54 @@ interface InteractiveSlot extends HourOccurrence {
   hour: number;
 }
 
-type WeekdaySlotState = 'value' | 'gap' | 'outside';
+export interface WeekdaySlotCoverage {
+  state: 'value' | 'partial' | 'gap' | 'outside';
+  measured: number;
+  total: number;
+}
 
-function HeatScale({ maximum, hasSkipped = false }: { maximum: number; hasSkipped?: boolean }) {
+/** Per (weekday, hour) coverage from the date grid: blank outside, hatched gap, or partial/full. */
+export function weekdaySlotCoverage(
+  rows: ReturnType<typeof hourGrid>,
+  zone: string
+): WeekdaySlotCoverage[] {
+  const coverage: WeekdaySlotCoverage[] = Array.from({ length: 7 * 24 }, () => ({
+    state: 'outside',
+    measured: 0,
+    total: 0,
+  }));
+  for (const row of rows) {
+    const weekday = new Date(row.day + zoneOffsetMinutes(zone, row.day) * 60_000).getUTCDay();
+    for (let hour = 0; hour < 24; hour++) {
+      for (const occ of cellOccurrences(row.cells[hour])) {
+        const entry = coverage[weekday * 24 + hour];
+        entry.total += 1;
+        if (occ.state === 'value') entry.measured += 1;
+      }
+    }
+  }
+  for (const entry of coverage) {
+    entry.state =
+      entry.total === 0
+        ? 'outside'
+        : entry.measured === 0
+          ? 'gap'
+          : entry.measured < entry.total
+            ? 'partial'
+            : 'value';
+  }
+  return coverage;
+}
+
+function HeatScale({
+  maximum,
+  hasSkipped = false,
+  hasPartial = false,
+}: {
+  maximum: number;
+  hasSkipped?: boolean;
+  hasPartial?: boolean;
+}) {
   const { t, i18n } = useTranslation();
   return (
     <span className={styles.heatScale} aria-hidden="true">
@@ -41,6 +86,12 @@ function HeatScale({ maximum, hasSkipped = false }: { maximum: number; hasSkippe
         <span className={styles.heatCell} data-state="gap" />
         {t('analytics.heatmap.unmeasured')}
       </span>
+      {hasPartial && (
+        <span className={styles.heatScaleKey}>
+          <span className={styles.heatCell} data-level={2} data-state="partial" />
+          {t('analytics.heatmap.partial')}
+        </span>
+      )}
       {hasSkipped && (
         <span className={styles.heatScaleKey}>
           <span className={styles.heatCell} data-state="skipped" />
@@ -86,23 +137,7 @@ export function HourHeatmap({
   const allOccurrences = rows.flatMap((row) => row.cells.flatMap(cellOccurrences));
   const maximum = Math.max(0, ...allOccurrences.map((occ) => occ.value ?? 0));
   const hasSkipped = rows.some((row) => row.cells.some((cell) => cell.state === 'skipped'));
-  // Per (weekday, hour) coverage state from the same range/points: outside the range stays blank,
-  // and unmeasured slots under partial coverage stay hatched gaps rather than reading as zero.
-  const weekdayMeasured = new Array<number>(7 * 24).fill(0);
-  const weekdayGaps = new Array<number>(7 * 24).fill(0);
-  for (const row of rows) {
-    const weekday = new Date(row.day + zoneOffsetMinutes(zone, row.day) * 60_000).getUTCDay();
-    for (let hour = 0; hour < 24; hour++) {
-      for (const occ of cellOccurrences(row.cells[hour])) {
-        const slot = weekday * 24 + hour;
-        if (occ.state === 'value') weekdayMeasured[slot] += 1;
-        else weekdayGaps[slot] += 1;
-      }
-    }
-  }
-  const weekdayStates: WeekdaySlotState[] = weekdayMeasured.map((measured, slot) =>
-    measured > 0 ? 'value' : weekdayGaps[slot] > 0 ? 'gap' : 'outside'
-  );
+  const weekdayCoverage = weekdaySlotCoverage(rows, zone);
   const inside: InteractiveSlot[] = rows.flatMap((row, rowIndex) =>
     row.cells.flatMap((cell, hour) =>
       cellOccurrences(cell).map((occ) => ({ ...occ, row: rowIndex, hour }))
@@ -217,7 +252,7 @@ export function HourHeatmap({
         )}
       </div>
       {hourly && weekly && byWeekday ? (
-        <WeekdayGrid title={title} weekly={weekly} states={weekdayStates} />
+        <WeekdayGrid title={title} weekly={weekly} coverage={weekdayCoverage} />
       ) : !hourly ? (
         <p className={styles.muted}>
           {t('analytics.heatmap.daily')}{' '}
@@ -257,6 +292,7 @@ export function HourHeatmap({
                         className={styles.heatCell}
                         data-state="skipped"
                         title={t('analytics.heatmap.skipped')}
+                        onMouseEnter={() => setInspectedAt(null)}
                       />
                     );
                   }
@@ -267,6 +303,7 @@ export function HourHeatmap({
                         key={`outside-${row.day}-${hour}`}
                         className={styles.heatCell}
                         data-state="outside"
+                        onMouseEnter={() => setInspectedAt(null)}
                       />
                     );
                   }
@@ -333,22 +370,26 @@ const WEEK = [1, 2, 3, 4, 5, 6, 0];
  * Events by weekday and hour, summed over the range in the page's zone: the usual week at a
  * glance. A cell spans several dates, so it opens nothing; the table repeats every value.
  */
-function WeekdayGrid({
+export function WeekdayGrid({
   title,
   weekly,
-  states,
+  coverage,
 }: {
   title: string;
   weekly: { weekday: number; hour: number; calls: number }[];
-  states: readonly WeekdaySlotState[];
+  coverage: readonly WeekdaySlotCoverage[];
 }) {
   const { t, i18n } = useTranslation();
   const [inspected, setInspected] = useState<{ weekday: number; hour: number } | null>(null);
   const calls = new Map(weekly.map((slot) => [slot.weekday * 24 + slot.hour, slot.calls]));
+  const hasPartial = coverage.some((entry) => entry.state === 'partial');
   const maximum = Math.max(
     0,
     ...weekly
-      .filter((slot) => states[slot.weekday * 24 + slot.hour] === 'value')
+      .filter((slot) => {
+        const state = coverage[slot.weekday * 24 + slot.hour].state;
+        return state === 'value' || state === 'partial';
+      })
       .map((s) => s.calls)
   );
   // 4 January 2026 was a Sunday: day names come from the locale, not a hard-coded list.
@@ -356,24 +397,34 @@ function WeekdayGrid({
     new Intl.DateTimeFormat(i18n.language, { weekday: 'short', timeZone: 'UTC' }).format(
       Date.UTC(2026, 0, 4 + weekday)
     );
+  const partialSuffix = (entry: WeekdaySlotCoverage) =>
+    entry.state === 'partial'
+      ? ` (${t('analytics.heatmap.partial_measured', {
+          measured: analyticsNumber(entry.measured, i18n.language),
+          total: analyticsNumber(entry.total, i18n.language),
+        })})`
+      : '';
   const describe = (weekday: number, hour: number) => {
     const slot = weekday * 24 + hour;
-    const state = states[slot];
-    if (state === 'gap')
+    const entry = coverage[slot];
+    if (entry.state === 'gap')
       return `${dayName(weekday)} ${hourLabel(hour)}:00: ${t('analytics.heatmap.unmeasured')}`;
     const count = calls.get(slot) ?? 0;
-    return `${dayName(weekday)} ${hourLabel(hour)}:00: ${t('analytics.heatmap.events', {
+    const events = t('analytics.heatmap.events', {
       count,
       value: analyticsNumber(count, i18n.language),
-    })}`;
+    });
+    return `${dayName(weekday)} ${hourLabel(hour)}:00: ${events}${partialSuffix(entry)}`;
   };
   const tableValue = (weekday: number, hour: number) => {
     const slot = weekday * 24 + hour;
-    const state = states[slot];
-    if (state === 'outside') return '';
-    if (state === 'gap') return t('analytics.heatmap.unmeasured');
-    return analyticsNumber(calls.get(slot) ?? 0, i18n.language);
+    const entry = coverage[slot];
+    if (entry.state === 'outside') return '';
+    if (entry.state === 'gap') return t('analytics.heatmap.unmeasured');
+    const formatted = analyticsNumber(calls.get(slot) ?? 0, i18n.language);
+    return `${formatted}${partialSuffix(entry)}`;
   };
+  const inspectedEntry = inspected ? coverage[inspected.weekday * 24 + inspected.hour] : undefined;
   return (
     <>
       <div className={styles.heatGrid} aria-hidden="true" onMouseLeave={() => setInspected(null)}>
@@ -388,16 +439,27 @@ function WeekdayGrid({
             <span className={styles.heatDay}>{dayName(weekday)}</span>
             {HOURS.map((hour) => {
               const slot = weekday * 24 + hour;
-              const state = states[slot];
-              if (state === 'outside') {
-                return <span key={hour} className={styles.heatCell} data-state="outside" />;
+              const entry = coverage[slot];
+              if (entry.state === 'outside') {
+                return (
+                  <span
+                    key={hour}
+                    className={styles.heatCell}
+                    data-state="outside"
+                    onMouseEnter={() => setInspected(null)}
+                  />
+                );
               }
               return (
                 <span
                   key={hour}
                   className={styles.heatCell}
-                  data-state={state}
-                  data-level={state === 'value' ? heatLevel(calls.get(slot) ?? 0, maximum) : 0}
+                  data-state={entry.state}
+                  data-level={
+                    entry.state === 'value' || entry.state === 'partial'
+                      ? heatLevel(calls.get(slot) ?? 0, maximum)
+                      : 0
+                  }
                   onMouseEnter={() => setInspected({ weekday, hour })}
                 />
               );
@@ -406,9 +468,11 @@ function WeekdayGrid({
         ))}
       </div>
       <div className={styles.heatFooter}>
-        <HeatScale maximum={maximum} />
+        <HeatScale maximum={maximum} hasPartial={hasPartial} />
         <output className={styles.chartReadout} aria-hidden="true">
-          {inspected ? describe(inspected.weekday, inspected.hour) : null}
+          {inspected && inspectedEntry && inspectedEntry.state !== 'outside'
+            ? describe(inspected.weekday, inspected.hour)
+            : null}
         </output>
       </div>
       <details className={styles.readout}>

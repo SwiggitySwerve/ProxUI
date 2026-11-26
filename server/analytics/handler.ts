@@ -10,11 +10,12 @@ import { createSnapshotCache, type Outcome, type Query } from './cache';
 
 const CATALOG_TTL = 5 * 60_000;
 
-/** Canonical IANA zone for warming default views, falling back to UTC if unset or unknown. */
-export function parseWarmZone(raw: string | undefined): string {
+/** Canonical IANA zone for warming default views, or undefined when unset or invalid. */
+export function parseWarmZone(raw: string | undefined): string | undefined {
   const trimmed = raw?.trim();
-  if (!trimmed || trimmed.toUpperCase() === 'UTC') return 'UTC';
-  return isKnownTimeZone(trimmed) ? canonicalTimeZone(trimmed) : 'UTC';
+  if (!trimmed) return undefined;
+  if (trimmed.toUpperCase() === 'UTC') return 'UTC';
+  return isKnownTimeZone(trimmed) ? canonicalTimeZone(trimmed) : undefined;
 }
 
 const QUERY_FIELDS = new Set([
@@ -130,10 +131,19 @@ export function createAnalyticsHandler(
     if (fresh) catalogs = undefined;
     const outcome = await cache.get(query, fresh);
     if (outcome.ok) {
-      // Without an explicit PROX_ANALYTICS_TIME_ZONE, follow the live browser's accepted zone so
-      // the warmer stops recomputing UTC views nobody opens.
+      // Without an explicit PROX_ANALYTICS_TIME_ZONE, follow the live Analytics page's zone on
+      // unfiltered queries (ignoring Dashboard provider polls, which always request UTC with limit 1).
+      const isUnfilteredAnalyticsView =
+        !query.provider &&
+        !query.model &&
+        !query.search &&
+        (query.outcome === undefined || query.outcome === 'all') &&
+        query.before_ms === undefined &&
+        query.before_id === undefined &&
+        query.limit !== 1;
       if (
         !fixedWarmZone &&
+        isUnfilteredAnalyticsView &&
         typeof query.time_zone === 'string' &&
         (query.time_zone.toUpperCase() === 'UTC' || isKnownTimeZone(query.time_zone))
       ) {

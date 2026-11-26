@@ -3200,7 +3200,9 @@
       "show_hourly": "按小時顯示",
       "keys": "方向鍵在小時之間移動；Enter 開啟該小時的請求。",
       "day": "日期 ({{zone}})",
-      "skipped": "已略過（日光節約時間）"
+      "skipped": "已略過（日光節約時間）",
+      "partial": "部分涵蓋",
+      "partial_measured": "已測 {{measured}}/{{total}}"
     },
     "provider_split": {
       "title": "按供應商的權杖",

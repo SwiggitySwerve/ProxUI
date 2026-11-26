@@ -62,7 +62,8 @@ function localParts(zone: string, ms: number): Record<string, number> {
   return parts;
 }
 
-function localDateKey(zone: string, ms: number): number {
+/** UTC midnight of the local calendar date of `ms` in `zone`. */
+export function localDateKey(zone: string, ms: number): number {
   const parts = localParts(zone, ms);
   return Date.UTC(parts.year, parts.month - 1, parts.day);
 }
