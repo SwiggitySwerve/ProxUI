@@ -457,3 +457,45 @@ test('the provider split adds up to the timeline, and models name the providers 
     'gpt-5': ['antigravity', 'codex'],
   });
 });
+
+test('accounts and routes group by source and auth index, and add up to the summary', () => {
+  const f = setup();
+  const a = { instance: 'hub-a', authIndex: '7' };
+  f.insert([
+    event(1, { ...a, accountLabel: 'old@example.test' }),
+    event(2, { ...a, accountLabel: 'one@example.test', model: 'gpt-5', provider: 'codex' }),
+    event(3, { ...a, accountLabel: 'one@example.test', failed: true }),
+    // Same auth index on another source is another credential.
+    event(4, { instance: 'hub-b', authIndex: '7', accountLabel: 'two@example.test' }),
+    event(5, { instance: null, authIndex: null, accountLabel: null }),
+  ]);
+  const response = queryAnalytics(f.db, query(), rateState());
+  expect(
+    response.accounts!.map((x) => [
+      x.instance,
+      x.auth_index,
+      x.label,
+      x.providers,
+      x.calls,
+      x.failure_calls,
+    ])
+  ).toEqual([
+    ['hub-a', '7', 'one@example.test', ['claude', 'codex'], 3, 1],
+    ['hub-b', '7', 'two@example.test', ['claude'], 1, 0],
+    [null, null, null, ['claude'], 1, 0],
+  ]);
+  for (const field of ['calls', 'failure_calls'] as const)
+    expect(response.accounts!.reduce((sum, x) => sum + x[field], 0)).toBe(response.summary[field]);
+  expect(response.accounts!.reduce((sum, x) => sum + x.total_tokens, 0)).toBe(
+    response.summary.total_tokens
+  );
+  expect(response.routes!.map((r) => [r.model, r.instance, r.calls])).toEqual([
+    ['client-claude', 'hub-a', 2],
+    ['client-claude', 'hub-b', 1],
+    ['client-claude', null, 1],
+    ['gpt-5', 'hub-a', 1],
+  ]);
+  // Filters apply to accounts as to every other total.
+  const failed = queryAnalytics(f.db, query({ outcome: 'failed' }), rateState());
+  expect(failed.accounts!.map((x) => [x.instance, x.calls])).toEqual([['hub-a', 1]]);
+});

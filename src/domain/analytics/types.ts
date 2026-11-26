@@ -52,6 +52,28 @@ export interface AnalyticsBreakdown extends AnalyticsMetrics {
   providers?: string[];
 }
 
+/** One credential: its source instance and the proxy's auth index. Null: not attributed. */
+export interface AnalyticsAccount {
+  instance: string | null;
+  auth_index: string | null;
+  /** The account label most of its events carried, as the credential listing named it. */
+  label: string | null;
+  providers: string[];
+  calls: number;
+  failure_calls: number;
+  total_tokens: number;
+}
+
+/** Events for one model through one credential. */
+export interface AnalyticsRoute {
+  model: string;
+  instance: string | null;
+  auth_index: string | null;
+  calls: number;
+  failure_calls: number;
+  total_tokens: number;
+}
+
 /** One provider's events and tokens in one bucket. Per bucket, these add up to `timeline`. */
 export interface AnalyticsProviderBucket {
   provider: string;
@@ -178,6 +200,9 @@ export interface AnalyticsResponse {
   providers: AnalyticsBreakdown[];
   /** Absent from servers older than this field. Sorted by bucket, then provider. */
   provider_timeline?: AnalyticsProviderBucket[];
+  /** Absent from older servers. Each sums to the summary for the same query. */
+  accounts?: AnalyticsAccount[];
+  routes?: AnalyticsRoute[];
   filter_options: { models: string[]; providers: string[] };
   requests: {
     items: AnalyticsRequest[];
