@@ -1,0 +1,7 @@
+[Unit]
+Description=Capture one official agy /usage snapshot for prox-history
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/prox/prox-agy-usage.sh

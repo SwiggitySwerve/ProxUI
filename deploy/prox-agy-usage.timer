@@ -1,0 +1,10 @@
+[Unit]
+Description=Capture official agy /usage snapshot every 10 minutes (disabled by default)
+
+[Timer]
+OnCalendar=*:0/10
+RandomizedDelaySec=20s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

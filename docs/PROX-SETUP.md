@@ -69,7 +69,7 @@ After Authentik sign-in, use the existing proxy management key at the UI's login
 | `https://prox.swervelab.xyz` or `https://prox.swervelab.xyz/codex` | GPT/Codex, port 8317 |
 | `https://prox.swervelab.xyz/claude` | Claude, port 8319 |
 
-There is no Gemini / Antigravity source. The ProxD Gemini hub (port 8321) was taken
+There is no ProxD Gemini / Antigravity hub. The ProxD Gemini hub (port 8321) was taken
 down for good on 2026-11-23: Google suspended the account for a Terms of Service
 violation, and the Antigravity and Gemini CLI terms bar third-party tools from using
 their OAuth sign-in, so no hub may hold that login and prox-history may not read
@@ -77,9 +77,22 @@ Google's quota endpoints with it. On 2026-11-26 the code that could do so was re
 prox-history never inventories or reads Antigravity credentials, even on a hub that
 declares them, the Auth Files card sends nothing for them, and
 `tests/noGoogleQuotaReads.test.ts` fails if any source file names Google's private
-Cloud Code backend. The Gemini history recorded until then stays readable on Quota
-Management (prox-history keeps a pool for stored accounts whose source is no longer
-configured).
+Cloud Code backend.
+
+Optionally, Gemini pool balances and forecasts can be fed from Google's own signed-in
+`agy` CLI on the host via a local file drop (`~/.local/share/prox-history/agy-usage.json`,
+mounted at `/data/agy-usage.json` inside `prox-history`). `deploy/prox-agy-usage.sh`
+runs `agy --output-format json -p "/usage"` (zero turns, zero tokens) from an empty
+working directory, verifies the pinned `agy --version`, rejects any output containing an
+email address or missing `gemini-5h`/`gemini-weekly`, and writes a stop flag
+(`~/.local/share/prox-history/agy-usage.stopped`) on any unexpected failure so a timer
+never retries a failing account until cleared manually. `scripts/deploy-homelab.sh`
+installs `prox-agy-usage.service` and `prox-agy-usage.timer` (10-minute cadence,
+`Persistent=false`) disabled by default; enable with
+`systemctl --user enable --now prox-agy-usage.timer`. If no fresh snapshot arrives for
+30 minutes, `prox-history` marks the Gemini account disabled again so its stored history
+stays visible while the combined "All" forecast continues uninterrupted for Claude and
+Codex.
 
 The checked-in source manifest, `deploy/provider-sources.json`, owns instance
 membership, ports, paths, aliases, and explicit authentication-sharing scopes.
