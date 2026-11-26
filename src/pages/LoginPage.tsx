@@ -13,7 +13,7 @@ import { isSupportedLanguage } from '@/utils/language';
 import { BrandMark } from '@/components/brand/BrandMark';
 import type { ApiError } from '@/types';
 import { LegacyBackendError } from '@/services/api/legacyBackendProbe';
-import { redirectTarget } from '@/router/redirectTarget';
+import { resolveLoginRedirect } from '@/router/redirectTarget';
 import { LoginShell, LoginSplash } from './LoginSplash';
 import styles from './LoginPage.module.scss';
 
@@ -132,7 +132,8 @@ export function LoginPage() {
         restored = await restoreSession();
         if (restored) {
           // The splash is already showing; waiting on it would delay the page the user asked for.
-          navigate(redirectTarget(location.state), { replace: true });
+          const redirect = resolveLoginRedirect(location.state);
+          navigate(redirect.to, { replace: true, state: redirect.state });
         } else {
           setApiBase(storedBase || detectedBase);
           setManagementKey(storedKey || '');
@@ -165,7 +166,8 @@ export function LoginPage() {
         rememberPassword,
       });
       showNotification(t('common.connected_status'), 'success');
-      navigate(redirectTarget(location.state), { replace: true });
+      const redirect = resolveLoginRedirect(location.state);
+      navigate(redirect.to, { replace: true, state: redirect.state });
     } catch (err: unknown) {
       const message = getLocalizedErrorMessage(err, t);
       setError(message);
@@ -196,7 +198,8 @@ export function LoginPage() {
   );
 
   if (isAuthenticated && !autoLoading) {
-    return <Navigate to={redirectTarget(location.state)} replace />;
+    const redirect = resolveLoginRedirect(location.state);
+    return <Navigate to={redirect.to} replace state={redirect.state} />;
   }
 
   // 显示启动动画（自动登录中）

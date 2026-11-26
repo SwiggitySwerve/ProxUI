@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer';
 import { useHeaderRefresh, type HeaderRefreshRound } from '@/hooks/useHeaderRefresh';
 import { providerSources } from '@/stores/useProviderSources';
 import { Button } from '@/components/ui/Button';
@@ -21,6 +22,8 @@ import {
   healthParts,
   matchesStatusFilter,
   providerGroupOf,
+  readPinnedCredentialFromParams,
+  readPinnedCredentialFromState,
   resolveProviderFilter,
   resolveSourceFilter,
   summarizeSources,
@@ -209,39 +212,75 @@ export function AuthFilesPage() {
     answerOf(instanceId).state !== 'loading' && filesBySource[instanceId] !== undefined;
 
   // A link from Analytics names one credential by its source and the proxy's auth index (never
-  // its label). Once that source has answered, show just that credential, then drop the link
-  // from the address so the filters stay the user's own.
-  const [params, setParams] = useSearchParams();
-  const linkSource = params.get('source');
-  const linkIndex = params.get('auth_index');
-  const linkReady = linkSource !== null && linkIndex !== null && isKnown(linkSource);
+  // its label). Pin immediately so missing credentials or gone sources never expose other
+  // credentials, keep the pin in history state across reloads, and leave saved filters untouched.
+  const pageTransitionLayer = usePageTransitionLayer();
+  const isCurrentLayer = pageTransitionLayer ? pageTransitionLayer.status === 'current' : true;
+  const [params] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const urlPin = readPinnedCredentialFromParams(params);
+  const historyPin = readPinnedCredentialFromState(location.state);
+  const pinnedCredential = urlPin ?? historyPin;
+  const urlPinSource = urlPin ? urlPin.source : null;
+  const urlPinIndex = urlPin ? urlPin.authIndex : null;
   useEffect(() => {
-    if (!linkReady) return;
-    const file = filesBySource[linkSource!]?.find(
-      (item) => String(item.authIndex ?? '').trim() === linkIndex
+    if (!isCurrentLayer || urlPinSource === null || urlPinIndex === null) return;
+    const nextParams = new URLSearchParams(params);
+    nextParams.delete('source');
+    nextParams.delete('auth_index');
+    const baseState =
+      location.state && typeof location.state === 'object'
+        ? (location.state as Record<string, unknown>)
+        : {};
+    const search = nextParams.toString();
+    navigate(
+      { pathname: location.pathname, search: search ? `?${search}` : '' },
+      {
+        replace: true,
+        state: {
+          ...baseState,
+          pinnedCredential: { source: urlPinSource, authIndex: urlPinIndex },
+        },
+      }
     );
-    if (file) {
-      filterState.setSource(linkSource!);
-      filterState.setSearch(file.name);
-    }
-    setParams(
-      (previous) => {
-        const next = new URLSearchParams(previous);
-        next.delete('source');
-        next.delete('auth_index');
-        return next;
-      },
-      { replace: true }
-    );
-    // Runs once per link, when its source is known.
+    // Runs once per link arrival; drops the query parameters and keeps the pin in history state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linkReady]);
+  }, [isCurrentLayer, urlPinSource, urlPinIndex]);
+
+  const clearPin = useCallback(() => {
+    if (!pinnedCredential) return;
+    const nextParams = new URLSearchParams(params);
+    nextParams.delete('source');
+    nextParams.delete('auth_index');
+    const nextState =
+      location.state && typeof location.state === 'object'
+        ? { ...(location.state as Record<string, unknown>) }
+        : null;
+    if (nextState) delete nextState.pinnedCredential;
+    const hasOtherState = nextState !== null && Object.keys(nextState).length > 0;
+    const search = nextParams.toString();
+    navigate(
+      { pathname: location.pathname, search: search ? `?${search}` : '' },
+      { replace: true, state: hasOtherState ? nextState : null }
+    );
+  }, [location.pathname, location.state, navigate, params, pinnedCredential]);
+
+  const sourceIds = sources.map((view) => view.source.instanceId);
+  const matchedPinnedFile =
+    pinnedCredential && pinnedCredential.source && pinnedCredential.authIndex
+      ? filesBySource[pinnedCredential.source]?.find(
+          (item) => String(item.authIndex ?? '').trim() === pinnedCredential.authIndex
+        )
+      : undefined;
+  const pinnedSourceMissing =
+    pinnedCredential !== null && status === 'ready' && !sourceIds.includes(pinnedCredential.source);
 
   // A persisted source or provider that no longer applies means "all", and the controls say so.
-  const effectiveSource = resolveSourceFilter(
-    filters.source,
-    sources.map((view) => view.source.instanceId)
-  );
+  // While pinned to a link's credential, show its source (even if missing) without altering saved filters.
+  const effectiveSource = pinnedCredential
+    ? pinnedCredential.source
+    : resolveSourceFilter(filters.source, sourceIds);
   const inScope = (instanceId: string) =>
     effectiveSource === ALL_SOURCES || effectiveSource === instanceId;
   const scopedLoadable = loadable.filter((view) => inScope(view.source.instanceId));
@@ -260,9 +299,15 @@ export function AuthFilesPage() {
         a.localeCompare(b)
     ),
   ];
-  const effectiveProvider = resolveProviderFilter(filters.provider, providerTypes);
+  const effectiveProvider = pinnedCredential
+    ? 'all'
+    : resolveProviderFilter(filters.provider, providerTypes);
+  const effectiveStatusFilterMode: AuthFilesStatusFilterMode = pinnedCredential
+    ? 'all'
+    : filters.statusFilterMode;
+  const effectiveSearch = pinnedCredential ? (matchedPinnedFile?.name ?? '') : filters.search;
   const statusFiltered = scopedFiles.filter((file) =>
-    matchesStatusFilter(file, filters.statusFilterMode)
+    matchesStatusFilter(file, effectiveStatusFilterMode)
   );
   const providerCounts: Record<string, number> = { all: statusFiltered.length };
   statusFiltered.forEach((file) => {
@@ -350,6 +395,7 @@ export function AuthFilesPage() {
 
   // Every source in view answered and has nothing: one page-level empty state, not one per source.
   const pageEmpty =
+    pinnedCredential === null &&
     scopedLoadable.length > 0 &&
     scopedAwaiting.length === 0 &&
     scopedLoadable.every(
@@ -358,10 +404,24 @@ export function AuthFilesPage() {
         filesBySource[view.source.instanceId]?.length === 0
     );
 
+  const withClearPin =
+    <T,>(set: (value: T) => void) =>
+    (value: T) => {
+      clearPin();
+      set(value);
+    };
+  const handleClearFilters = () => {
+    clearPin();
+    filterState.clear();
+  };
+
   const groupFilters: AuthFilesFilters = {
     ...filters,
     provider: effectiveProvider,
+    statusFilterMode: effectiveStatusFilterMode,
+    search: effectiveSearch,
     source: effectiveSource,
+    credential: pinnedCredential,
   };
 
   return (
@@ -389,21 +449,21 @@ export function AuthFilesPage() {
           sources={sources}
           counts={sourceCounts}
           active={effectiveSource}
-          onChange={filterState.setSource}
+          onChange={withClearPin(filterState.setSource)}
         />
         <ProviderTabs
           types={providerTypes}
           counts={scopedKnown ? providerCounts : null}
           active={effectiveProvider}
           resolvedTheme={resolvedTheme}
-          onChange={filterState.setProvider}
+          onChange={withClearPin(filterState.setProvider)}
         />
         <AuthFilesToolbar
-          search={filters.search}
-          onSearchChange={filterState.setSearch}
-          statusFilterMode={filters.statusFilterMode}
+          search={effectiveSearch}
+          onSearchChange={withClearPin(filterState.setSearch)}
+          statusFilterMode={effectiveStatusFilterMode}
           statusFilterOptions={statusFilterOptions}
-          onStatusFilterChange={filterState.setStatusFilterMode}
+          onStatusFilterChange={withClearPin(filterState.setStatusFilterMode)}
           sortMode={filters.sortMode}
           sortOptions={sortOptions}
           onSortModeChange={filterState.setSortMode}
@@ -460,6 +520,19 @@ export function AuthFilesPage() {
         </CardRowBlock>
       )}
 
+      {pinnedSourceMissing && (
+        <CardRowBlock compact={filters.compactMode}>
+          <EmptyState
+            title={t('auth_files.unified_group_filtered_out')}
+            action={
+              <Button variant="secondary" size="sm" onClick={handleClearFilters}>
+                {t('auth_files.no_results_clear')}
+              </Button>
+            }
+          />
+        </CardRowBlock>
+      )}
+
       {sources.map((view) => (
         <AuthFilesSourcePanel
           key={view.source.instanceId}
@@ -467,7 +540,7 @@ export function AuthFilesPage() {
           hidden={!inScope(view.source.instanceId)}
           pageEmpty={pageEmpty}
           filters={groupFilters}
-          onClearFilters={filterState.clear}
+          onClearFilters={handleClearFilters}
           registerRefresh={registerRefresh}
           registerUpload={registerUpload}
           registerQuotaRefresh={registerQuotaRefresh}

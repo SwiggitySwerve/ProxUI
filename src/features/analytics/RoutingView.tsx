@@ -79,6 +79,8 @@ export function RoutingView({
                       {link ? (
                         <Link to={link} title={t('analytics.routing.open_account')}>
                           {name(account)}
+                          {/* The same account on two sources is two credentials: name the source. */}
+                          <small className={styles.routingSource}> · {account.instance}</small>
                         </Link>
                       ) : (
                         name(account)

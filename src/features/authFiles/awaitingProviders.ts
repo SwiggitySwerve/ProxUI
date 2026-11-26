@@ -38,8 +38,9 @@ export function awaitingAuthProviders(
 /** A placeholder has no credential state, so only the provider tab and the search narrow it. */
 export function awaitingMatchesFilters(
   entry: ProviderCatalogEntry,
-  filters: Pick<AuthFilesFilters, 'provider' | 'statusFilterMode' | 'search'>
+  filters: Pick<AuthFilesFilters, 'provider' | 'statusFilterMode' | 'search' | 'match'>
 ): boolean {
+  if (filters.match) return false;
   const key = catalogProviderKey(entry);
   if (filters.provider !== 'all' && filters.provider !== key) return false;
   if (filters.statusFilterMode !== 'all') return false;

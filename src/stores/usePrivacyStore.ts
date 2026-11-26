@@ -25,3 +25,9 @@ export const usePrivacyStore = create<PrivacyState>()(
     }
   )
 );
+
+// Another tab changing the choice updates this one, so turning it off hides addresses everywhere.
+if (typeof window !== 'undefined')
+  window.addEventListener('storage', (event) => {
+    if (event.key === 'proxui-privacy') void usePrivacyStore.persist.rehydrate();
+  });

@@ -1499,7 +1499,7 @@ button.heatCell {
   }
   thead th {
     vertical-align: bottom;
-    small {
+    > small {
       display: block;
       color: var(--text-secondary);
       font-weight: 400;
@@ -1525,6 +1525,11 @@ button.heatCell {
   &[data-level='4'] {
     background: color-mix(in srgb, var(--analytics-requests) 45%, transparent);
   }
+}
+.routingSource {
+  display: inline;
+  color: var(--text-secondary);
+  font-weight: 400;
 }
 .routingFailed {
   display: block;

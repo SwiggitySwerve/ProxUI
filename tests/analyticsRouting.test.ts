@@ -61,3 +61,17 @@ describe('request details follow Show emails', () => {
     expect(shown).toContain('ada.lovelace@example.test');
   });
 });
+
+test('the same account on two sources names each source, so the links differ', () => {
+  const twin = {
+    ...data,
+    accounts: [
+      { ...data.accounts![0], instance: 'claude-primary', auth_index: '1' },
+      { ...data.accounts![0], instance: 'claude-backup', auth_index: '1' },
+    ],
+    routes: [],
+  };
+  const markup = render(twin);
+  expect(markup).toContain('· claude-primary');
+  expect(markup).toContain('· claude-backup');
+});

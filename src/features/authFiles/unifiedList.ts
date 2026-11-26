@@ -17,6 +17,11 @@ import { listKeyOf } from '@/features/authFiles/models/matrixView';
 import type { AuthFilesSortMode, AuthFilesStatusFilterMode } from '@/features/authFiles/uiState';
 import type { AuthFileItem } from '@/types';
 
+export type PinnedCredential = {
+  source: string;
+  authIndex: string;
+};
+
 export type AuthFilesFilters = {
   /** Provider key or 'all'. */
   provider: string;
@@ -27,9 +32,33 @@ export type AuthFilesFilters = {
   pageSize: number;
   /** Source instance id or 'all'. */
   source: string;
+  /** Exactly one credential, from a link: its source and the proxy's auth index. */
+  credential?: PinnedCredential | null;
+  /**
+   * What one source group shows of that credential (set by forSource): the auth index on its
+   * own source, 'none' on every other, null with no credential pinned.
+   */
+  match?: { authIndex: string } | 'none' | null;
   /** Bumps whenever a filter changes, so each source group returns to its first page. */
   revision: number;
 };
+
+export function readPinnedCredentialFromParams(params: URLSearchParams): PinnedCredential | null {
+  if (!params.has('source') && !params.has('auth_index')) return null;
+  return {
+    source: params.get('source')?.trim() ?? '',
+    authIndex: params.get('auth_index')?.trim() ?? '',
+  };
+}
+
+export function readPinnedCredentialFromState(state: unknown): PinnedCredential | null {
+  if (!state || typeof state !== 'object') return null;
+  const pinned = (state as { pinnedCredential?: unknown }).pinnedCredential;
+  if (!pinned || typeof pinned !== 'object') return null;
+  const { source, authIndex } = pinned as { source?: unknown; authIndex?: unknown };
+  if (typeof source !== 'string' || typeof authIndex !== 'string') return null;
+  return { source: source.trim(), authIndex: authIndex.trim() };
+}
 
 /** Raw provider key of a credential; kept under this name for existing importers. */
 export const providerOfAuthFile = providerOfCredential;
@@ -59,10 +88,28 @@ export function matchesStatusFilter(file: AuthFileItem, mode: AuthFilesStatusFil
   }
 }
 
-type ListFilters = Pick<AuthFilesFilters, 'provider' | 'statusFilterMode' | 'search'>;
+type ListFilters = Pick<AuthFilesFilters, 'provider' | 'statusFilterMode' | 'search' | 'match'>;
+
+/** A source group's filters: a pinned credential shows on its own source only, never elsewhere. */
+export function forSource<T extends AuthFilesFilters>(filters: T, source: string): T {
+  const pinned = filters.credential;
+  return {
+    ...filters,
+    match: !pinned
+      ? null
+      : pinned.source && pinned.authIndex && pinned.source === source
+        ? { authIndex: pinned.authIndex }
+        : 'none',
+  };
+}
 
 /** Status, provider and search filters, in one place so the chips, counts and groups agree. */
 export function filterAuthFiles(files: AuthFileItem[], filters: ListFilters): AuthFileItem[] {
+  if (filters.match === 'none') return [];
+  const only = filters.match?.authIndex.trim();
+  if (only !== undefined) {
+    return only ? files.filter((file) => String(file.authIndex ?? '').trim() === only) : [];
+  }
   const search = filters.search.trim();
   const wildcard = buildWildcardSearch(search);
   return files.filter(

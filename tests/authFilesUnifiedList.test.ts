@@ -112,3 +112,107 @@ describe('source filter', () => {
     expect(page).not.toContain('OAuthExcludedCard');
   });
 });
+
+describe('one credential from a link', () => {
+  test('shows exactly that auth index, so "Delete shown" never reaches a similar name', async () => {
+    const {
+      deletableShown,
+      forSource,
+      readPinnedCredentialFromParams,
+      readPinnedCredentialFromState,
+    } = await import('@/features/authFiles/unifiedList');
+    const { awaitingMatchesFilters } = await import('@/features/authFiles/awaitingProviders');
+    const files = [
+      file('dave.json', 'claude', { authIndex: 'claude-dave' }),
+      file('backup-dave.json', 'claude', { authIndex: 'claude-backup' }),
+      file('star*.json', 'claude', { authIndex: 'claude-star' }),
+    ];
+    // The search box holds the file name as a label; the auth index decides.
+    const page = {
+      ...all,
+      search: 'dave.json',
+      sortMode: 'default' as const,
+      compactMode: false,
+      pageSize: 9,
+      source: 'claude-primary',
+      revision: 0,
+      credential: { source: 'claude-primary', authIndex: 'claude-dave' },
+    };
+    const here = forSource(page, 'claude-primary');
+    expect(filterAuthFiles(files, here).map((f) => f.name)).toEqual(['dave.json']);
+    expect(deletableShown(files, here).map((f) => f.name)).toEqual(['dave.json']);
+    expect(filterAuthFiles(files, { ...all, search: 'dave.json' })).toHaveLength(2);
+    // Another source shows nothing of it, even a credential with the same auth index.
+    const elsewhere = forSource(page, 'claude-backup');
+    expect(filterAuthFiles(files, elsewhere)).toEqual([]);
+    expect(deletableShown(files, elsewhere)).toEqual([]);
+    // A deleted or empty auth index matches nothing (and never falls back to search).
+    const missing = forSource(
+      { ...page, search: '', credential: { source: 'claude-primary', authIndex: 'deleted' } },
+      'claude-primary'
+    );
+    expect(filterAuthFiles(files, missing)).toEqual([]);
+    expect(deletableShown(files, missing)).toEqual([]);
+    expect(filterAuthFiles(files, { ...all, match: { authIndex: '' } })).toEqual([]);
+    // Wildcard characters in the filename label never hide the pinned credential.
+    const star = forSource(
+      {
+        ...page,
+        search: 'star*.json',
+        credential: { source: 'claude-primary', authIndex: 'claude-star' },
+      },
+      'claude-primary'
+    );
+    expect(filterAuthFiles(files, star).map((f) => f.name)).toEqual(['star*.json']);
+    // Placeholder awaiting-auth cards stay hidden while pinned to a credential.
+    const placeholder = {
+      id: 'claude',
+      displayName: 'Claude',
+      lifecycle: 'awaiting_auth' as const,
+      credentialCount: 0,
+      modelCount: 0,
+      capabilities: [],
+      authMethods: [],
+    };
+    expect(awaitingMatchesFilters(placeholder, here)).toBe(false);
+    expect(awaitingMatchesFilters(placeholder, elsewhere)).toBe(false);
+    // Incomplete pins (blank source or authIndex) still match nothing on every source.
+    const blankIndex = forSource(
+      { ...page, search: '', credential: { source: 'claude-primary', authIndex: '' } },
+      'claude-primary'
+    );
+    expect(blankIndex.match).toBe('none');
+    expect(filterAuthFiles(files, blankIndex)).toEqual([]);
+    expect(deletableShown(files, blankIndex)).toEqual([]);
+    const blankSource = forSource(
+      { ...page, search: '', credential: { source: '', authIndex: 'claude-dave' } },
+      'claude-primary'
+    );
+    expect(blankSource.match).toBe('none');
+    expect(filterAuthFiles(files, blankSource)).toEqual([]);
+    // Link parameters and browser history state preserve incomplete links as empty pins.
+    expect(
+      readPinnedCredentialFromParams(new URLSearchParams('source=claude-primary&auth_index=1'))
+    ).toEqual({ source: 'claude-primary', authIndex: '1' });
+    expect(readPinnedCredentialFromParams(new URLSearchParams(''))).toBeNull();
+    expect(readPinnedCredentialFromParams(new URLSearchParams('source=claude-primary'))).toEqual({
+      source: 'claude-primary',
+      authIndex: '',
+    });
+    expect(
+      readPinnedCredentialFromParams(new URLSearchParams('source=claude-primary&auth_index= '))
+    ).toEqual({ source: 'claude-primary', authIndex: '' });
+    expect(
+      readPinnedCredentialFromState({
+        pinnedCredential: { source: 'claude-primary', authIndex: '1' },
+      })
+    ).toEqual({ source: 'claude-primary', authIndex: '1' });
+    expect(
+      readPinnedCredentialFromState({
+        pinnedCredential: { source: 'claude-primary', authIndex: '' },
+      })
+    ).toEqual({ source: 'claude-primary', authIndex: '' });
+    expect(readPinnedCredentialFromState(null)).toBeNull();
+    expect(readPinnedCredentialFromState({ pinnedCredential: { source: 'x' } })).toBeNull();
+  });
+});

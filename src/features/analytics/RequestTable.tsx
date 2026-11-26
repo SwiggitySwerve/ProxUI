@@ -97,14 +97,14 @@ export function RequestDetails({
           const value = request[field];
           if (!value) return null;
           const label = t(`analytics.fields.${field}`);
+          // What is copied is what is shown: a masked name never puts the address on the clipboard.
+          const shown = reveal || !accountFields.has(field) ? value : maskIdentifier(value);
           return (
             <div key={field} className={styles.detailPair}>
               <dt>{label}</dt>
               <dd className={styles.copyValue}>
-                <span className={styles.copyValueText}>
-                  {reveal || !accountFields.has(field) ? value : maskIdentifier(value)}
-                </span>
-                <CopyButton value={value} label={t('analytics.copy_field', { field: label })} />
+                <span className={styles.copyValueText}>{shown}</span>
+                <CopyButton value={shown} label={t('analytics.copy_field', { field: label })} />
               </dd>
             </div>
           );

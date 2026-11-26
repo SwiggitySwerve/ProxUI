@@ -1,23 +1,25 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { redirectTarget } from '../src/router/redirectTarget';
+import { resolveLoginRedirect } from '../src/router/redirectTarget';
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-describe('redirectTarget', () => {
+describe('resolveLoginRedirect', () => {
   test('keeps the pathname, query and hash of the page that sent the user to login', () => {
     const from = {
       pathname: '/analytics',
       search: '?tab=overview&range=7d&bucket=hour',
       hash: '#x',
     };
-    expect(redirectTarget({ from })).toBe('/analytics?tab=overview&range=7d&bucket=hour#x');
+    expect(resolveLoginRedirect({ from })).toEqual({
+      to: '/analytics?tab=overview&range=7d&bucket=hour#x',
+    });
   });
 
   test('falls back to the dashboard when there is nothing usable', () => {
-    expect(redirectTarget(null)).toBe('/');
-    expect(redirectTarget({})).toBe('/');
-    expect(redirectTarget({ from: { pathname: 42 } })).toBe('/');
+    expect(resolveLoginRedirect(null)).toEqual({ to: '/' });
+    expect(resolveLoginRedirect({})).toEqual({ to: '/' });
+    expect(resolveLoginRedirect({ from: { pathname: 42 } })).toEqual({ to: '/' });
   });
 
   test('stays in the app: no other origin, no login loop', () => {
@@ -30,14 +32,71 @@ describe('redirectTarget', () => {
       '/login//',
       '/LOGIN',
     ]) {
-      expect(redirectTarget({ from: { pathname, search: '?a=1' } })).toBe('/');
+      expect(resolveLoginRedirect({ from: { pathname, search: '?a=1' } })).toEqual({ to: '/' });
     }
   });
 
   test('ignores a search or hash that is not shaped like one', () => {
-    expect(redirectTarget({ from: { pathname: '/analytics', search: 'x', hash: 'y' } })).toBe(
-      '/analytics'
-    );
+    expect(
+      resolveLoginRedirect({ from: { pathname: '/analytics', search: 'x', hash: 'y' } })
+    ).toEqual({ to: '/analytics' });
+  });
+
+  test('carries a validated Auth Files credential pin across /login (case, slash and encoded variants) and strips extra fields', () => {
+    for (const pathname of [
+      '/auth-files',
+      '/auth-files/',
+      '/AUTH-FILES',
+      '/AUTH-FILES/',
+      '/auth%2Dfiles',
+    ]) {
+      expect(
+        resolveLoginRedirect({
+          from: {
+            pathname,
+            state: {
+              pinnedCredential: { source: ' claude-primary ', authIndex: '' },
+              extra: 'ignored',
+            },
+          },
+        })
+      ).toEqual({
+        to: pathname,
+        state: { pinnedCredential: { source: 'claude-primary', authIndex: '' } },
+      });
+    }
+  });
+
+  test('drops router state for other routes, invalid targets, or malformed pins', () => {
+    expect(
+      resolveLoginRedirect({
+        from: {
+          pathname: '/auth-files/models',
+          state: { pinnedCredential: { source: 'claude-primary', authIndex: '1' } },
+        },
+      })
+    ).toEqual({ to: '/auth-files/models' });
+    expect(
+      resolveLoginRedirect({
+        from: {
+          pathname: '/analytics',
+          state: { pinnedCredential: { source: 'claude-primary', authIndex: '1' } },
+        },
+      })
+    ).toEqual({ to: '/analytics' });
+    expect(
+      resolveLoginRedirect({
+        from: {
+          pathname: '//evil.example',
+          state: { pinnedCredential: { source: 'claude-primary', authIndex: '1' } },
+        },
+      })
+    ).toEqual({ to: '/' });
+    expect(
+      resolveLoginRedirect({
+        from: { pathname: '/auth-files', state: { pinnedCredential: { source: 123 } } },
+      })
+    ).toEqual({ to: '/auth-files' });
   });
 });
 
