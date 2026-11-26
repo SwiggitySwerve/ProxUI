@@ -4,6 +4,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import i18n from '../src/i18n';
 import { heatLevel, hourGrid } from '../src/features/analytics/chartGeometry';
 import { HourHeatmap } from '../src/features/analytics/HourHeatmap';
+import { rangeQuery, servedBucketQuery } from '../src/features/analytics/queryState';
+import { AnalyticsViews } from '../src/features/analytics/AnalyticsViews';
+import { analyticsScenario } from './fixtures/analyticsUi';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -19,22 +22,27 @@ describe('hour grid', () => {
   const day = Date.UTC(2026, 0, 2);
 
   test('one row per UTC day; hours outside the window are outside, the cut hours are inside', () => {
-    const rows = hourGrid(new Map(), from, to, true);
+    const rows = hourGrid(new Map(), from, to);
     expect(rows.map((row) => row.day)).toEqual([day, day + DAY]);
     expect(rows[0].cells[9].state).toBe('outside');
     // 10:00 holds 10:30, so it is in the window.
-    expect(rows[0].cells[10].state).toBe('quiet');
-    expect(rows[1].cells[10].state).toBe('quiet');
+    expect(rows[0].cells[10].state).toBe('gap');
+    expect(rows[1].cells[10].state).toBe('gap');
     expect(rows[1].cells[11].state).toBe('outside');
   });
 
-  test('an absent hour is a quiet zero only with complete coverage, otherwise a gap', () => {
-    const values = new Map([[day + 12 * HOUR, 7]]);
-    const complete = hourGrid(values, from, to, true)[0].cells;
-    expect(complete[12]).toEqual({ at: day + 12 * HOUR, value: 7, state: 'value' });
-    expect(complete[13]).toMatchObject({ value: 0, state: 'quiet' });
-    const partial = hourGrid(values, from, to, false)[0].cells;
-    expect(partial[13]).toMatchObject({ value: null, state: 'gap' });
+  test('a supplied zero is a quiet hour; an absent hour is unmeasured', () => {
+    const cells = hourGrid(
+      new Map([
+        [day + 12 * HOUR, 7],
+        [day + 13 * HOUR, 0],
+      ]),
+      from,
+      to
+    )[0].cells;
+    expect(cells[12]).toEqual({ at: day + 12 * HOUR, value: 7, state: 'value' });
+    expect(cells[13]).toMatchObject({ value: 0, state: 'value' });
+    expect(cells[14]).toMatchObject({ value: null, state: 'gap' });
   });
 
   test('four shades above zero; zero and missing values stay unshaded', () => {
@@ -44,23 +52,42 @@ describe('hour grid', () => {
     expect(heatLevel(null, 100)).toBe(0);
     expect(heatLevel(5, 0)).toBe(0);
   });
+
+  test('an hour drills down within the window the server answered for, not the one asked for', () => {
+    const now = Date.UTC(2026, 0, 3, 12, 30);
+    const query = rangeQuery('24h', now);
+    // The served snapshot ends an hour before the page's clock; its first hour starts earlier.
+    const served = {
+      from_ms: query.from_ms - HOUR,
+      to_ms: query.to_ms - HOUR,
+      granularity: 'hour' as const,
+    };
+    const first = Math.floor(served.from_ms / HOUR) * HOUR;
+    expect(servedBucketQuery(query, served, first)).toMatchObject({
+      from_ms: served.from_ms,
+      to_ms: first + HOUR,
+    });
+  });
 });
 
 describe('hour heatmap', () => {
   const from = Date.UTC(2026, 0, 2, 0);
   const to = from + DAY;
-  const render = (hourly: boolean, rawComplete = true) =>
+  const render = (
+    hourly: boolean,
+    points = new Map([
+      [from + 3 * HOUR, 4],
+      [from + 14 * HOUR, 40],
+      [from + 15 * HOUR, 0],
+    ])
+  ) =>
     renderToStaticMarkup(
       createElement(HourHeatmap, {
         title: 'Events by hour · UTC',
-        points: new Map([
-          [from + 3 * HOUR, 4],
-          [from + 14 * HOUR, 40],
-        ]),
+        points,
         from,
         to,
         hourly,
-        rawComplete,
         onSelect: noop,
         onShowHourly: noop,
       })
@@ -81,9 +108,28 @@ describe('hour heatmap', () => {
     expect(markup).toContain('aria-label="Jan 2, 15:00 UTC: 0 events"');
   });
 
-  test('with partial coverage an absent hour says it was not measured', () => {
-    const markup = render(true, false);
-    expect(markup).toContain('aria-label="Jan 2, 15:00 UTC: not measured"');
-    expect(markup).toContain('data-state="gap"');
+  test('an unmeasured hour says so, in the grid and the table; an all-unmeasured map keeps a tab stop', () => {
+    const markup = render(true, new Map());
+    expect(markup).toContain('aria-label="Jan 2, 00:00 UTC: not measured"');
+    expect(markup).toContain('<td>not measured</td>');
+    expect(markup).toMatch(/data-state="gap"[^>]*tabindex="0" aria-label="Jan 2, 00:00 UTC/);
+  });
+});
+
+describe('where the map shows', () => {
+  const overview = (range: 'today' | '1h') =>
+    renderToStaticMarkup(
+      createElement(AnalyticsViews, {
+        tab: 'overview',
+        data: analyticsScenario('ready', rangeQuery(range, Date.UTC(2026, 0, 2, 12))),
+        onBucket: noop,
+        onModel: noop,
+        onProvider: noop,
+        onShowHourly: noop,
+      })
+    );
+  test('Today at noon has a map; the last hour alone has nothing to compare', () => {
+    expect(overview('today')).toContain('Events by hour · UTC');
+    expect(overview('1h')).not.toContain('Events by hour · UTC');
   });
 });

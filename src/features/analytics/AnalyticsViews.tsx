@@ -423,15 +423,15 @@ export function AnalyticsViews({
               failures={failureSplit && { onSelect: failureSplit.onModel }}
             />
           </div>
-          {/* A window shorter than a day has nothing to compare hour by hour. */}
-          {tab === 'overview' && data.to_ms - data.from_ms >= 86_400_000 && (
+          {/* One hour has nothing to compare; Today at noon already has twelve. */}
+          {tab === 'overview' && data.to_ms - data.from_ms > 3_600_000 && (
             <HourHeatmap
               title={t('analytics.heatmap.title')}
-              points={new Map(data.timeline.map((point) => [point.bucket_ms, point.calls]))}
+              // The page's hourly series: quiet hours are zeros only with complete coverage.
+              points={new Map(hourly('calls').map((point) => [point.at, point.value]))}
               from={data.from_ms}
               to={data.to_ms}
               hourly={data.granularity === 'hour'}
-              rawComplete={data.coverage.raw_complete}
               onSelect={onBucket}
               onShowHourly={onShowHourly}
             />

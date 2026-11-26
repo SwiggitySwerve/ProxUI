@@ -16,7 +16,7 @@ import { useAnalytics } from './useAnalytics';
 import {
   analyticsTab,
   analyticsTabs,
-  bucketQuery,
+  servedBucketQuery,
   buckets,
   nextPageQuery,
   rangeQuery,
@@ -582,11 +582,18 @@ export function AnalyticsPage() {
                 data={data}
                 onBucket={(bucket) => {
                   setBucketSelected(true);
-                  drilldown(bucketQuery(query, bucket));
+                  drilldown(servedBucketQuery(query, data, bucket));
+                  // Ask for this exact interval: a warm snapshot of a live window of the same
+                  // length could otherwise answer for a slightly different hour.
+                  setRefresh((value) => value + 1);
                 }}
                 onModel={(model) => drilldown({ ...withoutCursor(query), model })}
                 onProvider={(provider) => drilldown({ ...withoutCursor(query), provider })}
-                onShowHourly={() => resetRange(range, 'hour')}
+                onShowHourly={() => {
+                  resetRange(range, 'hour');
+                  // The prompt unmounts while hours load; focus stays in the panel, not the page.
+                  document.getElementById('analytics-panel')?.focus();
+                }}
                 failures={
                   query.outcome === 'all'
                     ? {

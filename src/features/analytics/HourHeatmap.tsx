@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { heatLevel, hourGrid, type HourCell } from './chartGeometry';
 import { analyticsCompact, analyticsNumber, analyticsTime } from './format';
@@ -20,35 +20,44 @@ export function HourHeatmap({
   from,
   to,
   hourly,
-  rawComplete,
   onSelect,
   onShowHourly,
 }: {
   title: string;
-  /** The hourly timeline's event counts by bucket start. */
+  /** Events per hour by bucket start: quiet hours as zero, unmeasured hours absent. */
   points: ReadonlyMap<number, number | null>;
   from: number;
   to: number;
   hourly: boolean;
-  rawComplete: boolean;
   onSelect: (at: number) => void;
   onShowHourly: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const id = useId();
-  const rows = hourly ? hourGrid(points, from, to, rawComplete) : [];
+  const rows = hourly ? hourGrid(points, from, to) : [];
   const cells = rows.flatMap((row) => row.cells);
   const maximum = Math.max(0, ...cells.map((cell) => cell.value ?? 0));
   const inside = cells.filter((cell) => cell.state !== 'outside');
   const [active, setActive] = useState<number | null>(null);
-  const [inspected, setInspected] = useState<HourCell | null>(null);
+  // Timestamps, resolved against the current cells, so a refreshed snapshot never shows an old
+  // count or loses the tab stop.
+  const [inspectedAt, setInspectedAt] = useState<number | null>(null);
+  const inspected = inside.find((cell) => cell.at === inspectedAt);
   const grid = useRef<HTMLDivElement>(null);
   // The tab stop is the hour last moved to, else the busiest hour, else the first in the window.
+  const activeCell = inside.find((cell) => cell.at === active);
   const busiest = inside.reduce<HourCell | undefined>(
     (best, cell) => ((cell.value ?? -1) > (best?.value ?? -1) ? cell : best),
     undefined
   );
-  const focusAt = active ?? busiest?.at ?? null;
+  const focusAt = activeCell?.at ?? busiest?.at ?? inside[0]?.at ?? null;
+  // A refreshed snapshot can drop the focused hour; focus then moves to the new tab stop instead
+  // of falling to the page. A removed element fires no blur, so the flag still says "inside".
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focused.current || grid.current?.contains(document.activeElement)) return;
+    grid.current?.querySelector<HTMLButtonElement>(`[data-at="${focusAt}"]`)?.focus();
+  }, [focusAt]);
   const describe = (cell: HourCell) =>
     `${analyticsTime(cell.at, i18n.language)} UTC: ${
       cell.state === 'gap'
@@ -74,7 +83,7 @@ export function HourHeatmap({
     const target = cells[next];
     if (!target || target.state === 'outside') return;
     setActive(target.at);
-    setInspected(target);
+    setInspectedAt(target.at);
     grid.current?.querySelector<HTMLButtonElement>(`[data-at="${target.at}"]`)?.focus();
   };
   return (
@@ -94,7 +103,11 @@ export function HourHeatmap({
             className={styles.heatGrid}
             role="group"
             aria-label={`${title}. ${t('analytics.heatmap.keys')}`}
-            onMouseLeave={() => setInspected(null)}
+            onMouseLeave={() => setInspectedAt(null)}
+            onFocus={() => (focused.current = true)}
+            onBlur={(event) => {
+              if (!grid.current?.contains(event.relatedTarget)) focused.current = false;
+            }}
           >
             <span aria-hidden="true" />
             {HOURS.map((hour) => (
@@ -120,8 +133,8 @@ export function HourHeatmap({
                       data-level={heatLevel(cell.value, maximum)}
                       tabIndex={cell.at === focusAt ? 0 : -1}
                       aria-label={describe(cell)}
-                      onFocus={() => setInspected(cell)}
-                      onMouseEnter={() => setInspected(cell)}
+                      onFocus={() => setInspectedAt(cell.at)}
+                      onMouseEnter={() => setInspectedAt(cell.at)}
                       onKeyDown={(event) => move(event, cell)}
                       onClick={() => onSelect(cell.at)}
                     />
@@ -166,7 +179,7 @@ export function HourHeatmap({
                           {cell.state === 'outside'
                             ? ''
                             : cell.state === 'gap'
-                              ? '–'
+                              ? t('analytics.heatmap.unmeasured')
                               : analyticsNumber(cell.value, i18n.language)}
                         </td>
                       ))}

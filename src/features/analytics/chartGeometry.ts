@@ -124,22 +124,21 @@ export function smoothPath(points: Array<[number, number]>) {
   return path;
 }
 
-export type HourCellState = 'value' | 'quiet' | 'gap' | 'outside';
+export type HourCellState = 'value' | 'gap' | 'outside';
 export interface HourCell {
   at: number;
   value: number | null;
   state: HourCellState;
 }
 /**
- * Hourly buckets as one row per UTC day and one column per UTC hour. Hours outside the window
- * are `outside`; an absent hour is `quiet` (a real zero) only when coverage is complete,
- * otherwise a `gap`, as on every other chart.
+ * Hourly values as one row per UTC day and one column per UTC hour. Hours outside the window are
+ * `outside`; an in-window hour with no value is a `gap`. The caller decides which absent hours
+ * are quiet zeros (the page's hourly series already does), so that rule lives in one place.
  */
 export function hourGrid(
   values: ReadonlyMap<number, number | null>,
   from: number,
-  to: number,
-  rawComplete: boolean
+  to: number
 ): { day: number; cells: HourCell[] }[] {
   const HOUR = 3_600_000;
   const DAY = 24 * HOUR;
@@ -149,9 +148,12 @@ export function hourGrid(
     const cells: HourCell[] = [];
     for (let hour = 0; hour < 24; hour++) {
       const at = day + hour * HOUR;
-      if (at + HOUR <= from || at >= to) cells.push({ at, value: null, state: 'outside' });
-      else if (values.has(at)) cells.push({ at, value: values.get(at) ?? null, state: 'value' });
-      else cells.push({ at, value: rawComplete ? 0 : null, state: rawComplete ? 'quiet' : 'gap' });
+      const value = values.get(at) ?? null;
+      cells.push({
+        at,
+        value,
+        state: at + HOUR <= from || at >= to ? 'outside' : value === null ? 'gap' : 'value',
+      });
     }
     rows.push({ day, cells });
   }

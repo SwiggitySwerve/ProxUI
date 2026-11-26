@@ -85,6 +85,20 @@ export function bucketQuery(query: AnalyticsQuery, bucket: number): AnalyticsQue
     to_ms: Math.min(query.to_ms, bucket + width),
   };
 }
+/**
+ * A chart bucket comes from the snapshot the server answered with, which can cover a slightly
+ * different window than the page asked for; the drilldown clips to that served window.
+ */
+export function servedBucketQuery(
+  query: AnalyticsQuery,
+  data: Pick<AnalyticsResponse, 'from_ms' | 'to_ms' | 'granularity'>,
+  bucket: number
+): AnalyticsQuery {
+  return bucketQuery(
+    { ...query, ...shownWindow(query, data), granularity: data.granularity },
+    bucket
+  );
+}
 export function nextPageQuery(
   query: AnalyticsQuery,
   page: AnalyticsResponse['requests']
