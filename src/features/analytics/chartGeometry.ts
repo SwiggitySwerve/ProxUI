@@ -1,8 +1,8 @@
 import {
+  inRangeBucketTime,
   localDayStart,
   localHour,
   nextLocalDay,
-  zoneOffsetMinutes,
 } from '@/domain/analytics/timeZone';
 export interface ChartDatum {
   key: string;
@@ -95,9 +95,16 @@ export function timeTicks(
     steps.find((s) => s >= interval && (to - from) / s <= maxTicks) ?? steps[steps.length - 1];
   const ticks: number[] = [];
   if (step < DAY) {
-    const offset = zoneOffsetMinutes(zone, from) * 60_000;
-    for (let at = Math.ceil((from + offset) / step) * step - offset; at <= to; at += step)
-      ticks.push(at);
+    // Step on local wall-clock hours so ticks stay on-grid (and keep local midnight) across DST.
+    const stepHours = step / HOUR;
+    const firstHour = Math.ceil(from / HOUR) * HOUR;
+    for (let at = firstHour; at <= to; at += HOUR) {
+      if (
+        localHour(zone, at) % stepHours === 0 &&
+        (stepHours === 1 || ticks.length === 0 || at - ticks[ticks.length - 1] > HOUR)
+      )
+        ticks.push(at);
+    }
     return ticks;
   }
   let day = localDayStart(zone, from);
@@ -204,7 +211,7 @@ export function hourGrid(
   // A clipped first bucket uses its first instant inside [from, to) for local day/hour placement.
   const firstBucket = Math.floor(from / HOUR) * HOUR;
   for (let at = firstBucket; at < to; at += HOUR) {
-    const sample = Math.max(at, from);
+    const sample = inRangeBucketTime(at, from);
     const row = rowByDay.get(localDayStart(zone, sample));
     if (!row) continue;
     const hour = localHour(zone, sample);

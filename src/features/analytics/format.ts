@@ -1,4 +1,5 @@
 import i18n from '@/i18n';
+import { zoneName } from './displayZone';
 
 /** Presentation only: quantities and prices are supplied by the accounting owner. */
 export function analyticsNumber(
@@ -58,6 +59,11 @@ export function analyticsTime(value: number, locale: string, zone = 'UTC') {
     minute: '2-digit',
     hourCycle: 'h23',
   }).format(value);
+}
+
+/** Date, time, and short zone abbreviation at `value` (unambiguous across DST fall-back). */
+export function analyticsTimeWithZone(value: number, locale: string, zone = 'UTC') {
+  return `${analyticsTime(value, locale, zone)} ${zoneName(zone, value, locale)}`;
 }
 
 export function analyticsShortTime(value: number, locale: string, daily: boolean, zone = 'UTC') {

@@ -1,9 +1,13 @@
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { lineSegments, niceMaximum, smoothPath, timeTicks } from './chartGeometry';
-import { analyticsCompact, analyticsNumber, analyticsShortTime, analyticsTime } from './format';
-import { localDayStart } from '@/domain/analytics/timeZone';
-import { zoneName } from './displayZone';
+import {
+  analyticsCompact,
+  analyticsNumber,
+  analyticsShortTime,
+  analyticsTimeWithZone,
+} from './format';
+import { inRangeBucketTime, localDayStart } from '@/domain/analytics/timeZone';
 import styles from './AnalyticsPage.module.scss';
 
 export interface TrendSeries {
@@ -73,10 +77,10 @@ export function TrendChart({
   const single = series.length === 1;
   const value = (index: number, v: number | null | undefined) =>
     analyticsNumber(v ?? null, i18n.language, series[index].currency);
-  const labelAt = (at: number) => (daily ? at : Math.max(at, from));
+  const labelAt = (at: number) => (daily ? at : inRangeBucketTime(at, from));
   const pointLabel = (point: TrendPoint) => {
     const at = labelAt(point.at);
-    return `${analyticsTime(at, i18n.language, zone)} ${zoneName(zone, at, i18n.language)} · ${series
+    return `${analyticsTimeWithZone(at, i18n.language, zone)} · ${series
       .map((s, index) => `${s.label}: ${value(index, point.values[index])}`)
       .join(' · ')}`;
   };
@@ -309,7 +313,7 @@ export function TrendChart({
                   data-minor={
                     index > 0 &&
                     index < ticks.length - 1 &&
-                    (daily ? index % 2 === 1 : ticks[index] % 86_400_000 !== 0)
+                    (daily ? index % 2 === 1 : localDayStart(zone, at) !== at)
                   }
                 >
                   {/* Hourly axes name the day where it changes. */}
@@ -369,11 +373,10 @@ export function TrendChart({
                             className={styles.textButton}
                             onClick={() => onSelect(point.at)}
                           >
-                            {analyticsTime(labelAt(point.at), i18n.language, zone)}{' '}
-                            {zoneName(zone, labelAt(point.at), i18n.language)}
+                            {analyticsTimeWithZone(labelAt(point.at), i18n.language, zone)}
                           </button>
                         ) : (
-                          `${analyticsTime(labelAt(point.at), i18n.language, zone)} ${zoneName(zone, labelAt(point.at), i18n.language)}`
+                          analyticsTimeWithZone(labelAt(point.at), i18n.language, zone)
                         )}
                       </th>
                       {series.map((s, index) => (

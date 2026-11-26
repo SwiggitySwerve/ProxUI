@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createAnalyticsHandler } from '../server/analytics/handler';
+import { createAnalyticsHandler, parseWarmZone } from '../server/analytics/handler';
 import { localDayStart } from '../src/domain/analytics/timeZone';
 import { dashboardAnalyticsQuery } from '../src/features/dashboard/analyticsTraffic';
 import {
@@ -10,7 +10,7 @@ import {
   publicSourceDiscovery,
 } from '../src/domain/providerSources/manifest';
 
-function fixture() {
+function fixture(warmZone?: string) {
   const directory = mkdtempSync(join(tmpdir(), 'prox-analytics-'));
   const keyFile = join(directory, 'key');
   writeFileSync(keyFile, 'synthetic-view-key');
@@ -74,7 +74,8 @@ function fixture() {
       manifest,
       fetcher,
       async (path) => `key-for-${path}`,
-      () => now
+      () => now,
+      warmZone
     ),
     cpaCalls: () => calls.filter((call) => call.url.startsWith('http://cpa.test')).length,
     catalogCalls: () => calls.filter((call) => !call.url.startsWith('http://cpa.test')).length,
@@ -463,6 +464,38 @@ describe('ProxUI analytics bridge', () => {
         ]);
       } finally {
         f.clean();
+      }
+    });
+    test('warmer seeds the configured local zone on cold start and otherwise follows the visitor zone', async () => {
+      expect(parseWarmZone('america/denver')).toBe('America/Denver');
+      expect(parseWarmZone('Not/A_Zone')).toBe('UTC');
+      const pinned = fixture('America/New_York');
+      try {
+        await pinned.handler.warm();
+        const zones = new Set(
+          pinned.calls
+            .filter((call) => call.url.startsWith('http://cpa.test'))
+            .map((call) => call.body?.time_zone)
+        );
+        expect([...zones]).toEqual(['America/New_York']);
+      } finally {
+        pinned.clean();
+      }
+      const adaptive = fixture();
+      try {
+        await adaptive.handler(request(live(adaptive, DAY, { time_zone: 'America/Denver' })));
+        adaptive.advance(10 * 60_000);
+        const before = adaptive.calls.length;
+        await adaptive.handler.warm();
+        const warmedZones = new Set(
+          adaptive.calls
+            .slice(before)
+            .filter((call) => call.url.startsWith('http://cpa.test'))
+            .map((call) => call.body?.time_zone)
+        );
+        expect([...warmedZones]).toEqual(['America/Denver']);
+      } finally {
+        adaptive.clean();
       }
     });
     test('a catalog blip never replaces a ready snapshot, and is retried sooner than the idle period', async () => {

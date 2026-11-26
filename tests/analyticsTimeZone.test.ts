@@ -18,6 +18,7 @@ import { AnalyticsViews } from '../src/features/analytics/AnalyticsViews';
 import { HourHeatmap } from '../src/features/analytics/HourHeatmap';
 import { ProviderStackChart } from '../src/features/analytics/ProviderStackChart';
 import { RequestTable } from '../src/features/analytics/RequestTable';
+import { TrendChart } from '../src/features/analytics/TrendChart';
 import { validateAnalyticsQuery } from '../server/usage/validate';
 import { analyticsUiResponse } from './fixtures/analyticsUi';
 
@@ -393,5 +394,55 @@ describe('the page in a local zone', () => {
     expect(peakSection).toContain('<td>Unavailable</td>');
     // Must not format Date.now() as a UTC timestamp in the peak section.
     expect(peakSection).not.toContain(' UTC');
+  });
+
+  test('TrendChart keeps local midnight visible on narrow screens and keeps hourly ticks on-grid across DST', () => {
+    // Nov 1, 2026 in NY crosses fall-back (01:00 EDT -> 01:00 EST).
+    // 24h from Oct 31 12:00 EDT (16:00Z) to Nov 1 12:00 EST (17:00Z):
+    // local 6h ticks must land on 12:00 EDT, 18:00 EDT, 00:00 EDT, 06:00 EST, 12:00 EST (never 11:00 EST).
+    const from = Date.UTC(2026, 9, 31, 16, 0);
+    const to = Date.UTC(2026, 10, 1, 17, 0);
+    const ticks = timeTicks(from, to, HOUR, 6, NY);
+    const localHours = ticks.map((at) =>
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: NY,
+        hour: '2-digit',
+        hourCycle: 'h23',
+      }).format(at)
+    );
+    expect(localHours).toEqual(['12', '18', '00', '06', '12']);
+    // Local midnight (Nov 1 00:00 EDT = 04:00Z) must NOT be marked data-minor="true" on narrow screens.
+    const html = renderToStaticMarkup(
+      createElement(TrendChart, {
+        title: 'Usage',
+        series: [{ key: 'calls', label: 'Events', color: 'white' }],
+        points: [{ at: from, values: [5] }],
+        from,
+        to,
+        interval: HOUR,
+        zone: NY,
+      })
+    );
+    expect(html).toContain('data-minor="false">Nov 1</span>');
+  });
+
+  test('HourHeatmap scale includes zero, unmeasured, and DST skipped keys when applicable', () => {
+    const springStart = Date.UTC(2026, 2, 8, 5);
+    const springEnd = Date.UTC(2026, 2, 9, 4);
+    const html = renderToStaticMarkup(
+      createElement(HourHeatmap, {
+        title: 'Events by hour · America/New_York',
+        points: new Map([[Date.UTC(2026, 2, 8, 7), 11]]),
+        from: springStart,
+        to: springEnd,
+        hourly: true,
+        zone: NY,
+        onSelect: () => {},
+        onShowHourly: () => {},
+      })
+    );
+    expect(html).toContain('data-level="0"');
+    expect(html).toContain('not measured</span>');
+    expect(html).toContain('skipped (DST)</span>');
   });
 });

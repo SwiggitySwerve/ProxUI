@@ -4,8 +4,13 @@ import { useTranslation } from 'react-i18next';
 import type { AnalyticsProviderBucket } from '@/domain/analytics/types';
 import { providerFill } from '@/features/providers/identity';
 import { niceMaximum } from './chartGeometry';
-import { analyticsCompact, analyticsNumber, analyticsShortTime, analyticsTime } from './format';
-import { localDayStart } from '@/domain/analytics/timeZone';
+import {
+  analyticsCompact,
+  analyticsNumber,
+  analyticsShortTime,
+  analyticsTimeWithZone,
+} from './format';
+import { inRangeBucketTime, localDayStart } from '@/domain/analytics/timeZone';
 import { zoneName } from './displayZone';
 import styles from './AnalyticsPage.module.scss';
 
@@ -71,14 +76,16 @@ export function ProviderStackChart({
     group === OTHER ? t('analytics.provider_split.other') : label(group);
   const fill = (group: string) => providerFill(group) ?? 'var(--text-tertiary)';
   const labelAt = useCallback(
-    (at: number) => (daily || from === undefined ? at : Math.max(at, from)),
+    (at: number) => (daily || from === undefined ? at : inRangeBucketTime(at, from)),
     [daily, from]
   );
   // Stable across hovers, so the table below does not re-render while the pointer moves.
   const when = useCallback(
     (at: number) => {
       const displayAt = labelAt(at);
-      return `${daily ? analyticsShortTime(displayAt, i18n.language, true, zone) : analyticsTime(displayAt, i18n.language, zone)} ${zoneName(zone, displayAt, i18n.language)}`;
+      return daily
+        ? `${analyticsShortTime(displayAt, i18n.language, true, zone)} ${zoneName(zone, displayAt, i18n.language)}`
+        : analyticsTimeWithZone(displayAt, i18n.language, zone);
     },
     [daily, i18n.language, labelAt, zone]
   );

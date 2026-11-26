@@ -41,7 +41,13 @@ const quotaHandler = createHandler({
   keyFile,
   claims: new ResetClaims({ store, collector }),
 });
-const analyticsHandler = createAnalyticsHandler(manifest);
+const analyticsHandler = createAnalyticsHandler(
+  manifest,
+  undefined,
+  undefined,
+  undefined,
+  process.env.PROX_ANALYTICS_TIME_ZONE
+);
 const server = Bun.serve({
   hostname: '127.0.0.1',
   port: 18319,

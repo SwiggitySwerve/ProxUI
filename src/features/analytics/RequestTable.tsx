@@ -4,7 +4,7 @@ import type { AnalyticsRequest, AnalyticsResponse } from '@/domain/analytics/typ
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { CopyButton } from '@/features/oauth/components/CopyButton';
-import { analyticsNumber, analyticsTime } from './format';
+import { analyticsNumber, analyticsTimeWithZone } from './format';
 import { zoneName } from './displayZone';
 import { maskIdentifier } from '@/domain/quotaPool/mask';
 import { providerInk } from '@/features/providers/identity';
@@ -81,10 +81,7 @@ export function RequestDetails({
         <dt>
           {t('analytics.timestamp', { zone: zoneName(zone, request.timestamp_ms, i18n.language) })}
         </dt>
-        <dd>
-          {analyticsTime(request.timestamp_ms, i18n.language, zone)}{' '}
-          {zoneName(zone, request.timestamp_ms, i18n.language)}
-        </dd>
+        <dd>{analyticsTimeWithZone(request.timestamp_ms, i18n.language, zone)}</dd>
         <dt>{t('analytics.outcome')}</dt>
         <dd>{t(`analytics.${request.failed ? 'failed_outcome' : 'success'}`)}</dd>
         {request.fail_summary && (
@@ -241,8 +238,7 @@ export function RequestTable({
               {data.items.map((r) => (
                 <tr key={r.id}>
                   <td data-label={t('analytics.timestamp', { zone })}>
-                    {analyticsTime(r.timestamp_ms, i18n.language, zone)}{' '}
-                    {zoneName(zone, r.timestamp_ms, i18n.language)}
+                    {analyticsTimeWithZone(r.timestamp_ms, i18n.language, zone)}
                   </td>
                   <td data-label={t('analytics.provider_model')}>
                     <strong>{r.model}</strong>

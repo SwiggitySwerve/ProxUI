@@ -120,3 +120,11 @@ export function localDayStart(zone: string, ms: number): number {
 export function nextLocalDay(zone: string, dayStart: number): number {
   return localDayStart(zone, dayStart + DAY + 2 * HOUR);
 }
+
+/**
+ * First instant of a UTC bucket that lies inside `[from, to)`: equals `bucket` for unclipped
+ * buckets, and `from` for a clipped first bucket so local offsets/labels stay inside the range.
+ */
+export function inRangeBucketTime(bucket: number, from: number): number {
+  return Math.max(bucket, from);
+}

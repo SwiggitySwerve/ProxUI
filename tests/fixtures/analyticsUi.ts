@@ -4,6 +4,7 @@ import type {
   AnalyticsRequest,
   AnalyticsResponse,
 } from '../../src/domain/analytics/types';
+import { localDayStart, nextLocalDay } from '../../src/domain/analytics/timeZone';
 
 /** Synthetic only. Never derived from production usage, auth, queues or metadata. */
 export const analyticsUiMetrics: AnalyticsMetrics = {
@@ -183,22 +184,32 @@ export function analyticsScenario(
   data.generated_at_ms = query.to_ms;
   data.granularity = query.granularity;
   const step = query.granularity === 'day' ? 86_400_000 : 3_600_000;
-  // Buckets start on whole UTC hours or days, as prox-usage returns them.
-  const first = Math.floor(query.from_ms / step) * step;
-  data.timeline = Array.from({ length: Math.ceil((query.to_ms - first) / step) }, (_, i) => ({
-    ...data.summary,
-    bucket_ms: first + i * step,
-    calls: [0, 3, 7, 12, 6, 9][i % 6],
-    // Volumes move with traffic so trend lines are distinguishable in screenshots.
-    input_tokens: [2_100, 6_400, 9_800, 16_000, 7_300, 11_200][i % 6] * (1 + (i % 4) / 3),
-    output_tokens: [90, 320, 610, 1_050, 410, 700][(i + 1) % 6],
-    cache_read_tokens: [1_200, 4_000, 7_500, 12_800, 5_200, 8_600][(i + 2) % 6],
-    total_tokens: [3_400, 10_700, 17_900, 29_900, 12_900, 20_500][i % 6] * (1 + (i % 4) / 3),
-    cost: { ...data.summary.cost, usd: [0.4, 1.3, 2.6, 4.9, 1.8, 3.2][(i + 3) % 6] },
-    average_latency_ms: [800, 950, 1_400, 1_900, 1_100, 1_250][i % 6],
-    p95_latency_ms: [1_600, 2_100, 2_900, 3_800, 2_400, 2_700][i % 6],
-    p95_ttft_ms: i % 3 === 0 ? null : [150, 210, 320, 480, 260, 300][i % 6],
-  })).filter((_, i) => i !== 2); // A missing time bucket is different from an explicit zero.
+  // Buckets start on whole UTC hours or local midnights in query.time_zone, as prox-usage returns them.
+  const bucketStarts: number[] = [];
+  if (query.granularity === 'day') {
+    const zone = query.time_zone || 'UTC';
+    for (let at = localDayStart(zone, query.from_ms); at < query.to_ms; at = nextLocalDay(zone, at))
+      bucketStarts.push(at);
+  } else {
+    const first = Math.floor(query.from_ms / step) * step;
+    for (let at = first; at < query.to_ms; at += step) bucketStarts.push(at);
+  }
+  data.timeline = bucketStarts
+    .map((bucket_ms, i) => ({
+      ...data.summary,
+      bucket_ms,
+      calls: [0, 3, 7, 12, 6, 9][i % 6],
+      // Volumes move with traffic so trend lines are distinguishable in screenshots.
+      input_tokens: [2_100, 6_400, 9_800, 16_000, 7_300, 11_200][i % 6] * (1 + (i % 4) / 3),
+      output_tokens: [90, 320, 610, 1_050, 410, 700][(i + 1) % 6],
+      cache_read_tokens: [1_200, 4_000, 7_500, 12_800, 5_200, 8_600][(i + 2) % 6],
+      total_tokens: [3_400, 10_700, 17_900, 29_900, 12_900, 20_500][i % 6] * (1 + (i % 4) / 3),
+      cost: { ...data.summary.cost, usd: [0.4, 1.3, 2.6, 4.9, 1.8, 3.2][(i + 3) % 6] },
+      average_latency_ms: [800, 950, 1_400, 1_900, 1_100, 1_250][i % 6],
+      p95_latency_ms: [1_600, 2_100, 2_900, 3_800, 2_400, 2_700][i % 6],
+      p95_ttft_ms: i % 3 === 0 ? null : [150, 210, 320, 480, 260, 300][i % 6],
+    }))
+    .filter((_, i) => i !== 2); // A missing time bucket is different from an explicit zero.
   data.providers.push({ ...data.summary, key: 'codex', label: 'GPT / Codex' });
   data.requests.items.push({
     ...structuredClone(analyticsUiRequest),

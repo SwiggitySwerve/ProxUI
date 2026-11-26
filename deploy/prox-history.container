@@ -13,6 +13,9 @@ Volume=%h/.config/proxd/management-key:/run/secrets/proxy-management-key:ro
 # replaces the baked one; new hubs in it are collected without a restart.
 Volume=%h/.local/share/prox/sources:/run/prox-sources:ro
 Environment=PROX_SOURCE_MANIFEST=/run/prox-sources/effective-manifest.json
+# Optional: seed default analytics snapshots in a specific whole-hour IANA zone on cold start.
+# When unset, the warmer starts in UTC and follows the latest accepted browser zone automatically.
+# Environment=PROX_ANALYTICS_TIME_ZONE=America/Denver
 
 [Service]
 Restart=always

@@ -45,6 +45,11 @@ test.describe('in a New York browser', () => {
       'true'
     );
     await expect(map.getByText('Mon', { exact: true }).first()).toBeVisible();
+    // Weekday view shares the scale key and marks out-of-range days outside rather than 0 events.
+    await expect(map).toContainText('not measured');
+    await map.getByText('View data table', { exact: true }).click();
+    const monRow = map.locator('tbody tr', { hasText: 'Mon' });
+    await expect(monRow.locator('td').first()).toHaveText('');
   });
 });
 

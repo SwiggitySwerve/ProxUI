@@ -8,7 +8,7 @@ import { analyticsCosts } from './analyticsPricing';
 import { buildRateInventory } from './pricing';
 import { queryFilter, requestPage, type CpampSearchReplay, type Dimension } from './search';
 import { KNOWN_PROVIDERS } from './types';
-import { zoneOffsetMinutes } from '../../src/domain/analytics/timeZone';
+import { inRangeBucketTime, zoneOffsetMinutes } from '../../src/domain/analytics/timeZone';
 import type { RateBookState } from './rates';
 import type { UsageAnalyticsQuery } from './validate';
 
@@ -322,7 +322,7 @@ export function queryAnalytics(
         weekly = new Array<number>(7 * 24).fill(0);
         for (const [bucket, metrics] of timeline) {
           // A clipped first bucket uses its first instant inside [from_ms, to_ms) for local offset.
-          const at = Math.max(bucket, q.from_ms);
+          const at = inRangeBucketTime(bucket, q.from_ms);
           const local = new Date(at + zoneOffsetMinutes(q.time_zone, at) * 60_000);
           weekly[local.getUTCDay() * 24 + local.getUTCHours()] += metrics.value.calls;
         }
