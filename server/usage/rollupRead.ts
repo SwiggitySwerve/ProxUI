@@ -1,6 +1,6 @@
 // Snapshot read planning: use only whole, closed, clean hours under the current band layout.
 import type { Database } from 'bun:sqlite';
-import { localDayStart } from '../../src/domain/analytics/timeZone';
+import { inRangeBucketTime, localDayStart } from '../../src/domain/analytics/timeZone';
 import {
   aggregateKey,
   bandLayout,
@@ -61,7 +61,7 @@ export function readAnalyticsGroups(
     if (!localDays) return bucket;
     let day = days.get(bucket);
     if (day === undefined)
-      days.set(bucket, (day = localDayStart(q.time_zone, Math.max(bucket, q.from_ms))));
+      days.set(bucket, (day = localDayStart(q.time_zone, inRangeBucketTime(bucket, q.from_ms))));
     return day;
   };
   const latency = new LatencyGroups();

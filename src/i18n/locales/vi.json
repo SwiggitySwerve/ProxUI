@@ -3173,13 +3173,16 @@
       "days": "Theo ngày",
       "weekdays": "Theo thứ",
       "weekday": "Thứ",
-      "events": "{{value}} sự kiện",
+      "events_one": "{{value}} sự kiện",
+      "events_other": "{{value}} sự kiện",
       "unmeasured": "chưa đo",
       "daily": "Bản đồ giờ cần nhóm theo giờ.",
       "show_hourly": "Xem theo giờ",
       "keys": "Phím mũi tên di chuyển giữa các giờ; Enter mở yêu cầu của giờ đó.",
       "day": "Ngày ({{zone}})",
-      "skipped": "bỏ qua (DST)"
+      "skipped": "bỏ qua (DST)",
+      "partial": "đo một phần",
+      "partial_measured": "đã đo {{measured}}/{{total}}"
     },
     "provider_split": {
       "title": "Token theo nhà cung cấp",
@@ -3195,8 +3198,10 @@
       "credential": "Thông tin xác thực {{index}}",
       "unattributed": "Không xác định",
       "open_account": "Mở trong Tệp xác thực",
-      "account_totals": "{{events}} sự kiện · {{failed}} lỗi",
-      "cell": "{{events}} sự kiện, {{failed}} lỗi",
+      "account_totals_one": "{{events}} sự kiện · {{failed}} lỗi",
+      "account_totals_other": "{{events}} sự kiện · {{failed}} lỗi",
+      "cell_one": "{{events}} sự kiện, {{failed}} lỗi",
+      "cell_other": "{{events}} sự kiện, {{failed}} lỗi",
       "unsupported": "Máy chủ này chưa báo cáo tài khoản."
     },
     "timestamp": "Thời gian · {{zone}}",

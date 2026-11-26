@@ -3167,13 +3167,16 @@
       "days": "날짜별",
       "weekdays": "요일별",
       "weekday": "요일",
-      "events": "이벤트 {{value}}건",
+      "events_one": "이벤트 {{value}}건",
+      "events_other": "이벤트 {{value}}건",
       "unmeasured": "측정 안 됨",
       "daily": "시간 지도에는 시간 단위 버킷이 필요합니다.",
       "show_hourly": "시간별로 보기",
       "keys": "화살표 키로 시간을 이동하고 Enter로 해당 시간의 요청을 엽니다.",
       "day": "날짜 ({{zone}})",
-      "skipped": "건너뜀(DST)"
+      "skipped": "건너뜀(DST)",
+      "partial": "부분 측정",
+      "partial_measured": "{{measured}}/{{total}} 측정됨"
     },
     "provider_split": {
       "title": "제공업체별 토큰",
@@ -3189,8 +3192,10 @@
       "credential": "자격 증명 {{index}}",
       "unattributed": "귀속되지 않음",
       "open_account": "인증 파일에서 열기",
-      "account_totals": "이벤트 {{events}}건 · 실패 {{failed}}건",
-      "cell": "이벤트 {{events}}건, 실패 {{failed}}건",
+      "account_totals_one": "이벤트 {{events}}건 · 실패 {{failed}}건",
+      "account_totals_other": "이벤트 {{events}}건 · 실패 {{failed}}건",
+      "cell_one": "이벤트 {{events}}건, 실패 {{failed}}건",
+      "cell_other": "이벤트 {{events}}건, 실패 {{failed}}건",
       "unsupported": "이 서버는 아직 계정을 보고하지 않습니다."
     },
     "timestamp": "시간 · {{zone}}",

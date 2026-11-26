@@ -1,6 +1,7 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { IconEye } from '@/components/ui/icons';
 import type { AnalyticsAccount, AnalyticsResponse } from '@/domain/analytics/types';
 import { providerInk } from '@/features/providers/identity';
 import { accountName } from './accountName';
@@ -25,11 +26,13 @@ const authFilesLink = (account: Pick<AnalyticsAccount, 'instance' | 'auth_index'
 export function RoutingView({
   data,
   reveal,
+  onRevealChange,
   onModel,
 }: {
   data: AnalyticsResponse;
   /** The browser's "Show emails" choice, shared with Quota. */
   reveal: boolean;
+  onRevealChange?: (reveal: boolean) => void;
   onModel: (model: string) => void;
 }) {
   const { t, i18n } = useTranslation();
@@ -48,7 +51,20 @@ export function RoutingView({
   const name = (account: AnalyticsAccount) => accountName(account, reveal, t);
   return (
     <section className={`${styles.panel} ${styles.routing}`} aria-labelledby={id}>
-      <h3 id={id}>{t('analytics.routing.title')}</h3>
+      <div className={styles.trendHeader}>
+        <h3 id={id}>{t('analytics.routing.title')}</h3>
+        {onRevealChange && (
+          <label className={styles.privacyToggle}>
+            <input
+              type="checkbox"
+              checked={reveal}
+              onChange={(event) => onRevealChange(event.target.checked)}
+            />
+            <IconEye size={16} aria-hidden="true" />
+            {t('quota_pool.show_emails')}
+          </label>
+        )}
+      </div>
       <p className={styles.muted}>{t('analytics.routing.help')}</p>
       <div className={styles.tableScroll} tabIndex={0} role="region" aria-labelledby={id}>
         <table className={styles.routingTable}>
@@ -72,15 +88,18 @@ export function RoutingView({
                       {link ? (
                         <Link to={link} title={t('analytics.routing.open_account')}>
                           {name(account)}
-                          {/* The same account on two sources is two credentials: name the source. */}
-                          <small className={styles.routingSource}> · {account.instance}</small>
                         </Link>
                       ) : (
                         name(account)
                       )}
                     </span>
+                    {/* The same account (or unlinked row) on two sources stays distinct: name the source. */}
+                    {account.instance && (
+                      <small className={styles.routingSource}>{account.instance}</small>
+                    )}
                     <small>
                       {t('analytics.routing.account_totals', {
+                        count: account.calls,
                         events: analyticsCompact(account.calls, i18n.language),
                         failed: analyticsCompact(account.failure_calls, i18n.language),
                       })}
@@ -112,6 +131,7 @@ export function RoutingView({
                       title={
                         route
                           ? t('analytics.routing.cell', {
+                              count: route.calls,
                               events: analyticsNumber(route.calls, i18n.language),
                               failed: analyticsNumber(route.failure_calls, i18n.language),
                             })

@@ -689,19 +689,39 @@ describe('Analytics SSR presentation', () => {
             : Object.entries(flatten(child as Record<string, unknown>, `${prefix}${key}.`))
         )
       );
-    const dictionaries = ['en', 'zh-CN', 'zh-TW', 'ru', 'vi', 'ko'].map((locale) =>
+    const baseKey = (key: string) => key.replace(/_(zero|one|two|few|many|other)$/, '');
+    const locales = ['en', 'zh-CN', 'zh-TW', 'ru', 'vi', 'ko'];
+    const dictionaries = locales.map((locale) =>
       flatten(JSON.parse(read(`src/i18n/locales/${locale}.json`)).analytics)
     );
+    const enPlaceholders = new Map(
+      Object.entries(dictionaries[0]).map(([key, value]) => [
+        baseKey(key),
+        value.match(/{{\w+}}/g)?.sort(),
+      ])
+    );
+    const enBaseKeys = [...new Set(Object.keys(dictionaries[0]).map(baseKey))].sort();
     for (const dictionary of dictionaries) {
-      expect(Object.keys(dictionary).sort()).toEqual(Object.keys(dictionaries[0]).sort());
+      expect([...new Set(Object.keys(dictionary).map(baseKey))].sort()).toEqual(enBaseKeys);
       for (const [key, value] of Object.entries(dictionary)) {
         expect(value.trim()).not.toBe('');
-        expect(value.match(/{{\w+}}/g)?.sort()).toEqual(
-          dictionaries[0][key].match(/{{\w+}}/g)?.sort()
-        );
+        expect(value.match(/{{\w+}}/g)?.sort()).toEqual(enPlaceholders.get(baseKey(key)));
       }
     }
     for (const tab of analyticsTabs) expect(dictionaries[0][`tabs.${tab}`]).toBeTruthy();
+    // Pluralised analytics strings resolve cleanly in every locale without falling back to zh-CN.
+    for (const locale of locales) {
+      for (const count of [0, 1, 2, 5]) {
+        const rendered = i18n.t('analytics.routing.account_totals', {
+          lng: locale,
+          count,
+          events: String(count),
+          failed: '0',
+        });
+        expect(rendered).toContain(String(count));
+        if (locale !== 'zh-CN') expect(rendered).not.toContain('个事件');
+      }
+    }
   });
 });
 

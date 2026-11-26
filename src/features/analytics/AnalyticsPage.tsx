@@ -35,7 +35,7 @@ import { RoutingView } from './RoutingView';
 import { browserZone, preferredZone, useDisplayZoneStore, zoneName } from './displayZone';
 import { usePrivacyStore } from '@/stores/usePrivacyStore';
 import { RequestTable } from './RequestTable';
-import { analyticsTime } from './format';
+import { analyticsTime, analyticsTimeWithZone } from './format';
 import { readAnalyticsUiState, writeAnalyticsUiState } from './uiState';
 import styles from './AnalyticsPage.module.scss';
 
@@ -85,6 +85,7 @@ export function AnalyticsPage() {
   const [params, setParams] = useSearchParams();
   const location = useLocation();
   const revealEmails = usePrivacyStore((state) => state.revealEmails);
+  const setRevealEmails = usePrivacyStore((state) => state.setRevealEmails);
   const utcChosen = useDisplayZoneStore((state) => state.utc);
   const setUtc = useDisplayZoneStore((state) => state.setUtc);
   const [localZone] = useState(browserZone);
@@ -339,7 +340,7 @@ export function AnalyticsPage() {
                   )}
                 </span>
                 <span>
-                  {`${t('analytics.updated')}: ${analyticsTime(data.generated_at_ms, i18n.language, zone)} ${zoneName(zone, data.generated_at_ms, i18n.language)}`}
+                  {`${t('analytics.updated')}: ${analyticsTimeWithZone(data.generated_at_ms, i18n.language, zone)}`}
                 </span>
               </div>
               <details>
@@ -616,6 +617,7 @@ export function AnalyticsPage() {
               <RoutingView
                 data={data}
                 reveal={revealEmails}
+                onRevealChange={setRevealEmails}
                 onModel={(model) => drilldown({ ...withoutCursor(query), model })}
               />
             ) : tab === 'requests' ? (

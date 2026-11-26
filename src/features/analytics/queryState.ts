@@ -1,6 +1,7 @@
 import type { AnalyticsQuery, AnalyticsResponse } from '@/domain/analytics/types';
 import {
   canonicalTimeZone,
+  inRangeBucketTime,
   isKnownTimeZone,
   localDayStart,
   nextLocalDay,
@@ -100,7 +101,7 @@ export function bucketQuery(query: AnalyticsQuery, bucket: number): AnalyticsQue
     query.granularity === 'day' ? nextLocalDay(query.time_zone, bucket) : bucket + 3_600_000;
   return {
     ...withoutCursor(query),
-    from_ms: Math.max(query.from_ms, bucket),
+    from_ms: inRangeBucketTime(bucket, query.from_ms),
     to_ms: Math.min(query.to_ms, end),
   };
 }

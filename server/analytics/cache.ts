@@ -24,7 +24,7 @@ const IDLE_REFRESH = 30 * MINUTE;
 // A healthy kept view is never much older than IDLE_REFRESH. Older means its refreshes are
 // failing, and the dashboard (which never shows snapshot age) would draw old data as current.
 const MAX_STALE = 3 * IDLE_REFRESH;
-// Responses run up to about 400 KB, so this bounds the cache near 25 MB.
+// Responses run up to ~600 KB with provider_timeline, accounts, routes and weekly, bounding cache ~40 MB.
 const MAX_ENTRIES = 64;
 // The warmer never runs more than two queries at once, so it cannot crowd out a visitor.
 const WARM_CONCURRENCY = 2;
@@ -170,7 +170,7 @@ export function createSnapshotCache(
     return work;
   }
 
-  function entryFor(key: string, query: Query, live: boolean, now: number): Entry {
+  function entryFor(key: string, query: Query, live: boolean): Entry {
     let entry = entries.get(key);
     if (entry) entries.delete(key);
     else
@@ -183,7 +183,7 @@ export function createSnapshotCache(
         at: 0,
         took: 0,
         tried: -Infinity,
-        touched: now,
+        touched: -Infinity,
         applied: 0,
         pending: 0,
       };
@@ -199,7 +199,7 @@ export function createSnapshotCache(
     async get(query: Query, fresh = false): Promise<Outcome> {
       const now = clock();
       const { key, live } = shape(query, now);
-      const entry = entryFor(key, query, live, now);
+      const entry = entryFor(key, query, live);
       const warm = kept(entry, now);
       entry.touched = now;
       lastUsed = now;
@@ -229,7 +229,7 @@ export function createSnapshotCache(
         const queue: [string, Entry][] = [];
         for (const query of seeds(start)) {
           const { key, live } = shape(query, start);
-          const entry = entryFor(key, query, live, start);
+          const entry = entryFor(key, query, live);
           entry.pinned = true;
           queue.push([key, entry]);
         }

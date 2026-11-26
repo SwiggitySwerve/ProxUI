@@ -3193,13 +3193,16 @@
       "days": "按日期",
       "weekdays": "按星期",
       "weekday": "星期",
-      "events": "{{value}} 個事件",
+      "events_one": "{{value}} 個事件",
+      "events_other": "{{value}} 個事件",
       "unmeasured": "未測量",
       "daily": "小時圖需要按小時分桶。",
       "show_hourly": "按小時顯示",
       "keys": "方向鍵在小時之間移動；Enter 開啟該小時的請求。",
       "day": "日期 ({{zone}})",
-      "skipped": "已略過（日光節約時間）"
+      "skipped": "已略過（日光節約時間）",
+      "partial": "部分涵蓋",
+      "partial_measured": "已測 {{measured}}/{{total}}"
     },
     "provider_split": {
       "title": "按供應商的權杖",
@@ -3215,8 +3218,10 @@
       "credential": "憑證 {{index}}",
       "unattributed": "未歸屬",
       "open_account": "在認證檔案中開啟",
-      "account_totals": "{{events}} 個事件 · {{failed}} 個失敗",
-      "cell": "{{events}} 個事件，{{failed}} 個失敗",
+      "account_totals_one": "{{events}} 個事件 · {{failed}} 個失敗",
+      "account_totals_other": "{{events}} 個事件 · {{failed}} 個失敗",
+      "cell_one": "{{events}} 個事件，{{failed}} 個失敗",
+      "cell_other": "{{events}} 個事件，{{failed}} 個失敗",
       "unsupported": "此伺服器尚未回報帳號。"
     },
     "timestamp": "時間 · {{zone}}",

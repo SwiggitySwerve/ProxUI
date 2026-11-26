@@ -56,8 +56,8 @@ updated through the BroadcastChannel while its poller is paused, a 503 inventory
 that retires nothing, and AI Providers staying identical. Nothing contacts a real
 CLI-Proxy or prox-history, and no credential file is read.
 
-When port 15173 is taken, `PROX_UI_PORT=15191 node node_modules/@playwright/test/cli.js test tests/browser/credentialFlow.browser.ts`
-runs on another one (the Analytics specs hardcode 15173 and need the default).
+When port 15173 is taken, `PROX_UI_PORT=15191 node node_modules/@playwright/test/cli.js test ...`
+runs any browser spec on another port.
 
 To capture all Analytics states and measure their screenshots:
 

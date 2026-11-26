@@ -3,11 +3,20 @@ import { authorized } from '../app';
 import { readJson } from '../http/readJson';
 import { isRecord } from '../../src/utils/helpers';
 import type { SourceManifest } from '../../src/domain/providerSources/types';
+import { canonicalTimeZone, isKnownTimeZone } from '../../src/domain/analytics/timeZone';
 import { rangeQuery } from '../../src/features/analytics/queryState';
 import { readCatalogs, type Fetcher } from './catalog';
 import { createSnapshotCache, type Outcome, type Query } from './cache';
 
 const CATALOG_TTL = 5 * 60_000;
+
+/** Canonical IANA zone for warming default views, or undefined when unset or invalid. */
+export function parseWarmZone(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.toUpperCase() === 'UTC') return 'UTC';
+  return isKnownTimeZone(trimmed) ? canonicalTimeZone(trimmed) : undefined;
+}
 
 const QUERY_FIELDS = new Set([
   'from_ms',
@@ -35,9 +44,12 @@ export function createAnalyticsHandler(
   manifest: SourceManifest,
   fetcher: Fetcher = fetch,
   readKey = async (path: string) => (await readFile(path, 'utf8')).trim(),
-  clock: () => number = Date.now
+  clock: () => number = Date.now,
+  pinnedWarmZone?: string
 ) {
   const config = manifest.analytics;
+  const fixedWarmZone = pinnedWarmZone ? parseWarmZone(pinnedWarmZone) : undefined;
+  let activeWarmZone = fixedWarmZone ?? 'UTC';
   // The registered catalog rarely changes, so every view shares one read for a few minutes.
   // Only a catalog with every source ready is kept: a failed source is asked again next time.
   // Views that start together may each read it once; that is four small local requests.
@@ -93,7 +105,7 @@ export function createAnalyticsHandler(
       return { ok: false, status: 503 };
     }
   }
-  const cache = createSnapshotCache(compute, clock, defaultViews);
+  const cache = createSnapshotCache(compute, clock, (now) => defaultViews(now, activeWarmZone));
   const handler = async (request: Request): Promise<Response> => {
     try {
       if (!authorized(request, manifest.history.managementKeyFile))
@@ -118,7 +130,27 @@ export function createAnalyticsHandler(
     // A Refresh also re-reads the registered catalog, so a new registration shows at once.
     if (fresh) catalogs = undefined;
     const outcome = await cache.get(query, fresh);
-    if (outcome.ok) return json(outcome.body);
+    if (outcome.ok) {
+      // Without an explicit PROX_ANALYTICS_TIME_ZONE, follow the live Analytics page's zone on
+      // unfiltered queries (ignoring Dashboard provider polls, which always request UTC with limit 1).
+      const isUnfilteredAnalyticsView =
+        !query.provider &&
+        !query.model &&
+        !query.search &&
+        (query.outcome === undefined || query.outcome === 'all') &&
+        query.before_ms === undefined &&
+        query.before_id === undefined &&
+        query.limit !== 1;
+      if (
+        !fixedWarmZone &&
+        isUnfilteredAnalyticsView &&
+        typeof query.time_zone === 'string' &&
+        (query.time_zone.toUpperCase() === 'UTC' || isKnownTimeZone(query.time_zone))
+      ) {
+        activeWarmZone = canonicalTimeZone(query.time_zone);
+      }
+      return json(outcome.body);
+    }
     return json(
       {
         error:
@@ -137,15 +169,15 @@ export function createAnalyticsHandler(
  * Any other live view (a filter, a provider, the dashboard's traffic view) stays warm for a day
  * after it is asked for.
  */
-function defaultViews(now: number): Query[] {
+function defaultViews(now: number, zone = 'UTC'): Query[] {
   return [
-    { ...rangeQuery('7d', now, 'hour') },
-    { ...rangeQuery('30d', now) },
-    { ...rangeQuery('30d', now, 'hour') },
-    { ...rangeQuery('24h', now) },
-    { ...rangeQuery('7d', now) },
-    { ...rangeQuery('today', now) },
-    { ...rangeQuery('1h', now) },
-    { ...rangeQuery('yesterday', now) },
+    { ...rangeQuery('7d', now, 'hour', zone) },
+    { ...rangeQuery('30d', now, 'auto', zone) },
+    { ...rangeQuery('30d', now, 'hour', zone) },
+    { ...rangeQuery('24h', now, 'auto', zone) },
+    { ...rangeQuery('7d', now, 'auto', zone) },
+    { ...rangeQuery('today', now, 'auto', zone) },
+    { ...rangeQuery('1h', now, 'auto', zone) },
+    { ...rangeQuery('yesterday', now, 'auto', zone) },
   ];
 }

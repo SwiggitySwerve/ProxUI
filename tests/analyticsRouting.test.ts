@@ -8,12 +8,12 @@ import { analyticsScenario } from './fixtures/analyticsUi';
 import { rangeQuery } from '../src/features/analytics/queryState';
 
 const data = analyticsScenario('ready', rangeQuery('24h', Date.UTC(2026, 9, 29, 12)));
-const render = (response = data, reveal = false) =>
+const render = (response = data, reveal = false, onRevealChange?: (v: boolean) => void) =>
   renderToStaticMarkup(
     createElement(
       MemoryRouter,
       null,
-      createElement(RoutingView, { data: response, reveal, onModel: () => {} })
+      createElement(RoutingView, { data: response, reveal, onRevealChange, onModel: () => {} })
     )
   );
 beforeEach(async () => {
@@ -31,11 +31,14 @@ describe('routing', () => {
     expect(render(data, true)).toContain('ada.lovelace@example.test');
   });
 
-  test('busiest account first; cells name events and failures', () => {
-    const markup = render();
+  test('busiest account first; cells name events and failures with proper singular/plural', () => {
+    const markup = render(data, false, () => {});
     expect(markup.indexOf('ada•••')).toBeLessThan(markup.indexOf('gra•••'));
     expect(markup).toContain('title="96 events, 8 failed"');
     expect(markup).toContain('8 failed</small>');
+    expect(markup).toContain('1 event · 0 failed');
+    expect(markup).toContain('title="1 event, 0 failed"');
+    expect(markup).toContain('Show emails');
   });
 
   test('a server without accounts says so instead of drawing an empty grid', () => {
@@ -62,16 +65,18 @@ describe('request details follow Show emails', () => {
   });
 });
 
-test('the same account on two sources names each source, so the links differ', () => {
+test('the same account (and unlinked rows) on two sources name each source on its own line', () => {
   const twin = {
     ...data,
     accounts: [
       { ...data.accounts![0], instance: 'claude-primary', auth_index: '1' },
       { ...data.accounts![0], instance: 'claude-backup', auth_index: '1' },
+      { ...data.accounts![2], instance: 'codex-edge', auth_index: null },
     ],
     routes: [],
   };
   const markup = render(twin);
-  expect(markup).toContain('· claude-primary');
-  expect(markup).toContain('· claude-backup');
+  expect(markup).toContain('>claude-primary</small>');
+  expect(markup).toContain('>claude-backup</small>');
+  expect(markup).toContain('>codex-edge</small>');
 });

@@ -15,9 +15,14 @@ import { preferredZone, zoneName } from '../src/features/analytics/displayZone';
 import { bucketQuery, rangeQuery } from '../src/features/analytics/queryState';
 import { bucketTimeline, hourGrid, timeTicks } from '../src/features/analytics/chartGeometry';
 import { AnalyticsViews } from '../src/features/analytics/AnalyticsViews';
-import { HourHeatmap } from '../src/features/analytics/HourHeatmap';
+import {
+  HourHeatmap,
+  WeekdayGrid,
+  weekdaySlotCoverage,
+} from '../src/features/analytics/HourHeatmap';
 import { ProviderStackChart } from '../src/features/analytics/ProviderStackChart';
 import { RequestTable } from '../src/features/analytics/RequestTable';
+import { TrendChart } from '../src/features/analytics/TrendChart';
 import { validateAnalyticsQuery } from '../server/usage/validate';
 import { analyticsUiResponse } from './fixtures/analyticsUi';
 
@@ -393,5 +398,149 @@ describe('the page in a local zone', () => {
     expect(peakSection).toContain('<td>Unavailable</td>');
     // Must not format Date.now() as a UTC timestamp in the peak section.
     expect(peakSection).not.toContain(' UTC');
+  });
+
+  test('TrendChart keeps local midnight visible on narrow screens and keeps hourly ticks on-grid across DST', () => {
+    // Nov 1, 2026 in NY crosses fall-back (01:00 EDT -> 01:00 EST).
+    // 24h from Oct 31 12:00 EDT (16:00Z) to Nov 1 12:00 EST (17:00Z):
+    // local 6h ticks must land on 12:00 EDT, 18:00 EDT, 00:00 EDT, 06:00 EST, 12:00 EST (never 11:00 EST).
+    const from = Date.UTC(2026, 9, 31, 16, 0);
+    const to = Date.UTC(2026, 10, 1, 17, 0);
+    const ticks = timeTicks(from, to, HOUR, 6, NY);
+    const localHours = ticks.map((at) =>
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: NY,
+        hour: '2-digit',
+        hourCycle: 'h23',
+      }).format(at)
+    );
+    expect(localHours).toEqual(['12', '18', '00', '06', '12']);
+    // Local midnight (Nov 1 00:00 EDT = 04:00Z) must NOT be marked data-minor="true" on narrow screens.
+    const html = renderToStaticMarkup(
+      createElement(TrendChart, {
+        title: 'Usage',
+        series: [{ key: 'calls', label: 'Events', color: 'white' }],
+        points: [{ at: from, values: [5] }],
+        from,
+        to,
+        interval: HOUR,
+        zone: NY,
+      })
+    );
+    expect(html).toContain('data-minor="false">Nov 1</span>');
+  });
+
+  test('HourHeatmap scale includes zero, unmeasured, and DST skipped keys when applicable', () => {
+    const springStart = Date.UTC(2026, 2, 8, 5);
+    const springEnd = Date.UTC(2026, 2, 9, 4);
+    const html = renderToStaticMarkup(
+      createElement(HourHeatmap, {
+        title: 'Events by hour · America/New_York',
+        points: new Map([[Date.UTC(2026, 2, 8, 7), 11]]),
+        from: springStart,
+        to: springEnd,
+        hourly: true,
+        zone: NY,
+        onSelect: () => {},
+        onShowHourly: () => {},
+      })
+    );
+    expect(html).toContain('data-level="0"');
+    expect(html).toContain('not measured</span>');
+    expect(html).toContain('skipped (DST)</span>');
+  });
+
+  test('hourly timeTicks keeps spring-forward 2h ticks, Havana skipped-midnight day starts, and deduplicates repeated midnight', () => {
+    // Europe/London springs forward 01:00 GMT -> 02:00 BST on Mar 29, 2026:
+    // 00:00 GMT (00:00Z) and 02:00 BST (01:00Z) are 1 elapsed hour apart; a 2h axis must keep 02:00 BST.
+    const londonFrom = Date.UTC(2026, 2, 28, 22, 0);
+    const londonTo = Date.UTC(2026, 2, 29, 10, 0);
+    const londonTicks = timeTicks(londonFrom, londonTo, HOUR, 6, 'Europe/London');
+    expect(londonTicks).toContain(Date.UTC(2026, 2, 29, 0, 0)); // 00:00 GMT
+    expect(londonTicks).toContain(Date.UTC(2026, 2, 29, 1, 0)); // 02:00 BST
+    expect(londonTicks).toContain(Date.UTC(2026, 2, 29, 3, 0)); // 04:00 BST
+
+    // America/Havana Mar 8, 2026 skips 00:00; its localDayStart is 05:00Z (01:00 CDT) and stays on a 6h axis.
+    const havanaSpringStart = Date.UTC(2026, 2, 8, 5, 0);
+    const havanaSpringTicks = timeTicks(
+      Date.UTC(2026, 2, 7, 17, 0),
+      Date.UTC(2026, 2, 8, 17, 0),
+      HOUR,
+      4,
+      HAVANA
+    );
+    expect(havanaSpringTicks).toContain(havanaSpringStart);
+
+    // America/Havana Nov 1, 2026 repeats 00:00 (04:00Z CDT and 05:00Z CST); 6h axis deduplicates it.
+    const havanaFallTicks = timeTicks(
+      Date.UTC(2026, 9, 31, 16, 0),
+      Date.UTC(2026, 10, 1, 17, 0),
+      HOUR,
+      4,
+      HAVANA
+    );
+    expect(havanaFallTicks).toContain(Date.UTC(2026, 10, 1, 4, 0));
+    expect(havanaFallTicks).not.toContain(Date.UTC(2026, 10, 1, 5, 0));
+
+    // Antarctica/Casey Mar 9, 2023 rolls back 3 hours (+11 -> +8 at 16:00Z):
+    // 2h axis must deduplicate both repeated 00:00 and repeated 02:00, not only consecutive slots.
+    const caseyTicks = timeTicks(
+      Date.UTC(2023, 2, 8, 13, 0),
+      Date.UTC(2023, 2, 9, 1, 0),
+      HOUR,
+      6,
+      'Antarctica/Casey'
+    );
+    expect(caseyTicks).toEqual([
+      Date.UTC(2023, 2, 8, 13, 0), // 00:00 +11
+      Date.UTC(2023, 2, 8, 15, 0), // 02:00 +11
+      Date.UTC(2023, 2, 8, 20, 0), // 04:00 +8
+      Date.UTC(2023, 2, 8, 22, 0), // 06:00 +8
+      Date.UTC(2023, 2, 9, 0, 0), // 08:00 +8
+    ]);
+
+    // America/Goose_Bay Nov 1, 2009 rolls back at 00:01 ADT -> Oct 31 23:01 AST (cross-date rollback):
+    // both 03:00Z and 04:00Z are Nov 1 00:00; a 4h axis must emit Nov 1 midnight only once.
+    const gooseBayTicks = timeTicks(
+      Date.UTC(2009, 9, 31, 19, 0), // Oct 31 16:00 ADT
+      Date.UTC(2009, 10, 1, 16, 0), // Nov 1 12:00 AST
+      HOUR,
+      6,
+      'America/Goose_Bay'
+    );
+    expect(gooseBayTicks).toContain(Date.UTC(2009, 10, 1, 3, 0)); // first Nov 1 00:00 ADT
+    expect(gooseBayTicks).not.toContain(Date.UTC(2009, 10, 1, 4, 0)); // repeated Nov 1 00:00 AST
+  });
+
+  test('WeekdayGrid marks mixed measured/unmeasured weekday slots as partial instead of full totals', () => {
+    // Two Mondays in UTC: Oct 12 and Oct 19, 2026.
+    const from = Date.UTC(2026, 9, 12, 0);
+    const to = Date.UTC(2026, 9, 20, 0);
+    const points = new Map<number, number | null>([
+      [Date.UTC(2026, 9, 12, 9), 10], // Mon 09:00 measured once, Oct 19 09:00 unmeasured -> partial
+      [Date.UTC(2026, 9, 12, 10), 4], // Mon 10:00 measured twice -> value
+      [Date.UTC(2026, 9, 19, 10), 6],
+    ]);
+    const rows = hourGrid(points, from, to, 'UTC');
+    const coverage = weekdaySlotCoverage(rows, 'UTC');
+    expect(coverage[1 * 24 + 9]).toEqual({ state: 'partial', measured: 1, total: 2 });
+    expect(coverage[1 * 24 + 10]).toEqual({ state: 'value', measured: 2, total: 2 });
+    expect(coverage[1 * 24 + 11]).toEqual({ state: 'gap', measured: 0, total: 2 });
+
+    const html = renderToStaticMarkup(
+      createElement(WeekdayGrid, {
+        title: 'Events by hour · UTC',
+        weekly: [
+          { weekday: 1, hour: 9, calls: 10 },
+          { weekday: 1, hour: 10, calls: 10 },
+        ],
+        coverage,
+      })
+    );
+    expect(html).toContain('data-state="partial"');
+    expect(html).toContain('partial coverage</span>');
+    expect(html).toContain('<td>10 (1/2 measured)</td>');
+    expect(html).toContain('<td>10</td>');
+    expect(html).toContain('<td>not measured</td>');
   });
 });

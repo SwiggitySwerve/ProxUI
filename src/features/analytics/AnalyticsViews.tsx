@@ -20,10 +20,10 @@ import {
 import { AnalyticsChart } from './AnalyticsChart';
 import { HourHeatmap } from './HourHeatmap';
 import { accountName } from './accountName';
-import { rangeZoneLabel, zoneName } from './displayZone';
+import { rangeZoneLabel } from './displayZone';
 import { ProviderStackChart } from './ProviderStackChart';
 import { bucketTimeline, lineSegments, smoothPath } from './chartGeometry';
-import { analyticsCompact, analyticsMoney, analyticsNumber, analyticsTime } from './format';
+import { analyticsCompact, analyticsMoney, analyticsNumber, analyticsTimeWithZone } from './format';
 import type { AnalyticsTab } from './queryState';
 import { TrendChart, type TrendSeries } from './TrendChart';
 import styles from './AnalyticsPage.module.scss';
@@ -461,7 +461,7 @@ export function AnalyticsViews({
           </div>
           {/* Read-only: ProxUI has no concurrency limit to set; the peaks show where limits bite. */}
           {tab === 'performance' && data.accounts && data.accounts.length > 0 && (
-            <div className={styles.chartGrid}>
+            <div className={styles.peakChart}>
               <AnalyticsChart
                 title={t('analytics.peak_in_flight')}
                 note={t('analytics.peak_in_flight_note')}
@@ -475,11 +475,7 @@ export function AnalyticsViews({
                   value: account.peak_in_flight,
                   detail:
                     typeof account.peak_at_ms === 'number' && Number.isFinite(account.peak_at_ms)
-                      ? `${analyticsTime(account.peak_at_ms, i18n.language, zone)} ${zoneName(
-                          zone,
-                          account.peak_at_ms,
-                          i18n.language
-                        )}`
+                      ? analyticsTimeWithZone(account.peak_at_ms, i18n.language, zone)
                       : undefined,
                   provider: account.providers.length === 1 ? account.providers[0] : undefined,
                 }))}

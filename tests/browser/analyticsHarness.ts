@@ -4,7 +4,7 @@ import { parse } from 'yaml';
 import type { AnalyticsQuery } from '../../src/domain/analytics/types';
 import { analyticsScenario, type AnalyticsScenario } from '../fixtures/analyticsUi';
 
-const origin = 'http://127.0.0.1:15173';
+const origin = `http://127.0.0.1:${Number(process.env.PROX_UI_PORT ?? 15173)}`;
 const config = parse(
   readFileSync(new URL('../fixtures/visualConfig-v8.yaml', import.meta.url), 'utf8')
 );

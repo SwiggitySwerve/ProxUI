@@ -5,7 +5,7 @@ import { ResetClaims } from './quota/claims';
 import { loadSourceManifest } from './providerSources/config';
 import { createManifestWatcher } from './providerSources/watch';
 import { LEGACY_SOURCE_MAPPING } from './quota/identity';
-import { createAnalyticsHandler } from './analytics/handler';
+import { createAnalyticsHandler, parseWarmZone } from './analytics/handler';
 import { startEventLoopLagProbe } from './eventLoopLag';
 
 const manifestPath =
@@ -41,7 +41,20 @@ const quotaHandler = createHandler({
   keyFile,
   claims: new ResetClaims({ store, collector }),
 });
-const analyticsHandler = createAnalyticsHandler(manifest);
+const rawWarmZone = process.env.PROX_ANALYTICS_TIME_ZONE;
+const pinnedWarmZone = parseWarmZone(rawWarmZone);
+if (rawWarmZone?.trim() && !pinnedWarmZone) {
+  console.warn(
+    `Ignoring invalid PROX_ANALYTICS_TIME_ZONE="${rawWarmZone}"; analytics warmer will follow browser zones.`
+  );
+}
+const analyticsHandler = createAnalyticsHandler(
+  manifest,
+  undefined,
+  undefined,
+  undefined,
+  pinnedWarmZone
+);
 const server = Bun.serve({
   hostname: '127.0.0.1',
   port: 18319,
