@@ -22,10 +22,19 @@ credential UI. The store owns persistence; the collector uses only public APIs.
   third-party tools from it (`docs/PROX-SETUP.md`). No code may name Google's private
   Cloud Code backend; `tests/noGoogleQuotaReads.test.ts` scans for it. The collector skips
   Antigravity in `collectionSource` and again before any usage request, so it never
-  sends a request with that credential, a plan read or a hub `quota/fetch`. The history
-  recorded until 23 Nov 2026 stays readable: `quotaSamples` still decodes Antigravity
-  summaries (only the "Gemini Models" group feeds the pool, user direction, 21 Nov 2026;
-  the "Claude and GPT models" group is its own model-lane window). It has no resets: claims are refused
+  sends a request with that credential, a plan read or a hub `quota/fetch`.
+  When configured (`PROX_AGY_SNAPSHOT_PATH`, default `/data/agy-usage.json`), the collector
+  watches a local JSON snapshot dropped by the host's official signed-in `agy -p "/usage"`
+  helper (`deploy/prox-agy-usage.sh`). The ingest (`agySnapshot.ts`) accepts only zero-turn
+  `SUCCESS` `/usage` payloads containing both `gemini-5h` and `gemini-weekly` under
+  `Gemini Models` (never writing missing-window nulls on schema drift), normalizes unused
+  `1970-01-01T00:00:00Z` reset timestamps to `null`, and reuses the single existing
+  non-retired Antigravity account for that `instanceId` so stored history and plan history
+  stay continuous. After 30 minutes without a fresh snapshot, the collector marks the
+  ingested account disabled and removes its live source entry so Gemini reverts to dormant
+  history without blocking the combined "All" forecast for Claude and Codex. Only the
+  "Gemini Models" group feeds the pool (user direction, 21 Nov 2026); the "Claude and GPT
+  models" group is its own model-lane window. It has no resets: claims are refused
   before anything is sent, and `/v1/accounts` leaves its accounts out (its cards
   stay hub-direct). Databases from before it are migrated once: `quota_accounts`
   is rebuilt to allow open provider IDs, keeping every row and reference. The

@@ -47,6 +47,7 @@ import {
 import { normalizeClaudeUsageSnapshot } from '../../src/services/api/claudeUsage';
 import type { ClaudeUsageSnapshot } from '../../src/types/quota';
 import { isRecord } from '../../src/utils/helpers';
+import { AGY_ACTIVE_TTL_MS, readAgySnapshotFile } from './agySnapshot';
 import { planChangeSuspected, planFromClaudeProfile, planFromCodexUsage } from './plans';
 import { QuotaStore } from './store';
 import type { InventorySourceState, InventorySourceStatus } from './inventory';
@@ -94,12 +95,16 @@ const CATALOG_TIMEOUT_MS = 3_000;
  * in the last few minutes stay in memory, never on disk, so that sync can still purge them.
  */
 const RETIRED_NAME_MEMORY_MS = 10 * 60_000;
+/** Poll interval for the local `agy` snapshot drop file while the collector runs. */
+const AGY_WATCH_INTERVAL_MS = 15_000;
 
 interface CollectorDependencies {
   fetcher?: typeof fetch;
   now?: () => number;
   /** Waits out the sync floor; injected by tests. */
   sleep?: (ms: number) => Promise<void>;
+  /** Optional local file path where the host `agy` snapshot script drops JSON readings. */
+  agySnapshotPath?: string;
 }
 type CollectorOptions = CollectorDependencies &
   (
@@ -307,7 +312,12 @@ function usageWindows(provider: 'claude' | 'codex', body: unknown) {
     for (const key of ['rate_limit', 'rateLimit']) {
       const limit = payload[key];
       if (!isRecord(limit)) continue;
-      for (const slot of ['primary_window', 'primaryWindow', 'secondary_window', 'secondaryWindow']) {
+      for (const slot of [
+        'primary_window',
+        'primaryWindow',
+        'secondary_window',
+        'secondaryWindow',
+      ]) {
         const window = limit[slot];
         if (window !== undefined && window !== null && !isRecord(window)) {
           throw new Error('Invalid quota response');
@@ -491,11 +501,23 @@ export class QuotaCollector {
   >();
   /** In-flight polls per account, so removing an account can abort them. */
   private readonly pollControllers = new Map<string, Set<AbortController>>();
+  private readonly agySnapshotPath: string | null;
+  private agyTimer: ReturnType<typeof setInterval> | null = null;
+  private agyInFlight: Promise<boolean> | null = null;
+  private agyState: {
+    instanceId: string;
+    sourceLabel: string;
+    accountId: string;
+    observedAtMs: number;
+    mtimeMs: number;
+    active: boolean;
+  } | null = null;
 
   constructor(
     private readonly store: QuotaStore,
     options: CollectorOptions
   ) {
+    this.agySnapshotPath = options.agySnapshotPath ?? null;
     if ('sources' in options) {
       if (
         options.sources.some((source) => !source.instanceId) ||
@@ -605,11 +627,22 @@ export class QuotaCollector {
   }
   get sources(): QuotaSourceView[] | undefined {
     if (this.revision === undefined) return undefined;
-    return this.collectionSources.map((source) => ({
+    const views: QuotaSourceView[] = this.collectionSources.map((source) => ({
       instanceId: source.instanceId!,
       sourceLabel: source.label,
       providers: source.providers,
     }));
+    if (
+      this.agyState?.active &&
+      !views.some((source) => source.instanceId === this.agyState!.instanceId)
+    ) {
+      views.push({
+        instanceId: this.agyState.instanceId,
+        sourceLabel: this.agyState.sourceLabel,
+        providers: ['antigravity'],
+      });
+    }
+    return views;
   }
 
   /** Per instance and provider: whether the last inventory read succeeded. */
@@ -959,6 +992,13 @@ export class QuotaCollector {
     this.running = true;
     // Scheduled failures remain visible through issues; manual callers receive the sanitized error.
     void this.refresh().catch(() => {});
+    if (this.agySnapshotPath) {
+      void this.ingestAgySnapshot().catch(() => {});
+      this.agyTimer = setInterval(() => {
+        void this.ingestAgySnapshot().catch(() => {});
+      }, AGY_WATCH_INTERVAL_MS);
+      this.agyTimer.unref?.();
+    }
     if (!this.inFlight) this.schedule();
   }
 
@@ -966,10 +1006,173 @@ export class QuotaCollector {
     this.running = false;
     if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;
+    if (this.agyTimer !== null) clearInterval(this.agyTimer);
+    this.agyTimer = null;
     this.controller?.abort();
     this.accountControllers.forEach((controller) => controller.abort());
     this.syncController.abort();
     this.syncController = new AbortController();
+  }
+
+  /**
+   * Read the local `agy` CLI snapshot file if configured. Applies fresh snapshots (`<= 30 min`)
+   * onto the existing Antigravity account for that instance so history stays continuous, and marks
+   * the account disabled again once 30 minutes pass without a fresh snapshot so Gemini drops out
+   * of the combined "All" forecast instead of holding Claude/Codex stale.
+   */
+  ingestAgySnapshot(): Promise<boolean> {
+    if (!this.agySnapshotPath) return Promise.resolve(false);
+    if (this.agyInFlight) return this.agyInFlight;
+    const path = this.agySnapshotPath;
+    const run = this.applyAgySnapshot(path).finally(() => {
+      if (this.agyInFlight === run) this.agyInFlight = null;
+    });
+    this.agyInFlight = run;
+    return run;
+  }
+
+  private resolveAgyAccount(instanceId: string): {
+    target: StoredAccount;
+    existingInInstance: StoredAccount[];
+  } {
+    const existingInInstance = this.store
+      .listAccounts()
+      .filter(
+        (account) =>
+          !account.retired &&
+          account.provider === 'antigravity' &&
+          account.instanceId === instanceId
+      );
+    if (existingInInstance.length === 1) {
+      return { target: existingInInstance[0], existingInInstance };
+    }
+    const id = this.store.accountIdFor(instanceId, 'antigravity', 'agy-cli');
+    const matched = existingInInstance.find((account) => account.id === id);
+    if (matched) return { target: matched, existingInInstance };
+    return {
+      target: {
+        id,
+        instanceId,
+        provider: 'antigravity',
+        name: 'agy-cli',
+        email: null,
+        disabled: false,
+        retired: false,
+        lastSeenAtMs: this.now(),
+        lastErrorAtMs: null,
+      },
+      existingInInstance,
+    };
+  }
+
+  private disableAgyAccount(instanceId: string, accountId: string): void {
+    const existingInInstance = this.store
+      .listAccounts()
+      .filter(
+        (account) =>
+          !account.retired &&
+          account.provider === 'antigravity' &&
+          account.instanceId === instanceId
+      );
+    const target = existingInInstance.find((account) => account.id === accountId);
+    if (!target) return;
+    if (!target.disabled) {
+      const updated = existingInInstance.map((account) =>
+        account.id === accountId ? { ...account, disabled: true } : account
+      );
+      this.store.recordInventory('antigravity', updated, target.lastSeenAtMs, instanceId);
+    }
+    this.latestWindows.delete(accountId);
+  }
+
+  private async applyAgySnapshot(path: string): Promise<boolean> {
+    const nowMs = this.now();
+    const read = await readAgySnapshotFile(path, nowMs);
+    if (read.kind !== 'ok') {
+      if (this.agyState?.active && nowMs - this.agyState.observedAtMs > AGY_ACTIVE_TTL_MS) {
+        this.disableAgyAccount(this.agyState.instanceId, this.agyState.accountId);
+        this.agyState = { ...this.agyState, active: false };
+      }
+      return false;
+    }
+    const { mtimeMs, snapshot } = read;
+    const isActive = nowMs - snapshot.observedAtMs <= AGY_ACTIVE_TTL_MS;
+    const { target, existingInInstance } = this.resolveAgyAccount(snapshot.instanceId);
+
+    if (!isActive) {
+      this.disableAgyAccount(snapshot.instanceId, target.id);
+      this.agyState = {
+        instanceId: snapshot.instanceId,
+        sourceLabel: snapshot.sourceLabel,
+        accountId: target.id,
+        observedAtMs: snapshot.observedAtMs,
+        mtimeMs,
+        active: false,
+      };
+      return false;
+    }
+
+    if (
+      this.agyState?.active &&
+      this.agyState.accountId === target.id &&
+      this.agyState.observedAtMs === snapshot.observedAtMs &&
+      this.agyState.mtimeMs === mtimeMs
+    ) {
+      return false;
+    }
+
+    let samples: QuotaSample[];
+    let windows: AccountQuotaWindow[];
+    try {
+      ({ samples, windows } = quotaSamples(
+        'antigravity',
+        target.id,
+        snapshot.summaryPayload,
+        snapshot.observedAtMs
+      ));
+    } catch {
+      return false;
+    }
+    const hasFiveHour = samples.some(
+      (sample) => sample.window === 'five-hour' && sample.remainingPercent !== null
+    );
+    const hasWeekly = samples.some(
+      (sample) => sample.window === 'weekly' && sample.remainingPercent !== null
+    );
+    if (!hasFiveHour || !hasWeekly) return false;
+
+    const activeAccount: StoredAccount = {
+      ...target,
+      instanceId: snapshot.instanceId,
+      disabled: false,
+      retired: false,
+      lastSeenAtMs: snapshot.observedAtMs,
+      lastErrorAtMs: null,
+    };
+    const nextInventory = existingInInstance.some((account) => account.id === target.id)
+      ? existingInInstance.map((account) => (account.id === target.id ? activeAccount : account))
+      : [...existingInInstance, activeAccount];
+    this.store.recordInventory(
+      'antigravity',
+      nextInventory,
+      snapshot.observedAtMs,
+      snapshot.instanceId
+    );
+    this.store.recordSamples(samples);
+    if (snapshot.plan && target.plan !== snapshot.plan) {
+      this.store.recordPlan(target.id, snapshot.plan, snapshot.observedAtMs);
+    }
+    this.latestWindows.set(target.id, windows);
+    this.latestReadingAt.set(target.id, snapshot.observedAtMs);
+    this.agyState = {
+      instanceId: snapshot.instanceId,
+      sourceLabel: snapshot.sourceLabel,
+      accountId: target.id,
+      observedAtMs: snapshot.observedAtMs,
+      mtimeMs,
+      active: true,
+    };
+    return true;
   }
 
   private schedule(): void {
@@ -1547,6 +1750,9 @@ export class QuotaCollector {
   private async collect(signal: AbortSignal): Promise<void> {
     this.currentIssues = [];
     this.forget(this.store.prune(this.now()));
+    if (this.agySnapshotPath) {
+      await this.ingestAgySnapshot().catch(() => false);
+    }
     const inventories = await Promise.allSettled(
       this.collectionSources.map(async (source) => {
         const seq = this.startInventoryRead(source);

@@ -22,7 +22,11 @@ store.migrateLegacySources(
 // Configuration is a process-lifetime snapshot, except that a manifest written at run time
 // (prox-sources-apply) may gain hubs: those are handed to the collector, which only ever adds.
 // Removing or editing a source still takes a restart.
-const collector = new QuotaCollector(store, { sources: manifest.sources, revision });
+const collector = new QuotaCollector(store, {
+  sources: manifest.sources,
+  revision,
+  agySnapshotPath: process.env.PROX_AGY_SNAPSHOT_PATH ?? '/data/agy-usage.json',
+});
 const manifestWatcher = process.env.PROX_SOURCE_MANIFEST
   ? setInterval(
       createManifestWatcher(manifestPath, { manifest, revision }, (next, nextRevision) =>

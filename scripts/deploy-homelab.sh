@@ -94,6 +94,10 @@ install -D -m 644 deploy/prox-usage-job@.service "$HOME/.config/systemd/user/pro
 install -D -m 644 deploy/prox-usage-nightly.service "$HOME/.config/systemd/user/prox-usage-nightly.service"
 install -D -m 644 deploy/prox-usage-nightly.timer "$HOME/.config/systemd/user/prox-usage-nightly.timer"
 install -D -m 644 deploy/prox-usage-parity.service "$HOME/.config/systemd/user/prox-usage-parity.service"
+# Official local `agy -p "/usage"` snapshot helper; shipped disabled so the operator opts in.
+install -D -m 755 deploy/prox-agy-usage.sh "$HOME/.local/share/prox/prox-agy-usage.sh"
+install -D -m 644 deploy/prox-agy-usage.service "$HOME/.config/systemd/user/prox-agy-usage.service"
+install -D -m 644 deploy/prox-agy-usage.timer "$HOME/.config/systemd/user/prox-agy-usage.timer"
 # Retire units no longer shipped (the independent usage timers, and the janitor's path watcher,
 # which fired on every proxy cooldown-file write) before reloading the unit graph.
 for unit in prox-usage-prune.timer prox-usage-reconcile.timer prox-usage-backup.timer \
