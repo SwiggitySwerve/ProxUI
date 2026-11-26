@@ -3171,6 +3171,7 @@
       "title": "Token theo nhà cung cấp",
       "other": "Khác",
       "none": "không có token",
+      "unmeasured": "chưa đo",
       "open_quota": "Mở {{provider}} trong Hạn mức"
     },
     "timestamp": "Thời gian · UTC",

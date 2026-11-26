@@ -33,9 +33,7 @@ describe('tokens by provider', () => {
         createElement(ProviderStackChart, {
           title: 'Tokens by provider',
           split,
-          buckets: [0, 1, 2].map((hour) => from + hour * HOUR),
-          from,
-          to: from + 3 * HOUR,
+          buckets: [0, 1, 2].map((hour) => ({ at: from + hour * HOUR, measured: hour !== 2 })),
           interval: HOUR,
           label: (provider) => provider.toUpperCase(),
         })
@@ -66,5 +64,7 @@ describe('tokens by provider', () => {
     expect(markup.match(/data-at=/g)).toHaveLength(3);
     const plot = markup.slice(markup.indexOf('data-at='), markup.indexOf('<output'));
     expect(plot).not.toContain('<button');
+    // A quiet bucket reads as no tokens; an unmeasured one says so and is hatched, not zero.
+    expect(markup).toContain('data-state="gap"');
   });
 });

@@ -3165,6 +3165,7 @@
       "title": "Tokens by provider",
       "other": "Other",
       "none": "no tokens",
+      "unmeasured": "not measured",
       "open_quota": "Open {{provider}} in Quota"
     },
     "timestamp": "Time · UTC",

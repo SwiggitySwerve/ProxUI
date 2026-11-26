@@ -401,9 +401,16 @@ export function AnalyticsViews({
             <ProviderStackChart
               title={t('analytics.provider_split.title')}
               split={data.provider_timeline}
-              buckets={buckets.map((bucket) => bucket.at)}
-              from={data.from_ms}
-              to={data.to_ms}
+              // Every bucket keeps its slot; with partial coverage an absent one is unmeasured.
+              buckets={bucketTimeline(
+                data.timeline.map((point) => point.bucket_ms),
+                data.from_ms,
+                data.to_ms,
+                interval
+              ).map((bucket) => ({
+                at: bucket.at,
+                measured: bucket.present || data.coverage.raw_complete,
+              }))}
               interval={interval}
               label={(provider) =>
                 data.providers.find((p) => p.key === provider)?.label ?? provider

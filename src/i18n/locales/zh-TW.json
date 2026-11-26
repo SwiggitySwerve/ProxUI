@@ -3191,6 +3191,7 @@
       "title": "按供應商的權杖",
       "other": "其他",
       "none": "無權杖",
+      "unmeasured": "未測量",
       "open_quota": "在配額中開啟 {{provider}}"
     },
     "timestamp": "時間 · UTC",

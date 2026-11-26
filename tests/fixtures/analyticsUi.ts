@@ -182,11 +182,13 @@ export function analyticsScenario(
   data.generated_at_ms = query.to_ms;
   data.granularity = query.granularity;
   const step = query.granularity === 'day' ? 86_400_000 : 3_600_000;
+  // Buckets start on whole UTC hours or days, as prox-usage returns them.
+  const first = Math.floor(query.from_ms / step) * step;
   data.timeline = Array.from(
-    { length: Math.ceil((query.to_ms - query.from_ms) / step) },
+    { length: Math.ceil((query.to_ms - first) / step) },
     (_, i) => ({
       ...data.summary,
-      bucket_ms: query.from_ms + i * step,
+      bucket_ms: first + i * step,
       calls: [0, 3, 7, 12, 6, 9][i % 6],
       // Volumes move with traffic so trend lines are distinguishable in screenshots.
       input_tokens: [2_100, 6_400, 9_800, 16_000, 7_300, 11_200][i % 6] * (1 + (i % 4) / 3),

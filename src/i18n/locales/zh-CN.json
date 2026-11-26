@@ -3163,6 +3163,7 @@
       "title": "按提供商的令牌",
       "other": "其他",
       "none": "无令牌",
+      "unmeasured": "未测量",
       "open_quota": "在配额中打开 {{provider}}"
     },
     "timestamp": "时间 · UTC",

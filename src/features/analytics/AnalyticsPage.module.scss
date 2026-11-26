@@ -1411,6 +1411,16 @@ button.heatCell {
 .providerStack {
   margin-top: 14px;
 }
+// Legend entries that open Quota read as links.
+.providerStack .legend a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--border-color);
+  text-underline-offset: 3px;
+  &:hover {
+    text-decoration-color: currentColor;
+  }
+}
 .stackSwatch {
   width: 14px;
   height: 10px;
@@ -1454,6 +1464,10 @@ button.heatCell {
   }
   &:hover {
     background: var(--bg-hover);
+  }
+  // Unmeasured: hatched, never drawn as zero.
+  &[data-state='gap'] {
+    background: repeating-linear-gradient(135deg, var(--bg-tertiary) 0 2px, transparent 2px 4px);
   }
 }
 .stackTicks {

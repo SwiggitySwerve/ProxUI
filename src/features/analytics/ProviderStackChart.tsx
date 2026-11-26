@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { AnalyticsProviderBucket } from '@/domain/analytics/types';
 import { providerFill } from '@/features/providers/identity';
-import { niceMaximum, timeTicks } from './chartGeometry';
+import { niceMaximum } from './chartGeometry';
 import { analyticsCompact, analyticsNumber, analyticsShortTime, analyticsTime } from './format';
 import styles from './AnalyticsPage.module.scss';
 
@@ -20,17 +20,13 @@ export function ProviderStackChart({
   title,
   split,
   buckets,
-  from,
-  to,
   interval,
   label,
 }: {
   title: string;
   split: AnalyticsProviderBucket[];
-  /** Every bucket the trend draws, so quiet buckets keep their place on the time axis. */
-  buckets: number[];
-  from: number;
-  to: number;
+  /** Every bucket in the window; an unmeasured one keeps its slot but shows no bar. */
+  buckets: { at: number; measured: boolean }[];
   interval: number;
   /** The provider's display name, as the rest of the page shows it. */
   label: (provider: string) => string;
@@ -55,24 +51,33 @@ export function ProviderStackChart({
     parts.set(groupOf(part.provider), (parts.get(groupOf(part.provider)) ?? 0) + part.total_tokens);
     byBucket.set(part.bucket_ms, parts);
   }
+  const unmeasured = new Set(buckets.filter((b) => !b.measured).map((b) => b.at));
   const sum = (at: number) => [...(byBucket.get(at)?.values() ?? [])].reduce((a, b) => a + b, 0);
-  const maximum = niceMaximum(Math.max(0, ...buckets.map(sum)));
+  const maximum = niceMaximum(Math.max(0, ...buckets.map((b) => sum(b.at))));
   const name = (group: string) =>
     group === OTHER ? t('analytics.provider_split.other') : label(group);
   const fill = (group: string) => providerFill(group) ?? 'var(--text-tertiary)';
   const describe = (at: number) =>
-    `${analyticsTime(at, i18n.language)} UTC · ${
+    `${when(at)} · ${
       groups
         .filter((group) => byBucket.get(at)?.get(group))
         .map(
           (group) =>
             `${name(group)}: ${analyticsNumber(byBucket.get(at)!.get(group)!, i18n.language)}`
         )
-        .join(' · ') || t('analytics.provider_split.none')
+        .join(' · ') || t(`analytics.provider_split.${unmeasured.has(at) ? 'unmeasured' : 'none'}`)
     }`;
   const [inspected, setInspected] = useState<number | null>(null);
-  // Day labels sit under their bar; hour labels mark the boundary they name.
-  const pct = (at: number) => ((at - from) / Math.max(1, to - from)) * 100;
+  const when = (at: number) =>
+    daily
+      ? `${analyticsShortTime(at, i18n.language, true)} UTC`
+      : `${analyticsTime(at, i18n.language)} UTC`;
+  // Bars share the width equally, so labels follow the bars, not the clock: about six of them,
+  // under the day they name or at the hour boundary they name.
+  const every = Math.max(1, Math.ceil(buckets.length / 6));
+  const ticks = buckets
+    .map(({ at }, index) => ({ at, left: ((index + (daily ? 0.5 : 0)) / buckets.length) * 100 }))
+    .filter((_, index) => index % every === 0);
   return (
     <section className={`${styles.panel} ${styles.providerStack}`} aria-labelledby={id}>
       <div className={styles.trendHeader}>
@@ -108,11 +113,12 @@ export function ProviderStackChart({
           aria-hidden="true"
           onMouseLeave={() => setInspected(null)}
         >
-          {buckets.map((at) => (
+          {buckets.map(({ at }) => (
             <span
               key={at}
               className={styles.stackBar}
               data-at={at}
+              data-state={unmeasured.has(at) ? 'gap' : undefined}
               onMouseEnter={() => setInspected(at)}
             >
               {groups.map((group) => {
@@ -128,9 +134,9 @@ export function ProviderStackChart({
           ))}
         </div>
         <div className={styles.stackTicks} aria-hidden="true">
-          {timeTicks(from, to, interval, 6).map((tick) => (
-            <span key={tick} style={{ left: `${pct(daily ? tick + interval / 2 : tick)}%` }}>
-              {analyticsShortTime(tick, i18n.language, daily)}
+          {ticks.map((tick) => (
+            <span key={tick.at} style={{ left: `${tick.left}%` }}>
+              {analyticsShortTime(tick.at, i18n.language, daily)}
             </span>
           ))}
         </div>

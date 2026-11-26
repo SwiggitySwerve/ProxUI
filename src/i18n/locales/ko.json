@@ -3165,6 +3165,7 @@
       "title": "제공업체별 토큰",
       "other": "기타",
       "none": "토큰 없음",
+      "unmeasured": "측정 안 됨",
       "open_quota": "할당량에서 {{provider}} 열기"
     },
     "timestamp": "시간 · UTC",
