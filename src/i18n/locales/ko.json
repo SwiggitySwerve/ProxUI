@@ -3151,6 +3151,8 @@
     "by_model": "모델별",
     "events_and_failures": "이벤트 및 실패",
     "peak_in_flight": "계정별 동시 처리 요청 최대치",
+    "peak_in_flight_note": "이 범위에서 시작된 요청의 최대 동시 처리 수(시작 시각 + 실행 시간 기준).",
+    "peak_at": "최대 시각",
     "failed_count": "{{value}}건 실패",
     "failed_for": "({{label}})",
     "failure_readout": "{{label}}: 이벤트 {{events}}건, 실패 {{failed}}건",
@@ -3170,7 +3172,8 @@
       "daily": "시간 지도에는 시간 단위 버킷이 필요합니다.",
       "show_hourly": "시간별로 보기",
       "keys": "화살표 키로 시간을 이동하고 Enter로 해당 시간의 요청을 엽니다.",
-      "day": "날짜 ({{zone}})"
+      "day": "날짜 ({{zone}})",
+      "skipped": "건너뜀(DST)"
     },
     "provider_split": {
       "title": "제공업체별 토큰",

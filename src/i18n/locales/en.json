@@ -3151,6 +3151,8 @@
     "by_model": "By model",
     "events_and_failures": "Events and failures",
     "peak_in_flight": "Peak requests in flight, by account",
+    "peak_in_flight_note": "Peak simultaneous requests started in this range (start time + execution duration).",
+    "peak_at": "Peak time",
     "failed_count": "{{value}} failed",
     "failed_for": "for {{label}}",
     "failure_readout": "{{label}}: {{events}} events, {{failed}} failed",
@@ -3170,7 +3172,8 @@
       "daily": "The hour map needs hourly buckets.",
       "show_hourly": "Show by hour",
       "keys": "Arrow keys move between hours; Enter opens that hour's requests.",
-      "day": "Day ({{zone}})"
+      "day": "Day ({{zone}})",
+      "skipped": "skipped (DST)"
     },
     "provider_split": {
       "title": "Tokens by provider",

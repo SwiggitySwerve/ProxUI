@@ -1,8 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { isKnownTimeZone, wholeHourZone } from '@/domain/analytics/timeZone';
-
-const DAY = 86_400_000;
+import { canonicalTimeZone, isKnownTimeZone } from '@/domain/analytics/timeZone';
 
 /**
  * Local time or UTC for every date and hour Analytics shows: one choice per browser, local by
@@ -34,19 +32,10 @@ export function browserZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 }
 
-/**
- * The zone Analytics asks for and labels with: UTC when chosen, else the browser's zone, unless
- * its offset is not a whole number of hours (hours could not then be exact), when it is UTC too.
- */
-export function analyticsZone(utc: boolean, local = browserZone(), now = Date.now()): string {
+/** The zone the user prefers before checking whether a specific range has a part-hour offset. */
+export function preferredZone(utc: boolean, local = browserZone()): string {
   if (utc || local === 'UTC') return 'UTC';
-  return isKnownTimeZone(local) && wholeHourZone(local, now - 32 * DAY, now + DAY) ? local : 'UTC';
-}
-
-/** The zone the page uses now, following the browser's choice. */
-export function useAnalyticsZone(): string {
-  const utc = useDisplayZoneStore((state) => state.utc);
-  return analyticsZone(utc);
+  return isKnownTimeZone(local) ? canonicalTimeZone(local) : 'UTC';
 }
 
 /** A short name for the zone at an instant: "UTC", "EST", "GMT+2". */
@@ -57,4 +46,12 @@ export function zoneName(zone: string, at: number, locale: string): string {
       .formatToParts(at)
       .find((part) => part.type === 'timeZoneName')?.value ?? zone
   );
+}
+
+/** Short zone abbreviation when constant across [from, to], else the stable IANA zone name. */
+export function rangeZoneLabel(zone: string, from: number, to: number, locale: string): string {
+  if (zone === 'UTC') return 'UTC';
+  const start = zoneName(zone, from, locale);
+  const end = zoneName(zone, to, locale);
+  return start === end ? end : zone;
 }

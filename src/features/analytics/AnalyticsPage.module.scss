@@ -582,6 +582,9 @@
 .breakdown {
   display: flex;
   flex-direction: column;
+  > p {
+    margin: 4px 0 8px;
+  }
   > details {
     margin-top: auto;
     padding-top: 8px;
@@ -667,8 +670,15 @@
   }
 }
 // The failed count is a third column, and a second action above the name's row-wide button.
-.rankedRow[data-failures='true'] {
+.rankedRow[data-failures='true'],
+.rankedRow[data-detail='true'] {
   grid-template-columns: minmax(0, 1fr) auto auto;
+}
+.rankedDetail {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .rankedHit {
   min-width: 0;
@@ -1373,6 +1383,18 @@
   &[data-state='outside'] {
     background: transparent;
   }
+  // A spring-forward clock hour that never occurred on this date.
+  &[data-state='skipped'] {
+    background: transparent;
+    border: 1px dashed var(--border-color);
+  }
+}
+// A fall-back repeated hour renders both UTC occurrences side by side in the same clock column.
+.heatSplit {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  min-width: 0;
 }
 // A 24-column grid cannot hold 44px touch targets; the table and arrow keys reach every hour.
 // Same specificity as the touch rule above and later in the file, so this wins.

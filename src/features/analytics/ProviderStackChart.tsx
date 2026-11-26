@@ -27,6 +27,7 @@ export function ProviderStackChart({
   interval,
   label,
   zone = 'UTC',
+  from,
 }: {
   title: string;
   split: AnalyticsProviderBucket[];
@@ -37,6 +38,8 @@ export function ProviderStackChart({
   label: (provider: string) => string;
   /** The page's time zone for labels and day boundaries. */
   zone?: string;
+  /** Query range start: a clipped first hourly bucket is labelled from its first in-range instant. */
+  from?: number;
 }) {
   const { t, i18n } = useTranslation();
   const id = useId();
@@ -67,11 +70,17 @@ export function ProviderStackChart({
   const name = (group: string) =>
     group === OTHER ? t('analytics.provider_split.other') : label(group);
   const fill = (group: string) => providerFill(group) ?? 'var(--text-tertiary)';
+  const labelAt = useCallback(
+    (at: number) => (daily || from === undefined ? at : Math.max(at, from)),
+    [daily, from]
+  );
   // Stable across hovers, so the table below does not re-render while the pointer moves.
   const when = useCallback(
-    (at: number) =>
-      `${daily ? analyticsShortTime(at, i18n.language, true, zone) : analyticsTime(at, i18n.language, zone)} ${zoneName(zone, at, i18n.language)}`,
-    [daily, i18n.language, zone]
+    (at: number) => {
+      const displayAt = labelAt(at);
+      return `${daily ? analyticsShortTime(displayAt, i18n.language, true, zone) : analyticsTime(displayAt, i18n.language, zone)} ${zoneName(zone, displayAt, i18n.language)}`;
+    },
+    [daily, i18n.language, labelAt, zone]
   );
   const measured = (at: number) => buckets.find((b) => b.at === at)?.measured !== false;
   const describe = (at: number) =>
@@ -92,7 +101,7 @@ export function ProviderStackChart({
   const multiDay = !daily && buckets.length > 26;
   const candidates = buckets
     .map(({ at }, index) => ({ at, left: ((index + (daily ? 0.5 : 0)) / buckets.length) * 100 }))
-    .filter(({ at }) => !multiDay || localDayStart(zone, at) === at);
+    .filter(({ at }) => !multiDay || localDayStart(zone, labelAt(at)) === labelAt(at));
   const every = Math.max(1, Math.ceil(candidates.length / 6));
   const ticks = candidates.filter((_, index) => index % every === 0);
   return (
@@ -163,7 +172,7 @@ export function ProviderStackChart({
                   tick.left < 12 ? 'none' : tick.left > 88 ? 'translateX(-100%)' : undefined,
               }}
             >
-              {analyticsShortTime(tick.at, i18n.language, daily || multiDay, zone)}
+              {analyticsShortTime(labelAt(tick.at), i18n.language, daily || multiDay, zone)}
             </span>
           ))}
         </div>

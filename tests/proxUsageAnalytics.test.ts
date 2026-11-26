@@ -524,6 +524,20 @@ test('each account reports its most requests in flight at once', () => {
   expect(peaks).toEqual({ 'hub-a': [3, t + 200], 'hub-b': [1, t + 150] });
 });
 
+test('equal-start events with a missing duration give the same peak regardless of insertion order', () => {
+  const a = { instance: 'hub-a', authIndex: '7' };
+  const t = BASE + 2000;
+  for (const rows of [
+    [event(1, { ...a, tsMs: t, latencyMs: null }), event(2, { ...a, tsMs: t, latencyMs: 500 })],
+    [event(1, { ...a, tsMs: t, latencyMs: 500 }), event(2, { ...a, tsMs: t, latencyMs: null })],
+  ]) {
+    const f = setup();
+    f.insert(rows);
+    const response = queryAnalytics(f.db, query(), rateState());
+    expect(response.accounts![0]).toMatchObject({ peak_in_flight: 2, peak_at_ms: t });
+  }
+});
+
 test('hourly answers total events by local weekday and hour', () => {
   const f = setup();
   const HOUR = 3600000;
@@ -546,4 +560,23 @@ test('hourly answers total events by local weekday and hour', () => {
   expect(local.weekly!.reduce((sum, s) => sum + s.calls, 0)).toBe(local.summary.calls);
   // Daily answers have no hours to place.
   expect(queryAnalytics(f.db, q({ granularity: 'day' }), rateState()).weekly).toBeUndefined();
+});
+
+test('weekly totals label a clipped first bucket using the first instant inside the query', () => {
+  const f = setup();
+  // Australia/Lord_Howe jumps +10:30 -> +11:00 on 2026-10-03 at 15:30 UTC (Oct 4 02:00 -> 02:30).
+  // Starting at 15:45 UTC is wholly +11:00; an event at 15:50 UTC is Sunday 02:50 (hour 2),
+  // even though its UTC hour bucket 15:00 UTC started before the jump (01:30, hour 1).
+  const from = Date.UTC(2026, 9, 3, 15, 45);
+  const to = from + 3600000;
+  f.insert([event(1, { tsMs: Date.UTC(2026, 9, 3, 15, 50) })]);
+  const res = queryAnalytics(
+    f.db,
+    query({ from_ms: from, to_ms: to, time_zone: 'Australia/Lord_Howe', granularity: 'hour' }),
+    rateState()
+  );
+  const slot = (weekday: number, hour: number) =>
+    res.weekly!.find((s) => s.weekday === weekday && s.hour === hour)!.calls;
+  expect(slot(0, 2)).toBe(1);
+  expect(slot(0, 1)).toBe(0);
 });

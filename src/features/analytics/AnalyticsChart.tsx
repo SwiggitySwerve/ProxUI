@@ -15,12 +15,18 @@ import styles from './AnalyticsPage.module.scss';
  */
 export function AnalyticsChart({
   title,
+  note,
+  detailLabel,
   data,
   format = 'compact',
   onSelect,
   failures,
 }: {
   title: string;
+  /** Optional reading key shown under the heading. */
+  note?: string;
+  /** Table column heading when rows carry a secondary `detail` (e.g. peak timestamp). */
+  detailLabel?: string;
   data: ChartDatum[];
   /** compact: 12.5K counts; exact: durations; money: dollars to the cent. */
   format?: 'compact' | 'exact' | 'money';
@@ -34,6 +40,7 @@ export function AnalyticsChart({
   const readout = data.find((point) => point.key === inspectedKey);
   const maximum = Math.max(0, ...data.map((d) => d.value ?? 0));
   const ranked = [...data].sort((a, b) => (b.value ?? -Infinity) - (a.value ?? -Infinity));
+  const hasDetail = Boolean(detailLabel) || data.some((d) => Boolean(d.detail));
   const currency = format === 'money';
   const exact = (value: number | null) => analyticsNumber(value, i18n.language, currency);
   const shown = (value: number | null) =>
@@ -51,7 +58,7 @@ export function AnalyticsChart({
           events: exact(d.value),
           failed: exact(failedOf(d)),
         })
-      : `${d.label}: ${exact(d.value)}`;
+      : `${d.label}: ${exact(d.value)}${d.detail ? ` · ${d.detail}` : ''}`;
   const failedButton = (d: ChartDatum, compact: boolean): ReactNode =>
     failedOf(d) > 0 ? (
       <button
@@ -72,6 +79,7 @@ export function AnalyticsChart({
   return (
     <section className={`${styles.panel} ${styles.breakdown}`} aria-labelledby={id}>
       <h3 id={id}>{title}</h3>
+      {note && <p className={styles.muted}>{note}</p>}
       {data.length === 0 ? (
         <p className={styles.muted}>{t('analytics.empty_chart')}</p>
       ) : (
@@ -122,6 +130,7 @@ export function AnalyticsChart({
                   <div
                     className={styles.rankedRow}
                     data-failures={failures ? 'true' : undefined}
+                    data-detail={hasDetail && !failures ? 'true' : undefined}
                     onMouseEnter={inspect}
                   >
                     {onSelect ? (
@@ -136,6 +145,9 @@ export function AnalyticsChart({
                       </button>
                     ) : (
                       label
+                    )}
+                    {hasDetail && !failures && (
+                      <span className={styles.rankedDetail}>{d.detail ?? ''}</span>
                     )}
                     <strong title={exact(d.value)} data-unavailable={d.value === null}>
                       {shown(d.value)}
@@ -161,6 +173,7 @@ export function AnalyticsChart({
                       <th scope="col">{t('analytics.bucket_category')}</th>
                       <th scope="col">{failures ? t('analytics.metrics.calls') : title}</th>
                       {failures && <th scope="col">{t('analytics.metrics.failure_calls')}</th>}
+                      {hasDetail && <th scope="col">{detailLabel ?? ''}</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -183,6 +196,7 @@ export function AnalyticsChart({
                           {d.value === null ? t('analytics.unavailable_value') : exact(d.value)}
                         </td>
                         {failures && <td>{failedButton(d, false)}</td>}
+                        {hasDetail && <td>{d.detail ?? t('analytics.unavailable_value')}</td>}
                       </tr>
                     ))}
                   </tbody>

@@ -1,4 +1,9 @@
-import { localDayStart, nextLocalDay, zoneOffsetMinutes } from '@/domain/analytics/timeZone';
+import {
+  localDayStart,
+  localHour,
+  nextLocalDay,
+  zoneOffsetMinutes,
+} from '@/domain/analytics/timeZone';
 export interface ChartDatum {
   key: string;
   label: string;
@@ -7,6 +12,8 @@ export interface ChartDatum {
   failed?: number;
   /** The provider whose colour this row takes; none keeps the neutral bar. */
   provider?: string;
+  /** Optional secondary fact shown beside the value and in the data table (e.g. peak timestamp). */
+  detail?: string;
   at?: number;
 }
 export interface LinePoint {
@@ -155,16 +162,25 @@ export function smoothPath(points: Array<[number, number]>) {
   return path;
 }
 
-export type HourCellState = 'value' | 'gap' | 'outside';
-export interface HourCell {
+export type HourCellState = 'value' | 'gap' | 'outside' | 'skipped';
+export interface HourOccurrence {
   at: number;
   value: number | null;
+  state: 'value' | 'gap';
+}
+export interface HourCell {
+  /** Primary UTC bucket start for this wall-clock hour, or null when skipped by DST. */
+  at: number | null;
+  value: number | null;
   state: HourCellState;
+  /** Second UTC hour sharing this clock hour on a fall-back day (e.g. 01:00 EST after 01:00 EDT). */
+  repeat?: HourOccurrence;
 }
 /**
- * Hourly values as one row per UTC day and one column per UTC hour. Hours outside the window are
- * `outside`; an in-window hour with no value is a `gap`. The caller decides which absent hours
- * are quiet zeros (the page's hourly series already does), so that rule lives in one place.
+ * Hourly values as one row per local day and 24 columns for local wall-clock hours 00..23.
+ * Hours outside `[from, to)` are `outside`; in-window hours with no value are `gap`; clock
+ * hours skipped by spring-forward are `skipped`; repeated fall-back clock hours carry their
+ * second UTC occurrence in `repeat` so both remain visible and drillable.
  */
 export function hourGrid(
   values: ReadonlyMap<number, number | null>,
@@ -172,24 +188,57 @@ export function hourGrid(
   to: number,
   zone = 'UTC'
 ): { day: number; cells: HourCell[] }[] {
-  const rows: { day: number; cells: HourCell[] }[] = [];
-  if (to <= from) return rows;
-  // Rows are the zone's local days; on a daylight-saving day the 24 columns are its first 24
-  // hours, so the changeover hour can repeat or be skipped.
+  if (to <= from) return [];
+  const days: { day: number; nextDay: number; byHour: HourOccurrence[][] }[] = [];
+  const rowByDay = new Map<number, (typeof days)[number]>();
   for (let day = localDayStart(zone, from); day < to; day = nextLocalDay(zone, day)) {
+    const row = {
+      day,
+      nextDay: nextLocalDay(zone, day),
+      byHour: Array.from({ length: 24 }, () => [] as HourOccurrence[]),
+    };
+    days.push(row);
+    rowByDay.set(day, row);
+  }
+  // Iterate UTC whole-hour bucket starts (matching server timeline keys and drilldown intervals).
+  // A clipped first bucket uses its first instant inside [from, to) for local day/hour placement.
+  const firstBucket = Math.floor(from / HOUR) * HOUR;
+  for (let at = firstBucket; at < to; at += HOUR) {
+    const sample = Math.max(at, from);
+    const row = rowByDay.get(localDayStart(zone, sample));
+    if (!row) continue;
+    const hour = localHour(zone, sample);
+    const value = values.get(at) ?? null;
+    const state: HourOccurrence['state'] = value === null ? 'gap' : 'value';
+    row.byHour[hour].push({ at, value, state });
+  }
+  return days.map(({ day, nextDay, byHour }) => {
     const cells: HourCell[] = [];
     for (let hour = 0; hour < 24; hour++) {
-      const at = day + hour * HOUR;
-      const value = values.get(at) ?? null;
-      cells.push({
-        at,
-        value,
-        state: at + HOUR <= from || at >= to ? 'outside' : value === null ? 'gap' : 'value',
-      });
+      const list = byHour[hour];
+      if (list.length === 0) {
+        const hasPrev = byHour.slice(0, hour).some((bucket) => bucket.length > 0);
+        const hasNext = byHour.slice(hour + 1).some((bucket) => bucket.length > 0);
+        const skippedStart =
+          !hasPrev && hasNext && day >= from && day < to && localHour(zone, day) > hour;
+        const skippedEnd =
+          hasPrev &&
+          !hasNext &&
+          nextDay > from &&
+          nextDay <= to &&
+          localHour(zone, nextDay - 1) < hour;
+        const skipped = (hasPrev && hasNext) || skippedStart || skippedEnd;
+        cells.push({ at: null, value: null, state: skipped ? 'skipped' : 'outside' });
+      } else if (list.length === 1) {
+        const [first] = list;
+        cells.push({ at: first.at, value: first.value, state: first.state });
+      } else {
+        const [first, second] = list;
+        cells.push({ at: first.at, value: first.value, state: first.state, repeat: second });
+      }
     }
-    rows.push({ day, cells });
-  }
-  return rows;
+    return { day, cells };
+  });
 }
 /** Four shades above zero, so a cell reads as a band rather than an exact amount. */
 export function heatLevel(value: number | null, maximum: number): 0 | 1 | 2 | 3 | 4 {

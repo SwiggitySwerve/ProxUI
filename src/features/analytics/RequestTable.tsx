@@ -181,7 +181,6 @@ export function RequestTable({
   providerLabels,
   reveal = true,
   zone = 'UTC',
-  zoneLabel = 'UTC',
 }: {
   data: AnalyticsResponse['requests'];
   selected: AnalyticsRequest | null;
@@ -195,9 +194,8 @@ export function RequestTable({
   providerLabels?: ReadonlyMap<string, string>;
   /** The browser's "Show emails" choice, for the request details. */
   reveal?: boolean;
-  /** The page's time zone for timestamps, and its short name for the column. */
+  /** The page's time zone: stable column name and per-timestamp abbreviation. */
   zone?: string;
-  zoneLabel?: string;
 }) {
   const { t, i18n } = useTranslation();
   const n = (value: number | null, currency = false) =>
@@ -234,7 +232,7 @@ export function RequestTable({
                   'details',
                 ].map((key) => (
                   <th scope="col" key={key}>
-                    {t(`analytics.${key}`, { zone: zoneLabel })}
+                    {t(`analytics.${key}`, { zone })}
                   </th>
                 ))}
               </tr>
@@ -242,8 +240,9 @@ export function RequestTable({
             <tbody>
               {data.items.map((r) => (
                 <tr key={r.id}>
-                  <td data-label={t('analytics.timestamp', { zone: zoneLabel })}>
-                    {analyticsTime(r.timestamp_ms, i18n.language, zone)}
+                  <td data-label={t('analytics.timestamp', { zone })}>
+                    {analyticsTime(r.timestamp_ms, i18n.language, zone)}{' '}
+                    {zoneName(zone, r.timestamp_ms, i18n.language)}
                   </td>
                   <td data-label={t('analytics.provider_model')}>
                     <strong>{r.model}</strong>

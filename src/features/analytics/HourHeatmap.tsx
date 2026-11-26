@@ -1,14 +1,29 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { heatLevel, hourGrid, type HourCell } from './chartGeometry';
+import { heatLevel, hourGrid, type HourCell, type HourOccurrence } from './chartGeometry';
 import { analyticsCompact, analyticsNumber, analyticsTime } from './format';
-import { zoneName } from './displayZone';
+import { rangeZoneLabel, zoneName } from './displayZone';
 import styles from './AnalyticsPage.module.scss';
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const dayLabel = (day: number, locale: string, zone: string) =>
   new Intl.DateTimeFormat(locale, { timeZone: zone, month: 'short', day: 'numeric' }).format(day);
 const hourLabel = (hour: number) => String(hour).padStart(2, '0');
+
+function cellOccurrences(cell: HourCell): HourOccurrence[] {
+  if (cell.at === null || cell.state === 'skipped' || cell.state === 'outside') return [];
+  const first: HourOccurrence = {
+    at: cell.at,
+    value: cell.value,
+    state: cell.state,
+  };
+  return cell.repeat ? [first, cell.repeat] : [first];
+}
+
+interface InteractiveSlot extends HourOccurrence {
+  row: number;
+  hour: number;
+}
 
 /**
  * Events per hour, one row per day in the page's zone, so busy hours and quiet nights show.
@@ -34,7 +49,7 @@ export function HourHeatmap({
   hourly: boolean;
   onSelect: (at: number) => void;
   onShowHourly: () => void;
-  /** The page's time zone: rows are its local days, columns its hours. */
+  /** The page's time zone: rows are its local days, columns its wall-clock hours. */
   zone?: string;
   /** prox-usage's events per local weekday and hour, summed over the range (hourly answers). */
   weekly?: { weekday: number; hour: number; calls: number }[];
@@ -42,23 +57,27 @@ export function HourHeatmap({
   const { t, i18n } = useTranslation();
   const id = useId();
   const rows = hourly ? hourGrid(points, from, to, zone) : [];
-  const cells = rows.flatMap((row) => row.cells);
-  const maximum = Math.max(0, ...cells.map((cell) => cell.value ?? 0));
-  const inside = cells.filter((cell) => cell.state !== 'outside');
+  const allOccurrences = rows.flatMap((row) => row.cells.flatMap(cellOccurrences));
+  const maximum = Math.max(0, ...allOccurrences.map((occ) => occ.value ?? 0));
+  const inside: InteractiveSlot[] = rows.flatMap((row, rowIndex) =>
+    row.cells.flatMap((cell, hour) =>
+      cellOccurrences(cell).map((occ) => ({ ...occ, row: rowIndex, hour }))
+    )
+  );
   const [active, setActive] = useState<number | null>(null);
-  // Timestamps, resolved against the current cells, so a refreshed snapshot never shows an old
+  // Timestamps, resolved against the current slots, so a refreshed snapshot never shows an old
   // count or loses the tab stop.
   const [inspectedAt, setInspectedAt] = useState<number | null>(null);
-  const inspected = inside.find((cell) => cell.at === inspectedAt);
+  const inspected = inside.find((slot) => slot.at === inspectedAt);
   const grid = useRef<HTMLDivElement>(null);
   const [byWeekday, setByWeekday] = useState(false);
   // The tab stop is the hour last moved to, else the busiest hour, else the first in the window.
-  const activeCell = inside.find((cell) => cell.at === active);
-  const busiest = inside.reduce<HourCell | undefined>(
-    (best, cell) => ((cell.value ?? -1) > (best?.value ?? -1) ? cell : best),
+  const activeSlot = inside.find((slot) => slot.at === active);
+  const busiest = inside.reduce<InteractiveSlot | undefined>(
+    (best, slot) => ((slot.value ?? -1) > (best?.value ?? -1) ? slot : best),
     undefined
   );
-  const focusAt = activeCell?.at ?? busiest?.at ?? inside[0]?.at ?? null;
+  const focusAt = activeSlot?.at ?? busiest?.at ?? inside[0]?.at ?? null;
   // A refreshed snapshot can drop the focused hour; focus then moves to the new tab stop instead
   // of falling to the page. A removed element fires no blur, so the flag still says "inside".
   const focused = useRef(false);
@@ -66,33 +85,70 @@ export function HourHeatmap({
     if (!focused.current || grid.current?.contains(document.activeElement)) return;
     grid.current?.querySelector<HTMLButtonElement>(`[data-at="${focusAt}"]`)?.focus();
   }, [focusAt]);
-  const describe = (cell: HourCell) =>
-    `${analyticsTime(cell.at, i18n.language, zone)} ${zoneName(zone, cell.at, i18n.language)}: ${
-      cell.state === 'gap'
+  const labelAt = (at: number) => Math.max(at, from);
+  const describe = (occ: HourOccurrence) => {
+    const at = labelAt(occ.at);
+    return `${analyticsTime(at, i18n.language, zone)} ${zoneName(zone, at, i18n.language)}: ${
+      occ.state === 'gap'
         ? t('analytics.heatmap.unmeasured')
-        : t('analytics.heatmap.events', { value: analyticsNumber(cell.value, i18n.language) })
+        : t('analytics.heatmap.events', { value: analyticsNumber(occ.value, i18n.language) })
     }`;
-  const move = (event: KeyboardEvent, cell: HourCell) => {
-    const steps: Record<string, number> = {
-      ArrowLeft: -1,
-      ArrowRight: 1,
-      ArrowUp: -24,
-      ArrowDown: 24,
-    };
-    const index = cells.indexOf(cell);
-    let next: number | undefined;
-    if (event.key in steps) {
-      next = index + steps[event.key];
-      while (cells[next]?.state === 'outside') next += Math.sign(steps[event.key]);
-    } else if (event.key === 'Home') next = cells.indexOf(inside[0]);
-    else if (event.key === 'End') next = cells.indexOf(inside[inside.length - 1]);
+  };
+  const move = (event: KeyboardEvent, current: InteractiveSlot) => {
+    const index = inside.findIndex((slot) => slot.at === current.at);
+    let target: InteractiveSlot | undefined;
+    if (event.key === 'ArrowLeft') target = inside[index - 1];
+    else if (event.key === 'ArrowRight') target = inside[index + 1];
+    else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      const step = event.key === 'ArrowUp' ? -1 : 1;
+      for (let r = current.row + step; r >= 0 && r < rows.length; r += step) {
+        const match = inside.find((slot) => slot.row === r && slot.hour === current.hour);
+        if (match) {
+          target = match;
+          break;
+        }
+      }
+    } else if (event.key === 'Home') target = inside[0];
+    else if (event.key === 'End') target = inside[inside.length - 1];
     else return;
     event.preventDefault();
-    const target = cells[next];
-    if (!target || target.state === 'outside') return;
+    if (!target) return;
     setActive(target.at);
     setInspectedAt(target.at);
     grid.current?.querySelector<HTMLButtonElement>(`[data-at="${target.at}"]`)?.focus();
+  };
+  const renderOccurrence = (occ: HourOccurrence, rowIndex: number, hour: number) => (
+    <button
+      key={occ.at}
+      type="button"
+      className={styles.heatCell}
+      data-at={occ.at}
+      data-state={occ.state}
+      data-level={heatLevel(occ.value, maximum)}
+      tabIndex={occ.at === focusAt ? 0 : -1}
+      aria-label={describe(occ)}
+      onFocus={() => setInspectedAt(occ.at)}
+      onMouseEnter={() => setInspectedAt(occ.at)}
+      onKeyDown={(event) => move(event, { ...occ, row: rowIndex, hour })}
+      onClick={() => onSelect(occ.at)}
+    />
+  );
+  const formatTableCell = (cell: HourCell) => {
+    if (cell.state === 'skipped') return t('analytics.heatmap.skipped');
+    const occurrences = cellOccurrences(cell);
+    if (occurrences.length === 0) return '';
+    if (occurrences.length === 1) {
+      const [occ] = occurrences;
+      return occ.state === 'gap'
+        ? t('analytics.heatmap.unmeasured')
+        : analyticsNumber(occ.value, i18n.language);
+    }
+    return occurrences
+      .map(
+        (occ) =>
+          `${occ.state === 'gap' ? t('analytics.heatmap.unmeasured') : analyticsNumber(occ.value, i18n.language)} (${zoneName(zone, labelAt(occ.at), i18n.language)})`
+      )
+      .join(' / ');
   };
   return (
     <section className={`${styles.panel} ${styles.heatmap}`} aria-labelledby={id}>
@@ -141,31 +197,41 @@ export function HourHeatmap({
                 {hour % 3 === 0 ? hourLabel(hour) : ''}
               </span>
             ))}
-            {rows.map((row) => (
+            {rows.map((row, rowIndex) => (
               <div key={row.day} className={styles.heatRow}>
                 <span className={styles.heatDay} aria-hidden="true">
                   {dayLabel(row.day, i18n.language, zone)}
                 </span>
-                {row.cells.map((cell) =>
-                  cell.state === 'outside' ? (
-                    <span key={cell.at} className={styles.heatCell} data-state="outside" />
-                  ) : (
-                    <button
-                      key={cell.at}
-                      type="button"
-                      className={styles.heatCell}
-                      data-at={cell.at}
-                      data-state={cell.state}
-                      data-level={heatLevel(cell.value, maximum)}
-                      tabIndex={cell.at === focusAt ? 0 : -1}
-                      aria-label={describe(cell)}
-                      onFocus={() => setInspectedAt(cell.at)}
-                      onMouseEnter={() => setInspectedAt(cell.at)}
-                      onKeyDown={(event) => move(event, cell)}
-                      onClick={() => onSelect(cell.at)}
-                    />
-                  )
-                )}
+                {row.cells.map((cell, hour) => {
+                  if (cell.state === 'skipped') {
+                    return (
+                      <span
+                        key={`skipped-${row.day}-${hour}`}
+                        className={styles.heatCell}
+                        data-state="skipped"
+                        title={t('analytics.heatmap.skipped')}
+                      />
+                    );
+                  }
+                  const occurrences = cellOccurrences(cell);
+                  if (occurrences.length === 0) {
+                    return (
+                      <span
+                        key={`outside-${row.day}-${hour}`}
+                        className={styles.heatCell}
+                        data-state="outside"
+                      />
+                    );
+                  }
+                  if (occurrences.length === 1) {
+                    return renderOccurrence(occurrences[0], rowIndex, hour);
+                  }
+                  return (
+                    <span key={`split-${row.day}-${hour}`} className={styles.heatSplit}>
+                      {occurrences.map((occ) => renderOccurrence(occ, rowIndex, hour))}
+                    </span>
+                  );
+                })}
               </div>
             ))}
           </div>
@@ -189,7 +255,9 @@ export function HourHeatmap({
                 <thead>
                   <tr>
                     <th scope="col">
-                      {t('analytics.heatmap.day', { zone: zoneName(zone, from, i18n.language) })}
+                      {t('analytics.heatmap.day', {
+                        zone: rangeZoneLabel(zone, from, to, i18n.language),
+                      })}
                     </th>
                     {HOURS.map((hour) => (
                       <th key={hour} scope="col">
@@ -202,14 +270,8 @@ export function HourHeatmap({
                   {rows.map((row) => (
                     <tr key={row.day}>
                       <th scope="row">{dayLabel(row.day, i18n.language, zone)}</th>
-                      {row.cells.map((cell) => (
-                        <td key={cell.at}>
-                          {cell.state === 'outside'
-                            ? ''
-                            : cell.state === 'gap'
-                              ? t('analytics.heatmap.unmeasured')
-                              : analyticsNumber(cell.value, i18n.language)}
-                        </td>
+                      {row.cells.map((cell, hour) => (
+                        <td key={`${row.day}-${hour}`}>{formatTableCell(cell)}</td>
                       ))}
                     </tr>
                   ))}

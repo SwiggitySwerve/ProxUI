@@ -3177,6 +3177,8 @@
     "by_model": "依模型",
     "events_and_failures": "事件與失敗",
     "peak_in_flight": "按帳號的同時進行請求峰值",
+    "peak_in_flight_note": "此時間範圍內啟動的請求之最大同時進行數（開始時間 + 執行時長）。",
+    "peak_at": "峰值時間",
     "failed_count": "{{value}} 次失敗",
     "failed_for": "（{{label}}）",
     "failure_readout": "{{label}}：{{events}} 個事件，{{failed}} 個失敗",
@@ -3196,7 +3198,8 @@
       "daily": "小時圖需要按小時分桶。",
       "show_hourly": "按小時顯示",
       "keys": "方向鍵在小時之間移動；Enter 開啟該小時的請求。",
-      "day": "日期 ({{zone}})"
+      "day": "日期 ({{zone}})",
+      "skipped": "已略過（日光節約時間）"
     },
     "provider_split": {
       "title": "按供應商的權杖",

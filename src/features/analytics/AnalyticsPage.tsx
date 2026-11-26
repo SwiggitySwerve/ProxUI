@@ -32,7 +32,7 @@ import {
 import { AnalyticsViews } from './AnalyticsViews';
 import { ModelRates } from './ModelRates';
 import { RoutingView } from './RoutingView';
-import { browserZone, useAnalyticsZone, useDisplayZoneStore, zoneName } from './displayZone';
+import { browserZone, preferredZone, useDisplayZoneStore, zoneName } from './displayZone';
 import { usePrivacyStore } from '@/stores/usePrivacyStore';
 import { RequestTable } from './RequestTable';
 import { analyticsTime } from './format';
@@ -85,9 +85,10 @@ export function AnalyticsPage() {
   const [params, setParams] = useSearchParams();
   const location = useLocation();
   const revealEmails = usePrivacyStore((state) => state.revealEmails);
-  const zone = useAnalyticsZone();
   const utcChosen = useDisplayZoneStore((state) => state.utc);
   const setUtc = useDisplayZoneStore((state) => state.setUtc);
+  const [localZone] = useState(browserZone);
+  const targetZone = preferredZone(utcChosen, localZone);
   // The address wins, then the last view on this machine, then the defaults.
   const [saved] = useState(readAnalyticsUiState);
   const tab = analyticsTab(params.get('tab') ?? saved.tab ?? null);
@@ -97,10 +98,13 @@ export function AnalyticsPage() {
     buckets.find((value) => value === params.get('bucket')) ?? saved.bucket ?? 'auto';
   const urlProvider = addressProvider(params.get('provider'));
   const start = startingFilters(urlProvider, saved);
+  const [anchor, setAnchor] = useState(Date.now);
   const [pages, setPages] = useState<AnalyticsQuery[]>(() => [
-    { ...rangeQuery(range, Date.now(), bucket, zone), ...start },
+    { ...rangeQuery(range, anchor, bucket, targetZone), ...start },
   ]);
   const query = pages[pages.length - 1];
+  // The zone actually used for this range (UTC if chosen or if this range hits a part-hour offset).
+  const zone = query.time_zone;
   const [search, setSearch] = useState(start.search ?? '');
   // Keep tab, range and bucket in the address, so a copied link opens this exact view.
   useEffect(() => {
@@ -185,23 +189,27 @@ export function AnalyticsPage() {
   }, [tab]);
   const next = data ? nextPageQuery(query, data.requests) : null;
   // The query was last built for this view; a new view in the address rebuilds it once.
-  // A new zone rebuilds it too: Today, Yesterday and day buckets start at its midnight.
-  const builtFor = useRef(`${range}:${bucket}:${zone}`);
-  const applyView = useCallback((value: AnalyticsRange, size: AnalyticsBucket, inZone: string) => {
-    builtFor.current = `${value}:${size}:${inZone}`;
-    setBucketSelected(false);
-    setSelected(null);
-    const interval = rangeQuery(value, Date.now(), size, inZone);
-    setPages((current) => [
-      {
-        ...withoutCursor(current[current.length - 1]),
-        from_ms: interval.from_ms,
-        to_ms: interval.to_ms,
-        granularity: interval.granularity,
-        time_zone: interval.time_zone,
-      },
-    ]);
-  }, []);
+  // A new zone preference rebuilds it too: Today, Yesterday and day buckets start at its midnight.
+  const builtFor = useRef(`${range}:${bucket}:${targetZone}`);
+  const applyView = useCallback(
+    (value: AnalyticsRange, size: AnalyticsBucket, inZone: string, at = Date.now()) => {
+      builtFor.current = `${value}:${size}:${inZone}`;
+      setAnchor(at);
+      setBucketSelected(false);
+      setSelected(null);
+      const interval = rangeQuery(value, at, size, inZone);
+      setPages((current) => [
+        {
+          ...withoutCursor(current[current.length - 1]),
+          from_ms: interval.from_ms,
+          to_ms: interval.to_ms,
+          granularity: interval.granularity,
+          time_zone: interval.time_zone,
+        },
+      ]);
+    },
+    []
+  );
   // The address owns the provider too: one that arrives in it (a link, an edited address) starts
   // a fresh view, and otherwise the address follows the filter, so a copied link opens this view.
   const appliedProvider = useRef(query.provider);
@@ -220,12 +228,17 @@ export function AnalyticsPage() {
   useEffect(() => {
     if (holding) return;
     if (urlProvider && urlProvider !== appliedProvider.current) {
+      const now = Date.now();
       appliedProvider.current = urlProvider;
+      setAnchor(now);
       setBucketSelected(false);
       setSelected(null);
       setSearch('');
       setPages([
-        { ...rangeQuery(range, Date.now(), bucket, zone), ...startingFilters(urlProvider, {}) },
+        {
+          ...rangeQuery(range, now, bucket, targetZone),
+          ...startingFilters(urlProvider, {}),
+        },
       ]);
     } else if (urlProvider !== query.provider) {
       appliedProvider.current = query.provider;
@@ -239,14 +252,15 @@ export function AnalyticsPage() {
         { replace: true }
       );
     }
-  }, [holding, urlProvider, query.provider, range, bucket, zone, setParams]);
+  }, [holding, urlProvider, query.provider, range, bucket, targetZone, setParams]);
   // Pills, followed links and edited addresses all change the view through the address.
   useEffect(() => {
-    if (builtFor.current !== `${range}:${bucket}:${zone}`) applyView(range, bucket, zone);
-  }, [range, bucket, zone, applyView]);
+    if (builtFor.current !== `${range}:${bucket}:${targetZone}`)
+      applyView(range, bucket, targetZone);
+  }, [range, bucket, targetZone, applyView]);
   const resetRange = (value: AnalyticsRange, size = bucket) => {
     // Choosing the current view again re-applies it, clearing a chart drilldown.
-    if (value === range && size === bucket) return applyView(value, size, zone);
+    if (value === range && size === bucket) return applyView(value, size, targetZone);
     setParams(
       (previous) => {
         const next = new URLSearchParams(previous);
@@ -258,7 +272,9 @@ export function AnalyticsPage() {
     );
   };
   const reload = () => {
-    const interval = rangeQuery(range, Date.now(), bucket, zone);
+    const now = Date.now();
+    const interval = rangeQuery(range, now, bucket, targetZone);
+    setAnchor(now);
     setSelected(null);
     setBucketSelected(false);
     setPages([
@@ -274,30 +290,38 @@ export function AnalyticsPage() {
   };
   useHeaderRefresh(reload);
   const covered = shownWindow(query, data);
+  const fromZoneLabel = zoneName(zone, covered.from_ms, i18n.language);
+  const toZoneLabel = zoneName(zone, covered.to_ms, i18n.language);
+  // Probe local-zone eligibility and execute the toggle from the same anchor instant.
+  const localCandidate =
+    utcChosen && localZone !== 'UTC' ? rangeQuery(range, anchor, bucket, localZone) : null;
+  const canToggleZone =
+    zone !== 'UTC' || (localCandidate !== null && localCandidate.time_zone !== 'UTC');
+  const toggleZone = () => {
+    const nextUtc = !utcChosen;
+    setUtc(nextUtc);
+    applyView(range, bucket, preferredZone(nextUtc, localZone), anchor);
+  };
   return (
     <div className={styles.page}>
       <header className={styles.header}>
         <div className={styles.headline}>
           <h1>{t('analytics.title')}</h1>
           <p className={styles.scope}>
-            {analyticsTime(covered.from_ms, i18n.language, zone)} →{' '}
-            {analyticsTime(covered.to_ms, i18n.language, zone)}{' '}
-            {zoneName(zone, covered.to_ms, i18n.language)}
-            {!utcChosen && zone === 'UTC' && browserZone() !== 'UTC' && (
+            {analyticsTime(covered.from_ms, i18n.language, zone)}
+            {fromZoneLabel !== toZoneLabel ? ` ${fromZoneLabel}` : ''} →{' '}
+            {analyticsTime(covered.to_ms, i18n.language, zone)} {toZoneLabel}
+            {!utcChosen && zone === 'UTC' && localZone !== 'UTC' && (
               <span> · {t('analytics.zone.fallback')}</span>
             )}
             {/* One choice per browser: local time (the default) or UTC. */}
-            {(utcChosen || zone !== 'UTC') && (
+            {canToggleZone && (
               <>
                 {' · '}
-                <button
-                  type="button"
-                  className={styles.textButton}
-                  onClick={() => setUtc(!utcChosen)}
-                >
-                  {utcChosen
+                <button type="button" className={styles.textButton} onClick={toggleZone}>
+                  {utcChosen && localCandidate
                     ? t('analytics.zone.use_local', {
-                        zone: zoneName(browserZone(), query.to_ms, i18n.language),
+                        zone: zoneName(localZone, localCandidate.to_ms, i18n.language),
                       })
                     : t('analytics.zone.use_utc')}
                 </button>
@@ -426,7 +450,9 @@ export function AnalyticsPage() {
                   disabled={activeFilters === 0 && !bucketSelected}
                   title={t('analytics.clear_filters')}
                   onClick={() => {
-                    setPages([rangeQuery(range, Date.now(), bucket, zone)]);
+                    const now = Date.now();
+                    setAnchor(now);
+                    setPages([rangeQuery(range, now, bucket, targetZone)]);
                     setBucketSelected(false);
                     setSearch('');
                     setSelected(null);
@@ -605,7 +631,6 @@ export function AnalyticsPage() {
                 providerLabels={new Map(data.providers.map((p) => [p.key, p.label]))}
                 reveal={revealEmails}
                 zone={zone}
-                zoneLabel={zoneName(zone, query.to_ms, i18n.language)}
                 canPrevious={pages.length > 1}
                 canNext={next !== null}
                 onPrevious={() => {

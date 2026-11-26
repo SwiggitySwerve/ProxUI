@@ -69,10 +69,10 @@ function group(map: Map<number, Metrics>, key: number): Metrics {
   return metrics;
 }
 /**
- * Each credential's most requests in flight at once: at every request start, the requests of the
- * same credential that started earlier and had not finished (start + execution duration). A
- * request with no duration counts only at its own start. Requests that began before the range
- * are not seen, so this is a floor for the first minutes of the range.
+ * Each credential's most requests in flight at once among requests started in the range: at each
+ * distinct start timestamp, all previously started requests still running (end > ts) plus every
+ * request of that credential starting at ts. Equal-start events are batched so a missing or zero
+ * duration counts once at its start without depending on row order.
  */
 function readPeaks(
   db: Database,
@@ -81,6 +81,22 @@ function readPeaks(
 ): Map<string, { peak: number; at: number }> {
   const running = new Map<string, number[]>();
   const peaks = new Map<string, { peak: number; at: number }>();
+  const batch = new Map<string, { count: number; ends: number[] }>();
+  let currentTs: number | null = null;
+  const flushBatch = () => {
+    if (currentTs === null || batch.size === 0) return;
+    const ts = currentTs;
+    for (const [key, group] of batch) {
+      const ends = running.get(key) ?? running.set(key, []).get(key)!;
+      // Drop requests that finished at or before this start instant.
+      while (ends.length && ends[0] <= ts) heapPop(ends);
+      const inFlight = ends.length + group.count;
+      const best = peaks.get(key);
+      if (!best || inFlight > best.peak) peaks.set(key, { peak: inFlight, at: ts });
+      for (const end of group.ends) heapPush(ends, end);
+    }
+    batch.clear();
+  };
   let scanned = 0;
   for (const row of db
     .query<
@@ -97,14 +113,14 @@ function readPeaks(
     )
     .iterate(...filter.args)) {
     if ((++scanned & 4095) === 0) check();
+    if (currentTs !== null && row.ts_ms !== currentTs) flushBatch();
+    currentTs = row.ts_ms;
     const key = `${row.instance_id}:${row.auth_index_id}`;
-    const ends = running.get(key) ?? running.set(key, []).get(key)!;
-    // A min-heap of end times: drop the finished, add this one.
-    while (ends.length && ends[0] <= row.ts_ms) heapPop(ends);
-    heapPush(ends, row.ts_ms + Math.max(0, row.latency_ms ?? 0));
-    const best = peaks.get(key);
-    if (!best || ends.length > best.peak) peaks.set(key, { peak: ends.length, at: row.ts_ms });
+    const entry = batch.get(key) ?? batch.set(key, { count: 0, ends: [] }).get(key)!;
+    entry.count += 1;
+    if (row.latency_ms !== null && row.latency_ms > 0) entry.ends.push(row.ts_ms + row.latency_ms);
   }
+  flushBatch();
   return peaks;
 }
 function heapPush(heap: number[], value: number) {
@@ -286,9 +302,6 @@ export function queryAnalytics(
       // Each provider's share of each bucket, from the same rows as the totals, so it adds up.
       const providerBuckets = new Map<string, { provider: string; bucket: number; m: Metrics }>();
       const observed = new Map<string, { provider: string; id: string }>();
-      // Hourly answers also total events by local weekday and hour (Sunday = 0).
-      const weekly = q.granularity === 'hour' ? new Array<number>(7 * 24).fill(0) : null;
-      const weekSlot = new Map<number, number>();
       for (const row of rows) {
         const model = names.get(row.model_id)!;
         const provider = names.get(row.provider_id)!;
@@ -302,16 +315,16 @@ export function queryAnalytics(
         providerBuckets.get(split)!.m.add(row);
         // Keyed by dimension ids: labels are reported text and could collide when joined.
         observed.set(`${row.provider_id}:${row.model_id}`, { provider, id: model });
-        if (weekly) {
-          let slot = weekSlot.get(row.bucket);
-          if (slot === undefined) {
-            const local = new Date(
-              row.bucket + zoneOffsetMinutes(q.time_zone, row.bucket) * 60_000
-            );
-            slot = local.getUTCDay() * 24 + local.getUTCHours();
-            weekSlot.set(row.bucket, slot);
-          }
-          weekly[slot] += row.calls;
+      }
+      // Hourly answers also total events by local weekday and hour (Sunday = 0) from timeline.
+      let weekly: number[] | null = null;
+      if (q.granularity === 'hour') {
+        weekly = new Array<number>(7 * 24).fill(0);
+        for (const [bucket, metrics] of timeline) {
+          // A clipped first bucket uses its first instant inside [from_ms, to_ms) for local offset.
+          const at = Math.max(bucket, q.from_ms);
+          const local = new Date(at + zoneOffsetMinutes(q.time_zone, at) * 60_000);
+          weekly[local.getUTCDay() * 24 + local.getUTCHours()] += metrics.value.calls;
         }
       }
 

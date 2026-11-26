@@ -60,7 +60,8 @@ export function readAnalyticsGroups(
   const bucketOf = (bucket: number) => {
     if (!localDays) return bucket;
     let day = days.get(bucket);
-    if (day === undefined) days.set(bucket, (day = localDayStart(q.time_zone, bucket)));
+    if (day === undefined)
+      days.set(bucket, (day = localDayStart(q.time_zone, Math.max(bucket, q.from_ms))));
     return day;
   };
   const latency = new LatencyGroups();

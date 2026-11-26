@@ -3149,6 +3149,8 @@
     "by_model": "按模型",
     "events_and_failures": "事件与失败",
     "peak_in_flight": "按账号的同时进行请求峰值",
+    "peak_in_flight_note": "此时间范围内启动的请求的最大同时进行数（开始时间 + 执行时长）。",
+    "peak_at": "峰值时间",
     "failed_count": "{{value}} 次失败",
     "failed_for": "（{{label}}）",
     "failure_readout": "{{label}}：{{events}} 个事件，{{failed}} 个失败",
@@ -3168,7 +3170,8 @@
       "daily": "小时图需要按小时分桶。",
       "show_hourly": "按小时显示",
       "keys": "方向键在小时之间移动；Enter 打开该小时的请求。",
-      "day": "日期 ({{zone}})"
+      "day": "日期 ({{zone}})",
+      "skipped": "已跳过（夏令时）"
     },
     "provider_split": {
       "title": "按提供商的令牌",

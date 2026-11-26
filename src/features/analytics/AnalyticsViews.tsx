@@ -20,10 +20,10 @@ import {
 import { AnalyticsChart } from './AnalyticsChart';
 import { HourHeatmap } from './HourHeatmap';
 import { accountName } from './accountName';
-import { zoneName } from './displayZone';
+import { rangeZoneLabel, zoneName } from './displayZone';
 import { ProviderStackChart } from './ProviderStackChart';
 import { bucketTimeline, lineSegments, smoothPath } from './chartGeometry';
-import { analyticsCompact, analyticsMoney, analyticsNumber } from './format';
+import { analyticsCompact, analyticsMoney, analyticsNumber, analyticsTime } from './format';
 import type { AnalyticsTab } from './queryState';
 import { TrendChart, type TrendSeries } from './TrendChart';
 import styles from './AnalyticsPage.module.scss';
@@ -423,6 +423,7 @@ export function AnalyticsViews({
                 measured: bucket.present || data.coverage.raw_complete,
               }))}
               interval={interval}
+              from={data.from_ms}
               zone={zone}
               label={(provider) =>
                 data.providers.find((p) => p.key === provider)?.label ?? provider
@@ -463,11 +464,23 @@ export function AnalyticsViews({
             <div className={styles.chartGrid}>
               <AnalyticsChart
                 title={t('analytics.peak_in_flight')}
+                note={t('analytics.peak_in_flight_note')}
+                detailLabel={t('analytics.peak_at')}
                 format="exact"
                 data={data.accounts.map((account) => ({
                   key: JSON.stringify([account.instance, account.auth_index]),
-                  label: accountName(account, reveal, t),
+                  label: account.instance
+                    ? `${accountName(account, reveal, t)} · ${account.instance}`
+                    : accountName(account, reveal, t),
                   value: account.peak_in_flight,
+                  detail:
+                    typeof account.peak_at_ms === 'number' && Number.isFinite(account.peak_at_ms)
+                      ? `${analyticsTime(account.peak_at_ms, i18n.language, zone)} ${zoneName(
+                          zone,
+                          account.peak_at_ms,
+                          i18n.language
+                        )}`
+                      : undefined,
                   provider: account.providers.length === 1 ? account.providers[0] : undefined,
                 }))}
               />
@@ -477,7 +490,7 @@ export function AnalyticsViews({
           {tab === 'overview' && data.to_ms - data.from_ms > 3_600_000 && (
             <HourHeatmap
               title={t('analytics.heatmap.title', {
-                zone: zoneName(zone, data.to_ms, i18n.language),
+                zone: rangeZoneLabel(zone, data.from_ms, data.to_ms, i18n.language),
               })}
               zone={zone}
               weekly={data.weekly}

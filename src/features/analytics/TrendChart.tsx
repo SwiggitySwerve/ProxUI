@@ -73,10 +73,13 @@ export function TrendChart({
   const single = series.length === 1;
   const value = (index: number, v: number | null | undefined) =>
     analyticsNumber(v ?? null, i18n.language, series[index].currency);
-  const pointLabel = (point: TrendPoint) =>
-    `${analyticsTime(point.at, i18n.language, zone)} ${zoneName(zone, point.at, i18n.language)} · ${series
+  const labelAt = (at: number) => (daily ? at : Math.max(at, from));
+  const pointLabel = (point: TrendPoint) => {
+    const at = labelAt(point.at);
+    return `${analyticsTime(at, i18n.language, zone)} ${zoneName(zone, at, i18n.language)} · ${series
       .map((s, index) => `${s.label}: ${value(index, point.values[index])}`)
       .join(' · ')}`;
+  };
   const current = points.find((p) => p.at === inspected);
   const anyMeasured = measured.some(Boolean);
   // No measured value means no scale to show: an all-zero axis would read as real zeros.
@@ -366,11 +369,11 @@ export function TrendChart({
                             className={styles.textButton}
                             onClick={() => onSelect(point.at)}
                           >
-                            {analyticsTime(point.at, i18n.language, zone)}{' '}
-                            {zoneName(zone, point.at, i18n.language)}
+                            {analyticsTime(labelAt(point.at), i18n.language, zone)}{' '}
+                            {zoneName(zone, labelAt(point.at), i18n.language)}
                           </button>
                         ) : (
-                          `${analyticsTime(point.at, i18n.language, zone)} ${zoneName(zone, point.at, i18n.language)}`
+                          `${analyticsTime(labelAt(point.at), i18n.language, zone)} ${zoneName(zone, labelAt(point.at), i18n.language)}`
                         )}
                       </th>
                       {series.map((s, index) => (

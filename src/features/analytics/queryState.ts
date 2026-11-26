@@ -1,5 +1,11 @@
 import type { AnalyticsQuery, AnalyticsResponse } from '@/domain/analytics/types';
-import { localDayStart, nextLocalDay } from '@/domain/analytics/timeZone';
+import {
+  canonicalTimeZone,
+  isKnownTimeZone,
+  localDayStart,
+  nextLocalDay,
+  wholeHourZone,
+} from '@/domain/analytics/timeZone';
 
 export const ranges = ['1h', '24h', 'today', 'yesterday', '7d', '30d'] as const;
 export type AnalyticsRange = (typeof ranges)[number];
@@ -32,18 +38,26 @@ export function rangeQuery(
   bucket: AnalyticsBucket = 'auto',
   zone = 'UTC'
 ): AnalyticsQuery {
-  // Today and Yesterday are calendar days in the page's zone; prox-usage buckets days there too.
-  const midnight = localDayStart(zone, now);
-  const [from, to] =
-    range === 'today'
+  const bounds = (inZone: string): [number, number] => {
+    const midnight = localDayStart(inZone, now);
+    return range === 'today'
       ? [midnight, now]
       : range === 'yesterday'
-        ? [localDayStart(zone, midnight - 1), midnight]
+        ? [localDayStart(inZone, midnight - 1), midnight]
         : [now - rangeMilliseconds[range], now];
+  };
+  let effective = zone !== 'UTC' && isKnownTimeZone(zone) ? canonicalTimeZone(zone) : 'UTC';
+  let [from, to] = bounds(effective);
+  // Only fall back to UTC when this selected range contains a part-hour offset, and rebuild
+  // Today/Yesterday bounds in UTC when it does.
+  if (effective !== 'UTC' && !wholeHourZone(effective, from, to)) {
+    effective = 'UTC';
+    [from, to] = bounds('UTC');
+  }
   return {
     from_ms: from,
     to_ms: to,
-    time_zone: zone,
+    time_zone: effective,
     granularity: bucket !== 'auto' ? bucket : range === '7d' || range === '30d' ? 'day' : 'hour',
     outcome: 'all',
     limit: 25,
