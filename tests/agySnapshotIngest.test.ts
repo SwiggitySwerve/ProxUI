@@ -385,7 +385,7 @@ exit 0
       encoding: 'utf8',
     });
     expect(second.status).toBe(0);
-    expect(second.stderr).toContain('paused by stop flag');
+    expect(second.stderr).toContain('paused by circuit breaker');
   });
 
   test('trips stop flag and refuses to write if output contains an email address', () => {
@@ -397,7 +397,9 @@ ${withEmail}
 JSON
 `);
     expect(result.status).toBe(1);
-    expect(readFileSync(stopFlag, 'utf8')).toContain('validation-failed');
+    const flag = JSON.parse(readFileSync(stopFlag, 'utf8')) as { category: string; reason: string };
+    expect(flag.category).toBe('hard_stop');
+    expect(flag.reason).toBe('unexpected-email-in-output');
     expect(() => readFileSync(snapshotPath)).toThrow();
   });
 });

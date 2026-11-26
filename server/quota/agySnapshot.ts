@@ -192,3 +192,155 @@ export async function readAgySnapshotFile(
   if (!snapshot) return { kind: 'invalid' };
   return { kind: 'ok', mtimeMs: info.mtimeMs, snapshot };
 }
+
+export type AgyCircuitBreakerCategory = 'transient' | 'version_changed' | 'hard_stop';
+
+export interface AgyCircuitBreakerState {
+  open: boolean;
+  trippedAtMs?: number;
+  category?: AgyCircuitBreakerCategory;
+  reason?: string;
+  attempts?: number;
+  agyVersion?: string;
+}
+
+export interface AgyEventEntry {
+  at: string;
+  atMs: number;
+  event: string;
+  category: string;
+  reason: string;
+  agyVersion?: string;
+}
+
+export interface AgyStatusSnapshot {
+  snapshot: {
+    instanceId: string;
+    observedAtMs: number;
+    ageMs: number;
+    active: boolean;
+  } | null;
+  circuitBreaker: AgyCircuitBreakerState;
+  recentEvents: AgyEventEntry[];
+}
+
+const STOP_FLAG_MAX_BYTES = 16 * 1024;
+const EVENTS_FILE_MAX_BYTES = 128 * 1024;
+const MAX_RECENT_EVENTS = 20;
+const VALID_CATEGORIES = new Set<AgyCircuitBreakerCategory>([
+  'transient',
+  'version_changed',
+  'hard_stop',
+]);
+
+/** Read optional circuit-breaker stop flag; legacy or malformed flags report `hard_stop`. */
+export async function readAgyStopFlag(path: string): Promise<AgyCircuitBreakerState> {
+  let info;
+  try {
+    info = await stat(path);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return { open: false };
+    }
+    return { open: true, category: 'hard_stop', reason: 'unreadable-stop-flag' };
+  }
+  if (!info.isFile() || info.size > STOP_FLAG_MAX_BYTES) {
+    return {
+      open: true,
+      trippedAtMs: Math.floor(info.mtimeMs),
+      category: 'hard_stop',
+      reason: 'malformed-stop-flag',
+    };
+  }
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch {
+    return { open: true, category: 'hard_stop', reason: 'unreadable-stop-flag' };
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (isRecord(parsed)) {
+      const category =
+        typeof parsed.category === 'string' &&
+        VALID_CATEGORIES.has(parsed.category as AgyCircuitBreakerCategory)
+          ? (parsed.category as AgyCircuitBreakerCategory)
+          : 'hard_stop';
+      const reason = validText(parsed.reason, 128) ? parsed.reason.trim() : 'unknown';
+      const trippedAtMs =
+        typeof parsed.trippedAtMs === 'number' && Number.isSafeInteger(parsed.trippedAtMs)
+          ? parsed.trippedAtMs
+          : Math.floor(info.mtimeMs);
+      const attempts =
+        typeof parsed.attempts === 'number' &&
+        Number.isSafeInteger(parsed.attempts) &&
+        parsed.attempts >= 0
+          ? parsed.attempts
+          : 0;
+      const agyVersion = validText(parsed.agyVersion, 32) ? parsed.agyVersion.trim() : undefined;
+      return {
+        open: true,
+        trippedAtMs,
+        category,
+        reason,
+        attempts,
+        ...(agyVersion ? { agyVersion } : {}),
+      };
+    }
+  } catch {
+    // Legacy plain-text stop flag
+  }
+  return {
+    open: true,
+    trippedAtMs: Math.floor(info.mtimeMs),
+    category: 'hard_stop',
+    reason: 'legacy-stop-flag',
+  };
+}
+
+/** Read the newest sanitized events from `agy-events.jsonl`; never throws. */
+export async function readAgyRecentEvents(path: string): Promise<AgyEventEntry[]> {
+  let info;
+  try {
+    info = await stat(path);
+  } catch {
+    return [];
+  }
+  if (!info.isFile() || info.size <= 0 || info.size > EVENTS_FILE_MAX_BYTES) return [];
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch {
+    return [];
+  }
+  const events: AgyEventEntry[] = [];
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (!isRecord(parsed)) continue;
+      if (
+        !validText(parsed.at, 64) ||
+        typeof parsed.atMs !== 'number' ||
+        !Number.isSafeInteger(parsed.atMs) ||
+        !validText(parsed.event, 64) ||
+        !validText(parsed.category, 64) ||
+        !validText(parsed.reason, 128)
+      ) {
+        continue;
+      }
+      const agyVersion = validText(parsed.agyVersion, 32) ? parsed.agyVersion.trim() : undefined;
+      events.push({
+        at: parsed.at.trim(),
+        atMs: parsed.atMs,
+        event: parsed.event.trim(),
+        category: parsed.category.trim(),
+        reason: parsed.reason.trim(),
+        ...(agyVersion ? { agyVersion } : {}),
+      });
+    } catch {
+      continue;
+    }
+  }
+  return events.slice(-MAX_RECENT_EVENTS);
+}

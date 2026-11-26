@@ -1,0 +1,9 @@
+[Unit]
+Description=Trigger agy circuit-breaker check immediately when stop flag is written
+
+[Path]
+PathChanged=%h/.local/share/prox-history/agy-usage.stopped
+Unit=prox-agy-recover.service
+
+[Install]
+WantedBy=default.target

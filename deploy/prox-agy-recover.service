@@ -1,0 +1,8 @@
+[Unit]
+Description=Check agy circuit breaker, run bounded recovery probe, and restart timer
+After=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=150
+ExecStart=%h/.local/share/prox/prox-agy-recover.sh

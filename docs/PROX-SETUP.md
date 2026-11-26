@@ -84,15 +84,29 @@ Optionally, Gemini pool balances and forecasts can be fed from Google's own sign
 mounted at `/data/agy-usage.json` inside `prox-history`). `deploy/prox-agy-usage.sh`
 runs `agy --output-format json -p "/usage"` (zero turns, zero tokens) from an empty
 working directory, verifies the pinned `agy --version`, rejects any output containing an
-email address or missing `gemini-5h`/`gemini-weekly`, and writes a stop flag
-(`~/.local/share/prox-history/agy-usage.stopped`) on any unexpected failure so a timer
-never retries a failing account until cleared manually. `scripts/deploy-homelab.sh`
-installs `prox-agy-usage.service` and `prox-agy-usage.timer` (10-minute cadence,
-`Persistent=false`) disabled by default; enable with
-`systemctl --user enable --now prox-agy-usage.timer`. If no fresh snapshot arrives for
-30 minutes, `prox-history` marks the Gemini account disabled again so its stored history
-stays visible while the combined "All" forecast continues uninterrupted for Claude and
-Codex.
+email address or missing `gemini-5h`/`gemini-weekly`, emits structured events to
+`~/.local/share/prox-history/agy-events.jsonl` (and optional `AGY_EVENT_HOOK`), and
+writes a classified circuit-breaker flag (`~/.local/share/prox-history/agy-usage.stopped`)
+on any unexpected failure so the 10-minute timer stops calling `agy`.
+
+When the circuit breaker trips, `prox-agy-recover.path` (`PathChanged=`) immediately runs
+`deploy/prox-agy-recover.sh`, and `prox-agy-recover.timer` runs every 30 minutes:
+- `hard_stop` (403/TOS/auth error, email in output, non-zero turns) and `version_changed`
+  never auto-probe; they emit `recovery_check_deferred` and wait for manual inspection.
+- `transient` failures (timeout, network error) wait out a 30-minute cooldown, then run
+  at most **one** bounded recovery probe. If the probe passes, it clears the stop flag,
+  restarts `prox-agy-usage.timer`, and emits `recovery_check_passed` + `timer_restarted`.
+  If the probe fails again, it escalates to `hard_stop` and emits `recovery_check_escalated`.
+- When no stop flag exists, the 30-minute timer also acts as a watchdog and restarts an
+  enabled `prox-agy-usage.timer` if it stopped unexpectedly.
+
+`GET /v1/agy-status` (authenticated with the management key) returns the snapshot age,
+circuit-breaker state, and recent events. `scripts/deploy-homelab.sh` installs all
+`prox-agy-*` units disabled by default; enable with
+`systemctl --user enable --now prox-agy-usage.timer prox-agy-recover.path prox-agy-recover.timer`.
+If no fresh snapshot arrives for 30 minutes, `prox-history` marks the Gemini account
+disabled again so its stored history stays visible while the combined "All" forecast
+continues uninterrupted for Claude and Codex.
 
 The checked-in source manifest, `deploy/provider-sources.json`, owns instance
 membership, ports, paths, aliases, and explicit authentication-sharing scopes.
