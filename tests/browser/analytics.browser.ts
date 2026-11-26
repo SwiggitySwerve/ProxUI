@@ -498,6 +498,44 @@ test('a background update that drops the focused hour moves focus to the map’s
   await expect(map.locator('button[tabindex="0"]')).toBeFocused();
 });
 
+test('the tokens-by-provider table has every slot once opened, unmeasured ones said', async ({
+  page,
+  app,
+}) => {
+  await app.login();
+  await app.loaded();
+  await app.tab('Tokens & Cache');
+  const chart = page.locator('section').filter({
+    has: page.getByRole('heading', { name: 'Tokens by provider', exact: true }),
+  });
+  await chart.getByText('View data table', { exact: true }).click();
+  // A day of hours (the test clock sits on the hour): 24 slots, one not returned (partial coverage).
+  await expect(chart.locator('tbody tr')).toHaveCount(24);
+  await expect(chart.locator('tbody td', { hasText: 'not measured' }).first()).toBeVisible();
+});
+
+test('tokens-by-provider labels stay inside the panel on a phone, a month of hours included', async ({
+  page,
+  app,
+}) => {
+  await app.login();
+  await app.loaded();
+  await app.tab('Tokens & Cache');
+  await app.change(() => page.getByRole('button', { name: 'Last 30 days', exact: true }).click());
+  await app.change(() => page.getByRole('button', { name: 'Hourly', exact: true }).click());
+  await page.setViewportSize({ width: 390, height: 844 });
+  const chart = page.locator('section').filter({
+    has: page.getByRole('heading', { name: 'Tokens by provider', exact: true }),
+  });
+  const outside = await chart.evaluate((section) => {
+    const panel = section.getBoundingClientRect();
+    return [...section.querySelectorAll('[class*=stackTicks] span')]
+      .map((label) => label.getBoundingClientRect())
+      .filter((box) => box.left < panel.left || box.right > panel.right).length;
+  });
+  expect(outside).toBe(0);
+});
+
 test('logging out while analytics is pending hides the previous session', async ({ page, app }) => {
   await app.login();
   await app.loaded();

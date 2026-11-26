@@ -68,3 +68,63 @@ describe('tokens by provider', () => {
     expect(markup).toContain('data-state="gap"');
   });
 });
+
+describe('tokens by provider at scale and in the table', () => {
+  const DAY = 24 * HOUR;
+  const chart = (hours: number, measured = (i: number) => i !== 1) =>
+    renderToStaticMarkup(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(ProviderStackChart, {
+          title: 'Tokens by provider',
+          split: [part('claude', 0, 10)],
+          buckets: Array.from({ length: hours }, (_, i) => ({
+            at: from + i * HOUR,
+            measured: measured(i),
+          })),
+          interval: HOUR,
+          label: (provider) => provider.toUpperCase(),
+        })
+      )
+    );
+
+  test('many bars drop their gaps; a day of hours keeps them', () => {
+    expect(chart(30 * 24)).toContain('data-dense="true"');
+    expect(chart(24)).not.toContain('data-dense');
+  });
+
+  test('hours over several days are labelled with the date at UTC midnights', () => {
+    const markup = chart(3 * 24);
+    const ticks = markup.slice(markup.lastIndexOf('<div', markup.indexOf('Jan 2<')));
+    for (const day of ['Jan 2', 'Jan 3', 'Jan 4']) expect(ticks).toContain(`>${day}</span>`);
+    expect(markup).not.toMatch(/>\d\d:\d\d<\/span>/);
+    expect(from % DAY).toBe(0);
+  });
+
+  test('the table mounts its rows only when first opened', () => {
+    const markup = chart(3);
+    const table = markup.slice(markup.indexOf('<table'));
+    expect(table).toContain('<th scope="col">CLAUDE</th>');
+    expect(table).not.toContain('<th scope="row">');
+  });
+
+  test('a rolling day (25 hourly slots) keeps hour labels; longer windows name dates', () => {
+    const markup = chart(25);
+    expect(markup).toMatch(/>\d\d:\d\d<\/span>/);
+    expect(markup).not.toContain('>Jan 2</span>');
+  });
+});
+
+test('the UI fixture split adds up to its timeline in every counter, zero scenario included', async () => {
+  const { analyticsScenario } = await import('./fixtures/analyticsUi');
+  const { rangeQuery } = await import('../src/features/analytics/queryState');
+  for (const scenario of ['ready', 'zero'] as const) {
+    const data = analyticsScenario(scenario, rangeQuery('24h', Date.UTC(2026, 9, 29, 12)));
+    for (const point of data.timeline) {
+      const parts = data.provider_timeline!.filter((p) => p.bucket_ms === point.bucket_ms);
+      for (const key of ['calls', 'failure_calls', 'total_tokens', 'reasoning_tokens'] as const)
+        expect(parts.reduce((sum, p) => sum + p[key], 0)).toBe(point[key]);
+    }
+  }
+});

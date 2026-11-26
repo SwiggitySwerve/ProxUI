@@ -1448,6 +1448,9 @@ button.heatCell {
   border-top: 1px dashed var(--border-color);
   border-bottom: 1px solid var(--border-color);
 }
+.stackBars[data-dense='true'] {
+  gap: 0;
+}
 // A bucket: its provider parts stacked from the baseline.
 .stackBar {
   display: flex;
