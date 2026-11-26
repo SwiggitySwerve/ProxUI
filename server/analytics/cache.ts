@@ -43,6 +43,8 @@ interface Entry {
   inflight?: Promise<Outcome>;
   // The inflight recompute was started by a Refresh, so another Refresh may share it.
   inflightFresh?: boolean;
+  // The exact window that recompute asked for.
+  inflightQuery?: Query;
   // Sequence number of the newest recompute whose result was taken (or kept out as a blip);
   // an older one never replaces it.
   applied: number;
@@ -112,7 +114,12 @@ export function createSnapshotCache(
    * newer wins.
    */
   function refresh(key: string, entry: Entry, query: Query, supersede = false): Promise<Outcome> {
-    if (entry.inflight && (!supersede || entry.inflightFresh)) return entry.inflight;
+    // A Refresh asks for its exact window, so it shares another Refresh only for the same bounds:
+    // a chart drilldown into the current hour and a rolling "last hour" have one key.
+    const sameWindow =
+      entry.inflightQuery?.from_ms === query.from_ms && entry.inflightQuery?.to_ms === query.to_ms;
+    if (entry.inflight && (!supersede || (entry.inflightFresh && sameWindow)))
+      return entry.inflight;
     const started = clock();
     const mine = ++sequence;
     entry.tried = started;
@@ -144,6 +151,7 @@ export function createSnapshotCache(
     });
     entry.inflight = work;
     entry.inflightFresh = supersede;
+    entry.inflightQuery = query;
     void work.finally(() => {
       if (entry.inflight === work) entry.inflight = undefined;
     });

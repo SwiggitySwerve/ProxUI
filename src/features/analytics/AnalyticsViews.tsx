@@ -18,6 +18,7 @@ import {
   IconUpload,
 } from '@/components/ui/icons';
 import { AnalyticsChart } from './AnalyticsChart';
+import { HourHeatmap } from './HourHeatmap';
 import { bucketTimeline, lineSegments, smoothPath } from './chartGeometry';
 import { analyticsCompact, analyticsMoney, analyticsNumber } from './format';
 import type { AnalyticsTab } from './queryState';
@@ -136,6 +137,7 @@ export function AnalyticsViews({
   onModel,
   onProvider,
   failures,
+  onShowHourly,
 }: {
   tab: View;
   data: AnalyticsResponse;
@@ -144,6 +146,8 @@ export function AnalyticsViews({
   onProvider: (provider: string) => void;
   /** Overview draws failed events in its breakdowns; absent when an outcome filter is set. */
   failures?: { onModel: (model: string) => void; onProvider: (provider: string) => void };
+  /** Switches the page to hourly buckets, which the hour map needs. */
+  onShowHourly: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const interval = data.granularity === 'day' ? 86_400_000 : 3_600_000;
@@ -419,6 +423,19 @@ export function AnalyticsViews({
               failures={failureSplit && { onSelect: failureSplit.onModel }}
             />
           </div>
+          {/* One hour has nothing to compare; Today at noon already has twelve. */}
+          {tab === 'overview' && data.to_ms - data.from_ms > 3_600_000 && (
+            <HourHeatmap
+              title={t('analytics.heatmap.title')}
+              // The page's hourly series: quiet hours are zeros only with complete coverage.
+              points={new Map(hourly('calls').map((point) => [point.at, point.value]))}
+              from={data.from_ms}
+              to={data.to_ms}
+              hourly={data.granularity === 'hour'}
+              onSelect={onBucket}
+              onShowHourly={onShowHourly}
+            />
+          )}
         </>
       )}
     </>

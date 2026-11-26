@@ -1320,3 +1320,89 @@
     margin-top: 12px;
   }
 }
+
+// Events by hour: one row per UTC day, one column per hour.
+.heatmap {
+  margin-top: 14px;
+}
+.heatGrid {
+  display: grid;
+  grid-template-columns: max-content repeat(24, minmax(0, 1fr));
+  gap: 2px;
+  align-items: center;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.heatRow {
+  display: contents;
+}
+.heatDay {
+  padding-right: 8px;
+  white-space: nowrap;
+}
+.heatHour {
+  text-align: left;
+  white-space: nowrap;
+}
+.heatCell {
+  display: block;
+  min-width: 0;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: var(--bg-tertiary);
+  &[data-level='1'] {
+    background: color-mix(in srgb, var(--analytics-requests) 22%, var(--bg-tertiary));
+  }
+  &[data-level='2'] {
+    background: color-mix(in srgb, var(--analytics-requests) 45%, var(--bg-tertiary));
+  }
+  &[data-level='3'] {
+    background: color-mix(in srgb, var(--analytics-requests) 70%, var(--bg-tertiary));
+  }
+  &[data-level='4'] {
+    background: var(--analytics-requests);
+  }
+  // Unmeasured hours are hatched, never drawn as zero.
+  &[data-state='gap'] {
+    background: repeating-linear-gradient(135deg, var(--bg-tertiary) 0 2px, transparent 2px 4px);
+  }
+  &[data-state='outside'] {
+    background: transparent;
+  }
+}
+// A 24-column grid cannot hold 44px touch targets; the table and arrow keys reach every hour.
+// Same specificity as the touch rule above and later in the file, so this wins.
+.page button.heatCell,
+button.heatCell {
+  min-height: 0;
+  cursor: pointer;
+  &:hover {
+    outline: 1px solid var(--text-secondary);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 1px;
+  }
+}
+.heatFooter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  margin-top: 8px;
+}
+.heatScale {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  .heatCell {
+    width: 14px;
+    height: 10px;
+  }
+}

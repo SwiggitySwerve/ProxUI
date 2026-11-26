@@ -123,3 +123,44 @@ export function smoothPath(points: Array<[number, number]>) {
   }
   return path;
 }
+
+export type HourCellState = 'value' | 'gap' | 'outside';
+export interface HourCell {
+  at: number;
+  value: number | null;
+  state: HourCellState;
+}
+/**
+ * Hourly values as one row per UTC day and one column per UTC hour. Hours outside the window are
+ * `outside`; an in-window hour with no value is a `gap`. The caller decides which absent hours
+ * are quiet zeros (the page's hourly series already does), so that rule lives in one place.
+ */
+export function hourGrid(
+  values: ReadonlyMap<number, number | null>,
+  from: number,
+  to: number
+): { day: number; cells: HourCell[] }[] {
+  const HOUR = 3_600_000;
+  const DAY = 24 * HOUR;
+  const rows: { day: number; cells: HourCell[] }[] = [];
+  if (to <= from) return rows;
+  for (let day = Math.floor(from / DAY) * DAY; day < to; day += DAY) {
+    const cells: HourCell[] = [];
+    for (let hour = 0; hour < 24; hour++) {
+      const at = day + hour * HOUR;
+      const value = values.get(at) ?? null;
+      cells.push({
+        at,
+        value,
+        state: at + HOUR <= from || at >= to ? 'outside' : value === null ? 'gap' : 'value',
+      });
+    }
+    rows.push({ day, cells });
+  }
+  return rows;
+}
+/** Four shades above zero, so a cell reads as a band rather than an exact amount. */
+export function heatLevel(value: number | null, maximum: number): 0 | 1 | 2 | 3 | 4 {
+  if (!value || value <= 0 || maximum <= 0) return 0;
+  return Math.min(4, Math.max(1, Math.ceil((value / maximum) * 4))) as 1 | 2 | 3 | 4;
+}

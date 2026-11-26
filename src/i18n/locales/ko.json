@@ -3151,6 +3151,15 @@
     "failed_count": "{{value}}건 실패",
     "failed_for": "({{label}})",
     "failure_readout": "{{label}}: 이벤트 {{events}}건, 실패 {{failed}}건",
+    "heatmap": {
+      "title": "시간별 이벤트 · UTC",
+      "events": "이벤트 {{value}}건",
+      "unmeasured": "측정 안 됨",
+      "daily": "시간 지도에는 시간 단위 버킷이 필요합니다.",
+      "show_hourly": "시간별로 보기",
+      "keys": "화살표 키로 시간을 이동하고 Enter로 해당 시간의 요청을 엽니다.",
+      "day": "날짜 (UTC)"
+    },
     "timestamp": "시간 · UTC",
     "provider_model": "제공업체 / 모델",
     "tokens_in_out": "입력 / 출력 토큰",

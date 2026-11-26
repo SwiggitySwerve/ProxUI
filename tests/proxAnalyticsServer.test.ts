@@ -560,6 +560,30 @@ describe('ProxUI analytics bridge', () => {
         f.clean();
       }
     });
+    test('a Refresh shares a running Refresh only for the same exact window', async () => {
+      const f = fixture();
+      try {
+        const bypass = { 'Cache-Control': 'no-cache' };
+        const release = f.holdCpa();
+        const first = f.handler(request(view(f, 3_600_000), undefined, bypass));
+        await Bun.sleep(10);
+        // Same bounds: shares the running recompute.
+        const same = f.handler(request(view(f, 3_600_000), undefined, bypass));
+        await Bun.sleep(10);
+        expect(f.cpaCalls()).toBe(1);
+        // Same length but other bounds (an hour drilldown beside a rolling last hour): its own.
+        f.advance(60_000);
+        const shifted = f.handler(request(view(f, 3_600_000), undefined, bypass));
+        await Bun.sleep(10);
+        expect(f.cpaCalls()).toBe(2);
+        release();
+        expect((await Promise.all([first, same, shifted])).map((r) => r.status)).toEqual([
+          200, 200, 200,
+        ]);
+      } finally {
+        f.clean();
+      }
+    });
     test('a Refresh supersedes a background recompute: it starts at once, and the older result never overwrites it', async () => {
       const f = fixture();
       try {

@@ -1,5 +1,6 @@
 import { test, expect } from './analyticsHarness';
-import type { AnalyticsScenario } from '../fixtures/analyticsUi';
+import { analyticsScenario, type AnalyticsScenario } from '../fixtures/analyticsUi';
+import type { AnalyticsQuery } from '../../src/domain/analytics/types';
 import { analyticsViewports } from './analyticsViewports';
 
 const tabs = ['Overview', 'Tokens & Cache', 'Cost', 'Performance', 'Requests', 'Model Rates'];
@@ -428,6 +429,73 @@ test('after a drilldown, a hand-edited address still drives the provider', async
     'true'
   );
   await expect(provider).toHaveValue('codex');
+});
+
+test('the hour map opens an hour’s requests, and a daily view switches to hours', async ({
+  page,
+  app,
+}) => {
+  await app.login();
+  await app.loaded();
+  const map = page.locator('section').filter({
+    has: page.getByRole('heading', { name: 'Events by hour · UTC', exact: true }),
+  });
+  // One tab stop: the busiest hour. Arrow keys move, Enter opens.
+  const start = map.locator('button[tabindex="0"]');
+  await start.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(map.locator('output')).toContainText('UTC:');
+  // The hour is asked for exactly, never answered from a warm snapshot of another hour.
+  const asked = page.waitForRequest((request) => request.url().endsWith('/prox/analytics'));
+  await app.change(() => page.keyboard.press('Enter'));
+  expect((await asked).headers()['cache-control']).toBe('no-cache');
+  await expect(page.getByRole('tab', { name: 'Requests', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  );
+  expect(app.queries.at(-1)!.to_ms - app.queries.at(-1)!.from_ms).toBe(3_600_000);
+  await app.tab('Overview');
+  await app.change(() => page.getByRole('button', { name: 'Last 7 days', exact: true }).click());
+  await map.getByRole('button', { name: 'Show by hour', exact: true }).focus();
+  await app.change(() => page.keyboard.press('Enter'));
+  // The prompt unmounts while hours load; focus stays in the panel.
+  await expect(page.locator('#analytics-panel')).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Hourly', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  );
+  expect(app.queries.at(-1)).toMatchObject({ granularity: 'hour' });
+  expect(app.queries.at(-1)!.to_ms - app.queries.at(-1)!.from_ms).toBe(7 * 86_400_000);
+});
+
+test('a background update that drops the focused hour moves focus to the map’s tab stop', async ({
+  page,
+  app,
+}) => {
+  // The first answer is an old snapshot, so the page re-checks the same query in the background;
+  // the re-check answers with a window three hours later, which no longer holds the first hours.
+  let answers = 0;
+  await page.route('**/prox/analytics', async (route) => {
+    const query = route.request().postDataJSON() as AnalyticsQuery;
+    const shift = answers++ === 0 ? 0 : 3 * 3_600_000;
+    const body = analyticsScenario('ready', {
+      ...query,
+      from_ms: query.from_ms + shift,
+      to_ms: query.to_ms + shift,
+    });
+    if (shift === 0) body.generated_at_ms = query.to_ms - 600_000;
+    await route.fulfill({ json: body, headers: { 'X-CPA-Version': 'v8.0.44' } });
+  });
+  await app.login();
+  await app.loaded();
+  const map = page.locator('section').filter({
+    has: page.getByRole('heading', { name: 'Events by hour · UTC', exact: true }),
+  });
+  await map.locator('button[tabindex="0"]').focus();
+  await page.keyboard.press('Home');
+  const first = await page.evaluate(() => document.activeElement?.getAttribute('data-at'));
+  await expect(map.locator(`[data-at="${first}"]`)).toHaveCount(0, { timeout: 20_000 });
+  await expect(map.locator('button[tabindex="0"]')).toBeFocused();
 });
 
 test('logging out while analytics is pending hides the previous session', async ({ page, app }) => {

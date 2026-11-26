@@ -3161,6 +3161,15 @@
     "failed_count": "сбоев: {{value}}",
     "failed_for": "— {{label}}",
     "failure_readout": "{{label}}: событий {{events}}, сбоев {{failed}}",
+    "heatmap": {
+      "title": "События по часам · UTC",
+      "events": "событий: {{value}}",
+      "unmeasured": "нет измерений",
+      "daily": "Для карты часов нужны часовые интервалы.",
+      "show_hourly": "Показать по часам",
+      "keys": "Стрелки переходят между часами; Enter открывает запросы за этот час.",
+      "day": "День (UTC)"
+    },
     "timestamp": "Время · UTC",
     "provider_model": "Провайдер / модель",
     "tokens_in_out": "Входные / выходные токены",
