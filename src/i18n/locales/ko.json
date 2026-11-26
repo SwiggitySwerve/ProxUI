@@ -3105,6 +3105,7 @@
       "tokens": "토큰 및 캐시",
       "cost": "비용",
       "performance": "성능",
+      "routing": "라우팅",
       "requests": "요청",
       "rates": "모델 요금"
     },
@@ -3167,6 +3168,17 @@
       "none": "토큰 없음",
       "unmeasured": "측정 안 됨",
       "open_quota": "할당량에서 {{provider}} 열기"
+    },
+    "routing": {
+      "title": "각 모델을 처리한 계정",
+      "help": "이 범위의 모델·계정별 이벤트입니다. 계정은 인증 파일에서, 모델은 요청에서 열립니다.",
+      "model": "모델",
+      "credential": "자격 증명 {{index}}",
+      "unattributed": "귀속되지 않음",
+      "open_account": "인증 파일에서 열기",
+      "account_totals": "이벤트 {{events}}건 · 실패 {{failed}}건",
+      "cell": "이벤트 {{events}}건, 실패 {{failed}}건",
+      "unsupported": "이 서버는 아직 계정을 보고하지 않습니다."
     },
     "timestamp": "시간 · UTC",
     "provider_model": "제공업체 / 모델",

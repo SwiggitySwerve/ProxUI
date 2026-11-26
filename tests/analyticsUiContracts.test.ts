@@ -216,7 +216,7 @@ describe('Analytics remembered view', () => {
 });
 
 describe('Analytics SSR presentation', () => {
-  test('six tabs remain reachable and the authenticated sidebar includes Analytics under Observe', () => {
+  test('seven tabs remain reachable and the authenticated sidebar includes Analytics under Observe', () => {
     const markup = renderToStaticMarkup(
       createElement(
         MemoryRouter,
@@ -224,7 +224,7 @@ describe('Analytics SSR presentation', () => {
         createElement(AnalyticsPage)
       )
     );
-    expect(markup.match(/role="tab"/g) ?? []).toHaveLength(6);
+    expect(markup.match(/role="tab"/g) ?? []).toHaveLength(7);
     expect(markup).toContain('id="analytics-tab-cost" role="tab" aria-selected="true"');
     expect(markup).toContain('Loading analytics');
     const layout = read('src/components/layout/MainLayout.tsx');

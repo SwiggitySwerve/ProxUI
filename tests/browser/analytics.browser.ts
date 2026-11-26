@@ -211,13 +211,17 @@ test('request detail shows the search-matched fields and copies the ids', async 
   await failure.focus();
   await expect(failure).toBeFocused();
   expect(await failure.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  // Show emails is off by default, so the credential file is copied as shown: masked.
   for (const [label, text] of [
     ['Response trace ID', 'synthetic-header-trace-'],
-    ['Credential file', 'synthetic-credential-file-'],
+    ['Credential file', 'syn•••'],
   ]) {
     await dialog.getByRole('button', { name: `Copy ${label}`, exact: true }).click();
     expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(text);
   }
+  expect(await page.evaluate(() => navigator.clipboard.readText())).not.toContain(
+    'synthetic-credential-file-synthetic'
+  );
   await page.keyboard.press('Escape');
 });
 

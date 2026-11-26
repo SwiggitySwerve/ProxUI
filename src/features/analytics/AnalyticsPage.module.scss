@@ -1487,3 +1487,51 @@ button.heatCell {
     white-space: nowrap;
   }
 }
+
+// Model × account: cells shaded by events, like the hour map.
+.routing > p {
+  margin: 4px 0 10px;
+}
+.routingTable {
+  th,
+  td {
+    white-space: nowrap;
+  }
+  thead th {
+    vertical-align: bottom;
+    > small {
+      display: block;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+  }
+}
+.routingAccount {
+  display: inline-flex;
+  align-items: center;
+}
+.routingCell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  &[data-level='1'] {
+    background: color-mix(in srgb, var(--analytics-requests) 10%, transparent);
+  }
+  &[data-level='2'] {
+    background: color-mix(in srgb, var(--analytics-requests) 20%, transparent);
+  }
+  &[data-level='3'] {
+    background: color-mix(in srgb, var(--analytics-requests) 32%, transparent);
+  }
+  &[data-level='4'] {
+    background: color-mix(in srgb, var(--analytics-requests) 45%, transparent);
+  }
+}
+.routingSource {
+  display: inline;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+.routingFailed {
+  display: block;
+  color: var(--viz-failure);
+}

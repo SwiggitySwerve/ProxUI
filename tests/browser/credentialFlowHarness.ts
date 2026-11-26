@@ -165,6 +165,10 @@ export class CredentialFlow {
         if (request.method() === 'GET') {
           if (path === '/config') return reply(config);
           if (path === '/auth-files') return reply({ files: [] });
+          // These fake hubs predate the provider catalog; an older ProxD answers 404 and the
+          // screens add no catalog providers.
+          if (path === '/providers')
+            return route.fulfill({ status: 404, json: { error: 'not found' } });
           if (path === '/config/access/api-keys') return reply(['synthetic-client-key']);
           if (path === '/usage') return reply({ usage: { total_requests: 0, apis: {} } });
           if (path === '/api-key-usage') return reply({});

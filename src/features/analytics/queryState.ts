@@ -17,6 +17,7 @@ export const analyticsTabs = [
   'tokens',
   'cost',
   'performance',
+  'routing',
   'requests',
   'rates',
 ] as const;

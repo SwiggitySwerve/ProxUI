@@ -43,7 +43,7 @@ export function quotaTargetsForList(
   files: AuthFileItem[],
   filters: Pick<
     AuthFilesFilters,
-    'provider' | 'statusFilterMode' | 'search' | 'sortMode' | 'pageSize'
+    'provider' | 'statusFilterMode' | 'search' | 'sortMode' | 'pageSize' | 'match'
   >,
   page: number,
   quotaFilter: AuthFileQuotaFilter
@@ -59,7 +59,7 @@ export function quotaTargetsShown(
   files: AuthFileItem[],
   filters: Pick<
     AuthFilesFilters,
-    'provider' | 'statusFilterMode' | 'search' | 'sortMode' | 'pageSize'
+    'provider' | 'statusFilterMode' | 'search' | 'sortMode' | 'pageSize' | 'match'
   >,
   quotaFilter: AuthFileQuotaFilter
 ): QuotaFileEntry[] {

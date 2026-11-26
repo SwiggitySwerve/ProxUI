@@ -3103,6 +3103,7 @@
       "tokens": "令牌与缓存",
       "cost": "成本",
       "performance": "性能",
+      "routing": "路由",
       "requests": "请求",
       "rates": "模型费率"
     },
@@ -3165,6 +3166,17 @@
       "none": "无令牌",
       "unmeasured": "未测量",
       "open_quota": "在配额中打开 {{provider}}"
+    },
+    "routing": {
+      "title": "每个模型由哪个账号处理",
+      "help": "此范围内按模型和账号的事件。账号在认证文件中打开；模型打开其请求。",
+      "model": "模型",
+      "credential": "凭据 {{index}}",
+      "unattributed": "未归属",
+      "open_account": "在认证文件中打开",
+      "account_totals": "{{events}} 个事件 · {{failed}} 个失败",
+      "cell": "{{events}} 个事件，{{failed}} 个失败",
+      "unsupported": "此服务器尚未报告账号。"
     },
     "timestamp": "时间 · UTC",
     "provider_model": "提供商 / 模型",

@@ -42,7 +42,7 @@ type Metric =
   | 'cost'
   | 'priced_calls'
   | 'unpriced_calls';
-type View = Exclude<AnalyticsTab, 'rates' | 'requests'>;
+type View = Exclude<AnalyticsTab, 'rates' | 'requests' | 'routing'>;
 
 /** One colour per charted metric on every tab, never a provider, status or warning colour. */
 const METRIC_COLOR: Partial<Record<Metric, string>> = {

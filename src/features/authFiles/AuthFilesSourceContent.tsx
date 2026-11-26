@@ -45,6 +45,7 @@ import {
   OTHER_PROVIDER_GROUP,
   UNKNOWN,
   deletableShown,
+  forSource,
   healthParts,
   listLoadState,
   modelsScreenPath,
@@ -186,7 +187,7 @@ export function GroupMenu({
 export function AuthFilesSourceContent({
   hidden,
   pageEmpty,
-  filters,
+  filters: pageFilters,
   onClearFilters,
   registerRefresh,
   registerUpload,
@@ -207,14 +208,20 @@ export function AuthFilesSourceContent({
 }) {
   const { t } = useTranslation();
   const sourceScope = useAuthFilesSource();
+  // This group's view of the page filters: a pinned credential shows on its own source only.
+  const filters = useMemo(
+    () => forSource(pageFilters, sourceScope.source.instanceId),
+    [pageFilters, sourceScope.source.instanceId]
+  );
   const { showNotification } = useAuthFilesNotifications();
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const pageTransitionLayer = usePageTransitionLayer();
   const isCurrentLayer = pageTransitionLayer ? pageTransitionLayer.status === 'current' : true;
   const navigate = useNavigate();
+  const matchKey = JSON.stringify(filters.match ?? null);
   const [page, setPage] = useState(1);
   // Every filter change returns this group to its first page.
-  useEffect(() => setPage(1), [filters.revision]);
+  useEffect(() => setPage(1), [filters.revision, matchKey]);
 
   const {
     modelsModalOpen,
@@ -358,7 +365,13 @@ export function AuthFilesSourceContent({
   /* ---------- filter / sort / group / paginate ---------- */
 
   // Batch actions act on what is selected: a filter change clears it, so nothing hidden is hit.
-  const filterKey = [filters.provider, filters.statusFilterMode, filters.search, hidden].join('\n');
+  const filterKey = [
+    filters.provider,
+    filters.statusFilterMode,
+    filters.search,
+    matchKey,
+    hidden,
+  ].join('\n');
   useEffect(() => deselectAll(), [filterKey, deselectAll]);
 
   const { sorted, totalPages, currentPage, pageItems } = useMemo(
@@ -551,9 +564,13 @@ export function AuthFilesSourceContent({
   );
   // Placeholders take the place of the empty states: they say what to do next more precisely.
   const shownAwaiting = awaiting.filter((entry) => awaitingMatchesFilters(entry, filters));
-  const isFirstRunEmpty = listState === 'empty' && shownAwaiting.length === 0;
+  const isPinned = filters.match !== null && filters.match !== undefined;
+  const isFirstRunEmpty = !isPinned && listState === 'empty' && shownAwaiting.length === 0;
   const isNoResults =
-    !loading && files.length > 0 && pageItems.length === 0 && shownAwaiting.length === 0;
+    !loading &&
+    (files.length > 0 || isPinned) &&
+    pageItems.length === 0 &&
+    shownAwaiting.length === 0;
   const openOAuth = () =>
     navigate(oauthPath(instanceId), {
       state: { sourceOwner: sourceScope.session.owner },

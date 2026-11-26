@@ -67,6 +67,107 @@ function group(map: Map<number, Metrics>, key: number): Metrics {
   }
   return metrics;
 }
+interface AccountGroup {
+  instance_id: number | null;
+  auth_index_id: number | null;
+  account_label_id: number | null;
+  provider_id: number;
+  model_id: number;
+  calls: number;
+  failures: number;
+  total: number;
+}
+/**
+ * Events per credential and per model × credential, from the events themselves: the hourly
+ * rollups do not keep the credential. A credential is its source instance and the proxy's auth
+ * index (the key that joins to quota and Auth Files); its label is the one most of its events
+ * carried. Same filter as the totals, so the accounts add up to the summary.
+ */
+function readAccounts(
+  db: Database,
+  filter: ReturnType<typeof queryFilter>,
+  names: Map<number, string>,
+  check: () => void
+): Pick<AnalyticsResponse, 'accounts' | 'routes'> {
+  const name = (id: number | null) => (id === null ? null : (names.get(id) ?? null));
+  const accounts = new Map<
+    string,
+    NonNullable<AnalyticsResponse['accounts']>[number] & { labels: Map<string, number> }
+  >();
+  const routes = new Map<string, NonNullable<AnalyticsResponse['routes']>[number]>();
+  let scanned = 0;
+  for (const row of db
+    .query<AccountGroup, (number | string)[]>(
+      `
+    SELECT e.instance_id, e.auth_index_id, e.account_label_id, e.provider_id, e.model_id,
+      count(*) AS calls, sum(e.failed) AS failures, sum(e.total) AS total
+    FROM events e WHERE ${filter.sql}
+    GROUP BY e.instance_id, e.auth_index_id, e.account_label_id, e.provider_id, e.model_id
+  `
+    )
+    .iterate(...filter.args)) {
+    if ((++scanned & 4095) === 0) check();
+    const instance = name(row.instance_id);
+    const authIndex = name(row.auth_index_id);
+    const key = JSON.stringify([instance, authIndex]);
+    const account =
+      accounts.get(key) ??
+      accounts
+        .set(key, {
+          instance,
+          auth_index: authIndex,
+          label: null,
+          providers: [],
+          calls: 0,
+          failure_calls: 0,
+          total_tokens: 0,
+          labels: new Map(),
+        })
+        .get(key)!;
+    account.calls += row.calls;
+    account.failure_calls += row.failures;
+    account.total_tokens += row.total;
+    const provider = name(row.provider_id)!;
+    if (!account.providers.includes(provider)) account.providers.push(provider);
+    const label = name(row.account_label_id);
+    if (label) account.labels.set(label, (account.labels.get(label) ?? 0) + row.calls);
+    const model = name(row.model_id)!;
+    const routeKey = JSON.stringify([model, instance, authIndex]);
+    const route =
+      routes.get(routeKey) ??
+      routes
+        .set(routeKey, {
+          model,
+          instance,
+          auth_index: authIndex,
+          calls: 0,
+          failure_calls: 0,
+          total_tokens: 0,
+        })
+        .get(routeKey)!;
+    route.calls += row.calls;
+    route.failure_calls += row.failures;
+    route.total_tokens += row.total;
+  }
+  const order = (a: string | null, b: string | null) =>
+    (a ?? '\uffff') < (b ?? '\uffff') ? -1 : (a ?? '\uffff') > (b ?? '\uffff') ? 1 : 0;
+  return {
+    accounts: [...accounts.values()]
+      .map(({ labels, ...account }) => ({
+        ...account,
+        // The label most of its events carried; ties go to the alphabetically first.
+        label: [...labels].sort((a, b) => b[1] - a[1] || order(a[0], b[0]))[0]?.[0] ?? null,
+        providers: account.providers.sort(),
+      }))
+      .sort((a, b) => order(a.instance, b.instance) || order(a.auth_index, b.auth_index)),
+    routes: [...routes.values()].sort(
+      (a, b) =>
+        order(a.model, b.model) ||
+        order(a.instance, b.instance) ||
+        order(a.auth_index, b.auth_index)
+    ),
+  };
+}
 export interface AnalyticsReadOptions {
   now?: () => number;
   /** Internal benchmark observer; never serialized in an AnalyticsResponse. */
@@ -133,6 +234,8 @@ export function queryAnalytics(
         observed.set(`${row.provider_id}:${row.model_id}`, { provider, id: model });
       }
 
+      const { accounts, routes } = readAccounts(db, filter, names, check);
+      options.onPhase?.('accounts');
       const costs = analyticsCosts(rows, names, book, options.onPhase);
       summary.value.cost = costs.summary;
       for (const [id, metrics] of models) metrics.value.cost = costs.models.get(id)!;
@@ -224,6 +327,8 @@ export function queryAnalytics(
           ...model,
           providers: [...(providersOf.get(model.key) ?? [])].sort(),
         })),
+        accounts,
+        routes,
         provider_timeline: [...providerBuckets.values()]
           .sort((a, b) => a.bucket - b.bucket || (a.provider < b.provider ? -1 : 1))
           .map(({ provider, bucket, m }) => ({

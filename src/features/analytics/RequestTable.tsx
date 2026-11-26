@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { CopyButton } from '@/features/oauth/components/CopyButton';
 import { analyticsNumber, analyticsTime } from './format';
+import { maskIdentifier } from '@/domain/quotaPool/mask';
 import { providerInk } from '@/features/providers/identity';
 import styles from './AnalyticsPage.module.scss';
 
@@ -57,7 +58,17 @@ const copyableFields = [
   'auth_file_snapshot',
 ] as const satisfies readonly (keyof AnalyticsRequest)[];
 
-export function RequestDetails({ request }: { request: AnalyticsRequest }) {
+/** Fields that name an account: masked until the browser's "Show emails" is on. */
+const accountFields = new Set<keyof AnalyticsRequest>(['account_label', 'auth_file_snapshot']);
+
+export function RequestDetails({
+  request,
+  reveal = true,
+}: {
+  request: AnalyticsRequest;
+  /** The browser's "Show emails" choice; off shows account names masked. */
+  reveal?: boolean;
+}) {
   const { t, i18n } = useTranslation();
   return (
     <>
@@ -86,12 +97,14 @@ export function RequestDetails({ request }: { request: AnalyticsRequest }) {
           const value = request[field];
           if (!value) return null;
           const label = t(`analytics.fields.${field}`);
+          // What is copied is what is shown: a masked name never puts the address on the clipboard.
+          const shown = reveal || !accountFields.has(field) ? value : maskIdentifier(value);
           return (
             <div key={field} className={styles.detailPair}>
               <dt>{label}</dt>
               <dd className={styles.copyValue}>
-                <span className={styles.copyValueText}>{value}</span>
-                <CopyButton value={value} label={t('analytics.copy_field', { field: label })} />
+                <span className={styles.copyValueText}>{shown}</span>
+                <CopyButton value={shown} label={t('analytics.copy_field', { field: label })} />
               </dd>
             </div>
           );
@@ -110,7 +123,9 @@ export function RequestDetails({ request }: { request: AnalyticsRequest }) {
                       ? t(`analytics.${value ? 'yes' : 'no'}`)
                       : typeof value === 'number'
                         ? analyticsNumber(value, i18n.language)
-                        : value}
+                        : !reveal && accountFields.has(field)
+                          ? maskIdentifier(value)
+                          : value}
               </dd>
             </div>
           );
@@ -155,6 +170,7 @@ export function RequestTable({
   canNext,
   page,
   providerLabels,
+  reveal = true,
 }: {
   data: AnalyticsResponse['requests'];
   selected: AnalyticsRequest | null;
@@ -166,6 +182,8 @@ export function RequestTable({
   page: number;
   /** Server display names for provider keys, as used by the breakdown charts. */
   providerLabels?: ReadonlyMap<string, string>;
+  /** The browser's "Show emails" choice, for the request details. */
+  reveal?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const n = (value: number | null, currency = false) =>
@@ -282,7 +300,7 @@ export function RequestTable({
         width={740}
         onClose={() => onSelect(null)}
       >
-        {selected && <RequestDetails request={selected} />}
+        {selected && <RequestDetails request={selected} reveal={reveal} />}
       </Modal>
     </section>
   );
