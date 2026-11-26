@@ -96,6 +96,7 @@ install -D -m 644 deploy/prox-usage-nightly.timer "$HOME/.config/systemd/user/pr
 install -D -m 644 deploy/prox-usage-parity.service "$HOME/.config/systemd/user/prox-usage-parity.service"
 # Official local `agy -p "/usage"` snapshot helper, circuit-breaker recovery check, and timer watchdog.
 # Shipped disabled so the operator opts in.
+install -D -m 644 deploy/prox-agy-lib.sh "$HOME/.local/share/prox/prox-agy-lib.sh"
 install -D -m 755 deploy/prox-agy-usage.sh "$HOME/.local/share/prox/prox-agy-usage.sh"
 install -D -m 644 deploy/prox-agy-usage.service "$HOME/.config/systemd/user/prox-agy-usage.service"
 install -D -m 644 deploy/prox-agy-usage.timer "$HOME/.config/systemd/user/prox-agy-usage.timer"

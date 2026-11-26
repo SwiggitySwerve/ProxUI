@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Capture one zero-turn `/usage` snapshot from the official signed-in `agy` CLI and drop it
 # atomically for prox-history. Never touches Google OAuth tokens or private endpoints directly.
-# Any unexpected error trips the classified circuit breaker and emits a structured event so
-# `prox-agy-recover.path` fires immediately while `prox-agy-usage.timer` stops calling `agy`.
+# Serialized with `prox-agy-recover.sh` under `.agy.lock` so circuit-breaker transitions never race.
 set -euo pipefail
 
 export PATH="$HOME/.local/bin:$PATH"
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=deploy/prox-agy-lib.sh
+source "${AGY_LIB_PATH:-$SCRIPT_DIR/prox-agy-lib.sh}"
 
 AGY_BIN="${AGY_BIN:-$HOME/.local/bin/agy}"
 AGY_EXPECTED_VERSION="${AGY_EXPECTED_VERSION:-1.5.17}"
@@ -19,46 +22,25 @@ AGY_INSTANCE_ID="${AGY_INSTANCE_ID:-gemini-primary}"
 AGY_SOURCE_LABEL="${AGY_SOURCE_LABEL:-Gemini}"
 AGY_PLAN="${AGY_PLAN:-g1-ultra-tier}"
 AGY_RECOVERY_PROBE="${AGY_RECOVERY_PROBE:-0}"
+AGY_VERSION_TIMEOUT_SEC="${AGY_VERSION_TIMEOUT_SEC:-15}"
+AGY_USAGE_TIMEOUT_SEC="${AGY_USAGE_TIMEOUT_SEC:-90}"
+AGY_KILL_AFTER_SEC="${AGY_KILL_AFTER_SEC:-5}"
 
 mkdir -p -m 700 "$AGY_DATA_DIR" "$AGY_WORKDIR"
 
-emit_event() {
-  local event_name="$1"
-  local category="$2"
-  local reason="$3"
-  local version="${4:-}"
-  local line
-  line=$(node - "$AGY_EVENTS_PATH" "$event_name" "$category" "$reason" "$version" "${NOW_MS:-}" <<'NODE'
-const fs = require('node:fs');
-const path = require('node:path');
+lock_held=0
+if [[ "$AGY_RECOVERY_PROBE" != "1" ]]; then
+  exec 8>"$AGY_DATA_DIR/.agy.lock"
+  if ! flock -n 8; then
+    exit 0
+  fi
+  lock_held=1
+fi
 
-const [eventsPath, event, category, reason, agyVersion, nowOverride] = process.argv.slice(2);
-const atMs = nowOverride && /^\d+$/.test(nowOverride) ? Number(nowOverride) : Date.now();
-const record = {
-  at: new Date(atMs).toISOString(),
-  atMs,
-  event,
-  category,
-  reason,
-  ...(agyVersion ? { agyVersion } : {}),
-};
-const line = JSON.stringify(record);
-let existing = [];
-try {
-  existing = fs.readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
-} catch {
-  // first event
-}
-existing.push(line);
-if (existing.length > 200) existing = existing.slice(-200);
-const tmp = `${eventsPath}.tmp.${process.pid}`;
-fs.writeFileSync(tmp, `${existing.join('\n')}\n`, { mode: 0o600 });
-fs.renameSync(tmp, eventsPath);
-process.stdout.write(line);
-NODE
-  ) || true
-  if [[ -n "$AGY_EVENT_HOOK" && -x "$AGY_EVENT_HOOK" && -n "$line" ]]; then
-    printf '%s\n' "$line" | timeout 10 "$AGY_EVENT_HOOK" >/dev/null 2>&1 || true
+release_lock() {
+  if ((lock_held == 1)); then
+    exec 8>&-
+    lock_held=0
   fi
 }
 
@@ -73,31 +55,21 @@ trip_stop_flag() {
   local version="${3:-}"
   local final_category="$category"
   local attempts=0
+  local event_line=""
   if [[ "$AGY_RECOVERY_PROBE" == "1" ]]; then
     final_category="hard_stop"
     attempts=1
   fi
+  # Always persist the stop flag first, then record the event, then release `.agy.lock` BEFORE
+  # invoking any external event hook so a slow hook never blocks `prox-agy-recover.path`.
+  agy_write_stop_flag "$AGY_STOP_FLAG" "$final_category" "$reason" "$version" "$attempts"
   if [[ "$AGY_RECOVERY_PROBE" != "1" ]]; then
-    emit_event "circuit_breaker_tripped" "$final_category" "$reason" "$version"
+    event_line=$(agy_record_event "$AGY_EVENTS_PATH" "circuit_breaker_tripped" "$final_category" "$reason" "$version" || true)
   fi
-  node - "$AGY_STOP_FLAG" "$final_category" "$reason" "$version" "$attempts" "${NOW_MS:-}" <<'NODE'
-const fs = require('node:fs');
-
-const [flagPath, category, reason, agyVersion, attemptsRaw, nowOverride] = process.argv.slice(2);
-const trippedAtMs = nowOverride && /^\d+$/.test(nowOverride) ? Number(nowOverride) : Date.now();
-const payload = {
-  schemaVersion: 1,
-  trippedAt: new Date(trippedAtMs).toISOString(),
-  trippedAtMs,
-  category,
-  reason,
-  attempts: Number(attemptsRaw) || 0,
-  ...(agyVersion ? { agyVersion } : {}),
-};
-const tmp = `${flagPath}.tmp.${process.pid}`;
-fs.writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
-fs.renameSync(tmp, flagPath);
-NODE
+  release_lock
+  if [[ -n "$event_line" ]]; then
+    agy_dispatch_hook "$event_line"
+  fi
   echo "prox-agy-usage circuit breaker tripped ($final_category: $reason); flag written to $AGY_STOP_FLAG." >&2
   exit 1
 }
@@ -105,26 +77,48 @@ NODE
 if [[ ! -x "$AGY_BIN" ]]; then
   trip_stop_flag "hard_stop" "missing-agy-binary"
 fi
-
-actual_version=$("$AGY_BIN" --version 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)
-if [[ "$actual_version" != "$AGY_EXPECTED_VERSION" ]]; then
-  trip_stop_flag "version_changed" "unexpected-agy-version:${actual_version:-unknown}:expected:${AGY_EXPECTED_VERSION}" "$actual_version"
+if ! command -v node >/dev/null 2>&1; then
+  trip_stop_flag "hard_stop" "missing-node-runtime"
 fi
 
+# Run CLI commands inside a dedicated process group (with fd 8 closed) so timeouts kill every
+# descendant cleanly without leaking the lock.
+version_file=$(mktemp "$AGY_DATA_DIR/.agy-ver.XXXXXX")
 raw_file=$(mktemp "$AGY_DATA_DIR/.agy-raw.XXXXXX")
 err_file=$(mktemp "$AGY_DATA_DIR/.agy-err.XXXXXX")
 out_file=$(mktemp "$AGY_DATA_DIR/.agy-usage.XXXXXX")
 cleanup() {
-  rm -f -- "$raw_file" "$err_file" "$out_file"
+  rm -f -- "$version_file" "$raw_file" "$err_file" "$out_file"
 }
 trap cleanup EXIT
 
+version_exit=0
+AGY_TIMEOUT_SAME_GROUP="$AGY_RECOVERY_PROBE" agy_run_with_timeout "$AGY_VERSION_TIMEOUT_SEC" "$AGY_KILL_AFTER_SEC" "$AGY_BIN" --version > "$version_file" 2>/dev/null || version_exit=$?
+if ((version_exit == 124 || version_exit == 137)); then
+  trip_stop_flag "transient" "agy-version-timeout"
+fi
+actual_version=$(head -n 1 "$version_file" | tr -d '[:space:]')
+if [[ "$actual_version" != "$AGY_EXPECTED_VERSION" ]]; then
+  trip_stop_flag "version_changed" "unexpected-agy-version:${actual_version:-unknown}:expected:${AGY_EXPECTED_VERSION}" "$actual_version"
+fi
+
 cd "$AGY_WORKDIR"
-if ! timeout 90 "$AGY_BIN" --output-format json --print-timeout 60s -p "/usage" > "$raw_file" 2> "$err_file"; then
-  if grep -Eiq '403|tos_violation|suspended|unauthorized|not logged in|login required|sign.?in' "$raw_file" "$err_file" 2>/dev/null; then
+cmd_exit=0
+AGY_TIMEOUT_SAME_GROUP="$AGY_RECOVERY_PROBE" agy_run_with_timeout "$AGY_USAGE_TIMEOUT_SEC" "$AGY_KILL_AFTER_SEC" "$AGY_BIN" --output-format json --print-timeout 60s -p "/usage" > "$raw_file" 2> "$err_file" || cmd_exit=$?
+if ((cmd_exit != 0)); then
+  # Fail closed by default: only explicit timeout exits and recognized network/transport
+  # diagnostics qualify as `transient`; auth, policy, rate-limit, CLI flag, and unknown errors
+  # always force `hard_stop`.
+  if grep -Eiq '401|403|429|unauthenticated|tos_violation|suspended|unauthorized|forbidden|permission_denied|not logged in|login required|sign.?in|rate.?limit' "$raw_file" "$err_file" 2>/dev/null; then
     trip_stop_flag "hard_stop" "auth-or-policy-error" "$actual_version"
   fi
-  trip_stop_flag "transient" "agy-command-failed" "$actual_version"
+  if ((cmd_exit == 124 || cmd_exit == 137)); then
+    trip_stop_flag "transient" "agy-command-timeout" "$actual_version"
+  fi
+  if grep -Eiq 'timed out|deadline exceeded|request timeout|connection timeout|econnreset|econnrefused|etimedout|ehostunreach|enetunreach|eai_again|temporary failure in name resolution|connection reset|network is unreachable|bad gateway|service unavailable|(http([[:space:]]+status)?|status([[:space:]]+code)?)[:[:space:]]+50[234]\b' "$raw_file" "$err_file" 2>/dev/null; then
+    trip_stop_flag "transient" "agy-transient-transport-error" "$actual_version"
+  fi
+  trip_stop_flag "hard_stop" "agy-command-failed" "$actual_version"
 fi
 
 validation_code=0
@@ -211,12 +205,13 @@ if ((validation_code != 0)); then
   case "$validation_code" in
     3) trip_stop_flag "hard_stop" "unexpected-email-in-output" "$actual_version" ;;
     9) trip_stop_flag "hard_stop" "non-zero-turns" "$actual_version" ;;
-    *) trip_stop_flag "transient" "validation-failed" "$actual_version" ;;
+    *) trip_stop_flag "hard_stop" "validation-failed" "$actual_version" ;;
   esac
 fi
 
-chmod 600 "$out_file"
-mv -f -- "$out_file" "$AGY_SNAPSHOT_PATH"
+if ! chmod 600 "$out_file" || ! mv -T -f -- "$out_file" "$AGY_SNAPSHOT_PATH"; then
+  trip_stop_flag "hard_stop" "snapshot-write-failed" "$actual_version"
+fi
 if [[ "$AGY_RECOVERY_PROBE" == "1" ]]; then
   rm -f -- "$AGY_STOP_FLAG"
 fi
