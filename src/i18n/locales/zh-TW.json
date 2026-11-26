@@ -3092,7 +3092,7 @@
     "nav_meta": "用量、成本與執行趨勢",
     "refresh": "重新整理",
     "filters": "共用篩選",
-    "range": "時間範圍 · UTC",
+    "range": "時間範圍 · {{zone}}",
     "ranges": {
       "1h": "最近 1 小時",
       "24h": "最近 24 小時",
@@ -3159,7 +3159,7 @@
     "empty": "沒有符合篩選條件的保留事件。請擴大範圍或清除篩選。",
     "empty_chart": "此區間沒有樣本。",
     "table_alternative": "檢視資料表",
-    "bucket_category": "UTC 時間桶 / 類別",
+    "bucket_category": "時間桶 / 類別",
     "unavailable_value": "無法使用",
     "not_reported": "未回報 / 無法使用",
     "yes": "是",
@@ -3176,17 +3176,27 @@
     "by_provider": "依供應商",
     "by_model": "依模型",
     "events_and_failures": "事件與失敗",
+    "peak_in_flight": "按帳號的同時進行請求峰值",
     "failed_count": "{{value}} 次失敗",
     "failed_for": "（{{label}}）",
     "failure_readout": "{{label}}：{{events}} 個事件，{{failed}} 個失敗",
+    "zone": {
+      "use_utc": "使用 UTC",
+      "use_local": "使用本地時間 ({{zone}})",
+      "fallback": "你的時區偏移不是整小時，因此時間以 UTC 顯示。"
+    },
     "heatmap": {
-      "title": "按小時的事件 · UTC",
+      "title": "按小時的事件 · {{zone}}",
+      "view": "檢視",
+      "days": "按日期",
+      "weekdays": "按星期",
+      "weekday": "星期",
       "events": "{{value}} 個事件",
       "unmeasured": "未測量",
       "daily": "小時圖需要按小時分桶。",
       "show_hourly": "按小時顯示",
       "keys": "方向鍵在小時之間移動；Enter 開啟該小時的請求。",
-      "day": "日期 (UTC)"
+      "day": "日期 ({{zone}})"
     },
     "provider_split": {
       "title": "按供應商的權杖",
@@ -3206,7 +3216,7 @@
       "cell": "{{events}} 個事件，{{failed}} 個失敗",
       "unsupported": "此伺服器尚未回報帳號。"
     },
-    "timestamp": "時間 · UTC",
+    "timestamp": "時間 · {{zone}}",
     "provider_model": "供應商 / 模型",
     "tokens_in_out": "輸入 / 輸出權杖",
     "cache_read_write": "快取讀取 / 寫入",

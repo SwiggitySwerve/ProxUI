@@ -2,8 +2,8 @@ import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { AnalyticsAccount, AnalyticsResponse } from '@/domain/analytics/types';
-import { maskIdentifier } from '@/domain/quotaPool/mask';
 import { providerInk } from '@/features/providers/identity';
+import { accountName } from './accountName';
 import { heatLevel } from './chartGeometry';
 import { analyticsCompact, analyticsNumber } from './format';
 import styles from './AnalyticsPage.module.scss';
@@ -45,14 +45,7 @@ export function RoutingView({
     .sort((a, b) => (rank.get(b.model) ?? 0) - (rank.get(a.model) ?? 0));
   const cell = new Map(routes.map((r) => [`${r.model}\0${accountKey(r)}`, r]));
   const maximum = Math.max(0, ...routes.map((r) => r.calls));
-  const name = (account: AnalyticsAccount) =>
-    account.label
-      ? reveal
-        ? account.label
-        : maskIdentifier(account.label)
-      : account.auth_index
-        ? t('analytics.routing.credential', { index: account.auth_index })
-        : t('analytics.routing.unattributed');
+  const name = (account: AnalyticsAccount) => accountName(account, reveal, t);
   return (
     <section className={`${styles.panel} ${styles.routing}`} aria-labelledby={id}>
       <h3 id={id}>{t('analytics.routing.title')}</h3>

@@ -19,6 +19,8 @@ import {
 } from '@/components/ui/icons';
 import { AnalyticsChart } from './AnalyticsChart';
 import { HourHeatmap } from './HourHeatmap';
+import { accountName } from './accountName';
+import { zoneName } from './displayZone';
 import { ProviderStackChart } from './ProviderStackChart';
 import { bucketTimeline, lineSegments, smoothPath } from './chartGeometry';
 import { analyticsCompact, analyticsMoney, analyticsNumber } from './format';
@@ -139,6 +141,8 @@ export function AnalyticsViews({
   onProvider,
   failures,
   onShowHourly,
+  zone = 'UTC',
+  reveal = false,
 }: {
   tab: View;
   data: AnalyticsResponse;
@@ -149,6 +153,10 @@ export function AnalyticsViews({
   failures?: { onModel: (model: string) => void; onProvider: (provider: string) => void };
   /** Switches the page to hourly buckets, which the hour map needs. */
   onShowHourly: () => void;
+  /** The page's time zone: day buckets, ticks and labels follow it. */
+  zone?: string;
+  /** The browser's "Show emails" choice, for account names. */
+  reveal?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const interval = data.granularity === 'day' ? 86_400_000 : 3_600_000;
@@ -156,7 +164,7 @@ export function AnalyticsViews({
   // is a quiet hour: sums draw it as zero instead of breaking the line. Durations still break.
   const byBucket = new Map(data.timeline.map((point) => [point.bucket_ms, point]));
   const buckets = data.coverage.raw_complete
-    ? bucketTimeline([...byBucket.keys()], data.from_ms, data.to_ms, interval)
+    ? bucketTimeline([...byBucket.keys()], data.from_ms, data.to_ms, interval, zone)
     : data.timeline.map((point) => ({ at: point.bucket_ms, present: true }));
   const hourly = (metric: Metric) =>
     buckets
@@ -372,6 +380,7 @@ export function AnalyticsViews({
               to={data.to_ms}
               interval={interval}
               sharedScale={tab === 'performance'}
+              zone={zone}
               area={tab !== 'performance'}
               onSelect={onBucket}
             />
@@ -394,6 +403,7 @@ export function AnalyticsViews({
                 interval={interval}
                 area={false}
                 onSelect={onBucket}
+                zone={zone}
               />
             )}
           </div>
@@ -406,12 +416,14 @@ export function AnalyticsViews({
                 data.timeline.map((point) => point.bucket_ms),
                 data.from_ms,
                 data.to_ms,
-                interval
+                interval,
+                zone
               ).map((bucket) => ({
                 at: bucket.at,
                 measured: bucket.present || data.coverage.raw_complete,
               }))}
               interval={interval}
+              zone={zone}
               label={(provider) =>
                 data.providers.find((p) => p.key === provider)?.label ?? provider
               }
@@ -446,10 +458,29 @@ export function AnalyticsViews({
               failures={failureSplit && { onSelect: failureSplit.onModel }}
             />
           </div>
+          {/* Read-only: ProxUI has no concurrency limit to set; the peaks show where limits bite. */}
+          {tab === 'performance' && data.accounts && data.accounts.length > 0 && (
+            <div className={styles.chartGrid}>
+              <AnalyticsChart
+                title={t('analytics.peak_in_flight')}
+                format="exact"
+                data={data.accounts.map((account) => ({
+                  key: JSON.stringify([account.instance, account.auth_index]),
+                  label: accountName(account, reveal, t),
+                  value: account.peak_in_flight,
+                  provider: account.providers.length === 1 ? account.providers[0] : undefined,
+                }))}
+              />
+            </div>
+          )}
           {/* One hour has nothing to compare; Today at noon already has twelve. */}
           {tab === 'overview' && data.to_ms - data.from_ms > 3_600_000 && (
             <HourHeatmap
-              title={t('analytics.heatmap.title')}
+              title={t('analytics.heatmap.title', {
+                zone: zoneName(zone, data.to_ms, i18n.language),
+              })}
+              zone={zone}
+              weekly={data.weekly}
               // The page's hourly series: quiet hours are zeros only with complete coverage.
               points={new Map(hourly('calls').map((point) => [point.at, point.value]))}
               from={data.from_ms}

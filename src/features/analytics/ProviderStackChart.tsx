@@ -5,6 +5,8 @@ import type { AnalyticsProviderBucket } from '@/domain/analytics/types';
 import { providerFill } from '@/features/providers/identity';
 import { niceMaximum } from './chartGeometry';
 import { analyticsCompact, analyticsNumber, analyticsShortTime, analyticsTime } from './format';
+import { localDayStart } from '@/domain/analytics/timeZone';
+import { zoneName } from './displayZone';
 import styles from './AnalyticsPage.module.scss';
 
 const OTHER = '';
@@ -24,6 +26,7 @@ export function ProviderStackChart({
   buckets,
   interval,
   label,
+  zone = 'UTC',
 }: {
   title: string;
   split: AnalyticsProviderBucket[];
@@ -32,6 +35,8 @@ export function ProviderStackChart({
   interval: number;
   /** The provider's display name, as the rest of the page shows it. */
   label: (provider: string) => string;
+  /** The page's time zone for labels and day boundaries. */
+  zone?: string;
 }) {
   const { t, i18n } = useTranslation();
   const id = useId();
@@ -65,10 +70,8 @@ export function ProviderStackChart({
   // Stable across hovers, so the table below does not re-render while the pointer moves.
   const when = useCallback(
     (at: number) =>
-      daily
-        ? `${analyticsShortTime(at, i18n.language, true)} UTC`
-        : `${analyticsTime(at, i18n.language)} UTC`,
-    [daily, i18n.language]
+      `${daily ? analyticsShortTime(at, i18n.language, true, zone) : analyticsTime(at, i18n.language, zone)} ${zoneName(zone, at, i18n.language)}`,
+    [daily, i18n.language, zone]
   );
   const measured = (at: number) => buckets.find((b) => b.at === at)?.measured !== false;
   const describe = (at: number) =>
@@ -84,12 +87,12 @@ export function ProviderStackChart({
   const [inspected, setInspected] = useState<number | null>(null);
   // Bars share the width equally, so labels follow the bars, not the clock, about six of them.
   // Days sit under their bar; hours mark their boundary; hours over several days name the date
-  // at each UTC midnight, so far-apart hours never look close.
+  // at each local midnight, so far-apart hours never look close.
   // A rolling day spans 25 hourly slots; only windows clearly longer than a day name dates.
   const multiDay = !daily && buckets.length > 26;
   const candidates = buckets
     .map(({ at }, index) => ({ at, left: ((index + (daily ? 0.5 : 0)) / buckets.length) * 100 }))
-    .filter(({ at }) => !multiDay || at % DAY === 0);
+    .filter(({ at }) => !multiDay || localDayStart(zone, at) === at);
   const every = Math.max(1, Math.ceil(candidates.length / 6));
   const ticks = candidates.filter((_, index) => index % every === 0);
   return (
@@ -160,7 +163,7 @@ export function ProviderStackChart({
                   tick.left < 12 ? 'none' : tick.left > 88 ? 'translateX(-100%)' : undefined,
               }}
             >
-              {analyticsShortTime(tick.at, i18n.language, daily || multiDay)}
+              {analyticsShortTime(tick.at, i18n.language, daily || multiDay, zone)}
             </span>
           ))}
         </div>

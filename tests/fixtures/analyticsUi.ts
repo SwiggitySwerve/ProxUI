@@ -231,6 +231,8 @@ export function analyticsScenario(
       calls: 96,
       failure_calls: 8,
       total_tokens: 70_000,
+      peak_in_flight: 6,
+      peak_at_ms: query.to_ms - 5 * 3_600_000,
     },
     {
       instance: 'codex-primary',
@@ -240,6 +242,8 @@ export function analyticsScenario(
       calls: 31,
       failure_calls: 0,
       total_tokens: 27_000,
+      peak_in_flight: 3,
+      peak_at_ms: query.to_ms - 9 * 3_600_000,
     },
     {
       instance: null,
@@ -249,6 +253,8 @@ export function analyticsScenario(
       calls: 1,
       failure_calls: 0,
       total_tokens: 1_000,
+      peak_in_flight: 1,
+      peak_at_ms: query.to_ms - 60_000,
     },
   ];
   data.routes = [
@@ -358,6 +364,14 @@ export function analyticsScenario(
     data.catalog_sources = [];
   }
   data.provider_timeline = providerSplit(data.timeline);
+  // Hourly answers also carry events by weekday and hour (a busier working week).
+  if (query.granularity === 'hour')
+    data.weekly = Array.from({ length: 7 * 24 }, (_, slot) => {
+      const weekday = Math.floor(slot / 24);
+      const hour = slot % 24;
+      const working = weekday >= 1 && weekday <= 5 && hour >= 8 && hour <= 18;
+      return { weekday, hour, calls: working ? 6 + ((slot * 7) % 9) : (slot * 3) % 3 };
+    });
   return data;
 }
 

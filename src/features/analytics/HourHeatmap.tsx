@@ -2,15 +2,16 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { heatLevel, hourGrid, type HourCell } from './chartGeometry';
 import { analyticsCompact, analyticsNumber, analyticsTime } from './format';
+import { zoneName } from './displayZone';
 import styles from './AnalyticsPage.module.scss';
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
-const dayLabel = (day: number, locale: string) =>
-  new Intl.DateTimeFormat(locale, { timeZone: 'UTC', month: 'short', day: 'numeric' }).format(day);
+const dayLabel = (day: number, locale: string, zone: string) =>
+  new Intl.DateTimeFormat(locale, { timeZone: zone, month: 'short', day: 'numeric' }).format(day);
 const hourLabel = (hour: number) => String(hour).padStart(2, '0');
 
 /**
- * Events per UTC hour, one row per day, so busy hours and quiet nights show at a glance.
+ * Events per hour, one row per day in the page's zone, so busy hours and quiet nights show.
  * Reads the hourly timeline prox-usage already returns; a daily view offers to switch to hours.
  * One tab stop: arrow keys move between hours, Enter opens that hour's requests.
  */
@@ -22,6 +23,8 @@ export function HourHeatmap({
   hourly,
   onSelect,
   onShowHourly,
+  zone = 'UTC',
+  weekly,
 }: {
   title: string;
   /** Events per hour by bucket start: quiet hours as zero, unmeasured hours absent. */
@@ -31,10 +34,14 @@ export function HourHeatmap({
   hourly: boolean;
   onSelect: (at: number) => void;
   onShowHourly: () => void;
+  /** The page's time zone: rows are its local days, columns its hours. */
+  zone?: string;
+  /** prox-usage's events per local weekday and hour, summed over the range (hourly answers). */
+  weekly?: { weekday: number; hour: number; calls: number }[];
 }) {
   const { t, i18n } = useTranslation();
   const id = useId();
-  const rows = hourly ? hourGrid(points, from, to) : [];
+  const rows = hourly ? hourGrid(points, from, to, zone) : [];
   const cells = rows.flatMap((row) => row.cells);
   const maximum = Math.max(0, ...cells.map((cell) => cell.value ?? 0));
   const inside = cells.filter((cell) => cell.state !== 'outside');
@@ -44,6 +51,7 @@ export function HourHeatmap({
   const [inspectedAt, setInspectedAt] = useState<number | null>(null);
   const inspected = inside.find((cell) => cell.at === inspectedAt);
   const grid = useRef<HTMLDivElement>(null);
+  const [byWeekday, setByWeekday] = useState(false);
   // The tab stop is the hour last moved to, else the busiest hour, else the first in the window.
   const activeCell = inside.find((cell) => cell.at === active);
   const busiest = inside.reduce<HourCell | undefined>(
@@ -59,7 +67,7 @@ export function HourHeatmap({
     grid.current?.querySelector<HTMLButtonElement>(`[data-at="${focusAt}"]`)?.focus();
   }, [focusAt]);
   const describe = (cell: HourCell) =>
-    `${analyticsTime(cell.at, i18n.language)} UTC: ${
+    `${analyticsTime(cell.at, i18n.language, zone)} ${zoneName(zone, cell.at, i18n.language)}: ${
       cell.state === 'gap'
         ? t('analytics.heatmap.unmeasured')
         : t('analytics.heatmap.events', { value: analyticsNumber(cell.value, i18n.language) })
@@ -88,8 +96,26 @@ export function HourHeatmap({
   };
   return (
     <section className={`${styles.panel} ${styles.heatmap}`} aria-labelledby={id}>
-      <h3 id={id}>{title}</h3>
-      {!hourly ? (
+      <div className={styles.trendHeader}>
+        <h3 id={id}>{title}</h3>
+        {hourly && weekly && (
+          <div role="group" aria-label={t('analytics.heatmap.view')} className={styles.segmented}>
+            {[false, true].map((weekdays) => (
+              <button
+                key={String(weekdays)}
+                type="button"
+                aria-pressed={byWeekday === weekdays}
+                onClick={() => setByWeekday(weekdays)}
+              >
+                {t(weekdays ? 'analytics.heatmap.weekdays' : 'analytics.heatmap.days')}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {hourly && weekly && byWeekday ? (
+        <WeekdayGrid title={title} weekly={weekly} />
+      ) : !hourly ? (
         <p className={styles.muted}>
           {t('analytics.heatmap.daily')}{' '}
           <button type="button" className={styles.textButton} onClick={onShowHourly}>
@@ -118,7 +144,7 @@ export function HourHeatmap({
             {rows.map((row) => (
               <div key={row.day} className={styles.heatRow}>
                 <span className={styles.heatDay} aria-hidden="true">
-                  {dayLabel(row.day, i18n.language)}
+                  {dayLabel(row.day, i18n.language, zone)}
                 </span>
                 {row.cells.map((cell) =>
                   cell.state === 'outside' ? (
@@ -162,7 +188,9 @@ export function HourHeatmap({
                 <caption className={styles.srOnly}>{title}</caption>
                 <thead>
                   <tr>
-                    <th scope="col">{t('analytics.heatmap.day')}</th>
+                    <th scope="col">
+                      {t('analytics.heatmap.day', { zone: zoneName(zone, from, i18n.language) })}
+                    </th>
                     {HOURS.map((hour) => (
                       <th key={hour} scope="col">
                         {hourLabel(hour)}
@@ -173,7 +201,7 @@ export function HourHeatmap({
                 <tbody>
                   {rows.map((row) => (
                     <tr key={row.day}>
-                      <th scope="row">{dayLabel(row.day, i18n.language)}</th>
+                      <th scope="row">{dayLabel(row.day, i18n.language, zone)}</th>
                       {row.cells.map((cell) => (
                         <td key={cell.at}>
                           {cell.state === 'outside'
@@ -192,5 +220,92 @@ export function HourHeatmap({
         </>
       )}
     </section>
+  );
+}
+
+/** Monday first; weekday 0 is Sunday, as prox-usage counts it. */
+const WEEK = [1, 2, 3, 4, 5, 6, 0];
+
+/**
+ * Events by weekday and hour, summed over the range in the page's zone: the usual week at a
+ * glance. A cell spans several dates, so it opens nothing; the table repeats every value.
+ */
+function WeekdayGrid({
+  title,
+  weekly,
+}: {
+  title: string;
+  weekly: { weekday: number; hour: number; calls: number }[];
+}) {
+  const { t, i18n } = useTranslation();
+  const [inspected, setInspected] = useState<{ weekday: number; hour: number } | null>(null);
+  const calls = new Map(weekly.map((slot) => [slot.weekday * 24 + slot.hour, slot.calls]));
+  const maximum = Math.max(0, ...weekly.map((slot) => slot.calls));
+  // 4 January 2026 was a Sunday: day names come from the locale, not a hard-coded list.
+  const dayName = (weekday: number) =>
+    new Intl.DateTimeFormat(i18n.language, { weekday: 'short', timeZone: 'UTC' }).format(
+      Date.UTC(2026, 0, 4 + weekday)
+    );
+  const describe = (weekday: number, hour: number) =>
+    `${dayName(weekday)} ${hourLabel(hour)}:00: ${t('analytics.heatmap.events', {
+      value: analyticsNumber(calls.get(weekday * 24 + hour) ?? 0, i18n.language),
+    })}`;
+  return (
+    <>
+      <div className={styles.heatGrid} aria-hidden="true" onMouseLeave={() => setInspected(null)}>
+        <span />
+        {HOURS.map((hour) => (
+          <span key={hour} className={styles.heatHour}>
+            {hour % 3 === 0 ? hourLabel(hour) : ''}
+          </span>
+        ))}
+        {WEEK.map((weekday) => (
+          <div key={weekday} className={styles.heatRow}>
+            <span className={styles.heatDay}>{dayName(weekday)}</span>
+            {HOURS.map((hour) => (
+              <span
+                key={hour}
+                className={styles.heatCell}
+                data-level={heatLevel(calls.get(weekday * 24 + hour) ?? 0, maximum)}
+                onMouseEnter={() => setInspected({ weekday, hour })}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+      <output className={styles.chartReadout} aria-hidden="true">
+        {inspected ? describe(inspected.weekday, inspected.hour) : null}
+      </output>
+      <details className={styles.readout}>
+        <summary>{t('analytics.table_alternative')}</summary>
+        <div className={styles.tableScroll} tabIndex={0} role="region" aria-label={title}>
+          <table>
+            <caption className={styles.srOnly}>{title}</caption>
+            <thead>
+              <tr>
+                <th scope="col">{t('analytics.heatmap.weekday')}</th>
+                {HOURS.map((hour) => (
+                  <th key={hour} scope="col">
+                    {hourLabel(hour)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {WEEK.map((weekday) => (
+                <tr key={weekday}>
+                  <th scope="row">{dayName(weekday)}</th>
+                  {HOURS.map((hour) => (
+                    <td key={hour}>
+                      {analyticsNumber(calls.get(weekday * 24 + hour) ?? 0, i18n.language)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </>
   );
 }

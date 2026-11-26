@@ -1,4 +1,5 @@
 import type { AnalyticsQuery, AnalyticsResponse } from '@/domain/analytics/types';
+import { localDayStart, nextLocalDay } from '@/domain/analytics/timeZone';
 
 export const ranges = ['1h', '24h', 'today', 'yesterday', '7d', '30d'] as const;
 export type AnalyticsRange = (typeof ranges)[number];
@@ -28,20 +29,21 @@ export function analyticsTab(value: string | null): AnalyticsTab {
 export function rangeQuery(
   range: AnalyticsRange,
   now: number,
-  bucket: AnalyticsBucket = 'auto'
+  bucket: AnalyticsBucket = 'auto',
+  zone = 'UTC'
 ): AnalyticsQuery {
-  // Today and Yesterday are UTC calendar days, matching the page's UTC scope.
-  const midnight = Math.floor(now / DAY) * DAY;
+  // Today and Yesterday are calendar days in the page's zone; prox-usage buckets days there too.
+  const midnight = localDayStart(zone, now);
   const [from, to] =
     range === 'today'
       ? [midnight, now]
       : range === 'yesterday'
-        ? [midnight - DAY, midnight]
+        ? [localDayStart(zone, midnight - 1), midnight]
         : [now - rangeMilliseconds[range], now];
   return {
     from_ms: from,
     to_ms: to,
-    time_zone: 'UTC',
+    time_zone: zone,
     granularity: bucket !== 'auto' ? bucket : range === '7d' || range === '30d' ? 'day' : 'hour',
     outcome: 'all',
     limit: 25,
@@ -79,11 +81,13 @@ export function withoutCursor(query: AnalyticsQuery): AnalyticsQuery {
 }
 /** A bucket click uses the same half-open UTC interval as the server's rollup. */
 export function bucketQuery(query: AnalyticsQuery, bucket: number): AnalyticsQuery {
-  const width = query.granularity === 'day' ? 86_400_000 : 3_600_000;
+  // A local day can be 23 or 25 hours long; it ends at the next local midnight.
+  const end =
+    query.granularity === 'day' ? nextLocalDay(query.time_zone, bucket) : bucket + 3_600_000;
   return {
     ...withoutCursor(query),
     from_ms: Math.max(query.from_ms, bucket),
-    to_ms: Math.min(query.to_ms, bucket + width),
+    to_ms: Math.min(query.to_ms, end),
   };
 }
 /**

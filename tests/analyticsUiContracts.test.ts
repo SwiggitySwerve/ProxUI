@@ -152,7 +152,7 @@ describe('Analytics query and transport contracts', () => {
   test('refresh advances the selected window and clears paging while preserving filters', () => {
     const source = read('src/features/analytics/AnalyticsPage.tsx');
     const reload = source.slice(source.indexOf('const reload ='), source.indexOf('return <'));
-    expect(reload).toContain('rangeQuery(range, Date.now(), bucket)');
+    expect(reload).toContain('rangeQuery(range, Date.now(), bucket, zone)');
     expect(reload).toContain('withoutCursor(query)');
     expect(reload).toContain('to_ms: interval.to_ms');
     expect(reload).toContain('setPages([');

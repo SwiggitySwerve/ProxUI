@@ -32,6 +32,7 @@ import {
 import { AnalyticsViews } from './AnalyticsViews';
 import { ModelRates } from './ModelRates';
 import { RoutingView } from './RoutingView';
+import { browserZone, useAnalyticsZone, useDisplayZoneStore, zoneName } from './displayZone';
 import { usePrivacyStore } from '@/stores/usePrivacyStore';
 import { RequestTable } from './RequestTable';
 import { analyticsTime } from './format';
@@ -84,6 +85,9 @@ export function AnalyticsPage() {
   const [params, setParams] = useSearchParams();
   const location = useLocation();
   const revealEmails = usePrivacyStore((state) => state.revealEmails);
+  const zone = useAnalyticsZone();
+  const utcChosen = useDisplayZoneStore((state) => state.utc);
+  const setUtc = useDisplayZoneStore((state) => state.setUtc);
   // The address wins, then the last view on this machine, then the defaults.
   const [saved] = useState(readAnalyticsUiState);
   const tab = analyticsTab(params.get('tab') ?? saved.tab ?? null);
@@ -94,7 +98,7 @@ export function AnalyticsPage() {
   const urlProvider = addressProvider(params.get('provider'));
   const start = startingFilters(urlProvider, saved);
   const [pages, setPages] = useState<AnalyticsQuery[]>(() => [
-    { ...rangeQuery(range, Date.now(), bucket), ...start },
+    { ...rangeQuery(range, Date.now(), bucket, zone), ...start },
   ]);
   const query = pages[pages.length - 1];
   const [search, setSearch] = useState(start.search ?? '');
@@ -181,18 +185,20 @@ export function AnalyticsPage() {
   }, [tab]);
   const next = data ? nextPageQuery(query, data.requests) : null;
   // The query was last built for this view; a new view in the address rebuilds it once.
-  const builtFor = useRef(`${range}:${bucket}`);
-  const applyView = useCallback((value: AnalyticsRange, size: AnalyticsBucket) => {
-    builtFor.current = `${value}:${size}`;
+  // A new zone rebuilds it too: Today, Yesterday and day buckets start at its midnight.
+  const builtFor = useRef(`${range}:${bucket}:${zone}`);
+  const applyView = useCallback((value: AnalyticsRange, size: AnalyticsBucket, inZone: string) => {
+    builtFor.current = `${value}:${size}:${inZone}`;
     setBucketSelected(false);
     setSelected(null);
-    const interval = rangeQuery(value, Date.now(), size);
+    const interval = rangeQuery(value, Date.now(), size, inZone);
     setPages((current) => [
       {
         ...withoutCursor(current[current.length - 1]),
         from_ms: interval.from_ms,
         to_ms: interval.to_ms,
         granularity: interval.granularity,
+        time_zone: interval.time_zone,
       },
     ]);
   }, []);
@@ -218,7 +224,9 @@ export function AnalyticsPage() {
       setBucketSelected(false);
       setSelected(null);
       setSearch('');
-      setPages([{ ...rangeQuery(range, Date.now(), bucket), ...startingFilters(urlProvider, {}) }]);
+      setPages([
+        { ...rangeQuery(range, Date.now(), bucket, zone), ...startingFilters(urlProvider, {}) },
+      ]);
     } else if (urlProvider !== query.provider) {
       appliedProvider.current = query.provider;
       setParams(
@@ -231,14 +239,14 @@ export function AnalyticsPage() {
         { replace: true }
       );
     }
-  }, [holding, urlProvider, query.provider, range, bucket, setParams]);
+  }, [holding, urlProvider, query.provider, range, bucket, zone, setParams]);
   // Pills, followed links and edited addresses all change the view through the address.
   useEffect(() => {
-    if (builtFor.current !== `${range}:${bucket}`) applyView(range, bucket);
-  }, [range, bucket, applyView]);
+    if (builtFor.current !== `${range}:${bucket}:${zone}`) applyView(range, bucket, zone);
+  }, [range, bucket, zone, applyView]);
   const resetRange = (value: AnalyticsRange, size = bucket) => {
     // Choosing the current view again re-applies it, clearing a chart drilldown.
-    if (value === range && size === bucket) return applyView(value, size);
+    if (value === range && size === bucket) return applyView(value, size, zone);
     setParams(
       (previous) => {
         const next = new URLSearchParams(previous);
@@ -250,7 +258,7 @@ export function AnalyticsPage() {
     );
   };
   const reload = () => {
-    const interval = rangeQuery(range, Date.now(), bucket);
+    const interval = rangeQuery(range, Date.now(), bucket, zone);
     setSelected(null);
     setBucketSelected(false);
     setPages([
@@ -259,6 +267,7 @@ export function AnalyticsPage() {
         from_ms: interval.from_ms,
         to_ms: interval.to_ms,
         granularity: interval.granularity,
+        time_zone: interval.time_zone,
       },
     ]);
     setRefresh((value) => value + 1);
@@ -271,8 +280,29 @@ export function AnalyticsPage() {
         <div className={styles.headline}>
           <h1>{t('analytics.title')}</h1>
           <p className={styles.scope}>
-            {analyticsTime(covered.from_ms, i18n.language)} →{' '}
-            {analyticsTime(covered.to_ms, i18n.language)} UTC
+            {analyticsTime(covered.from_ms, i18n.language, zone)} →{' '}
+            {analyticsTime(covered.to_ms, i18n.language, zone)}{' '}
+            {zoneName(zone, covered.to_ms, i18n.language)}
+            {!utcChosen && zone === 'UTC' && browserZone() !== 'UTC' && (
+              <span> · {t('analytics.zone.fallback')}</span>
+            )}
+            {/* One choice per browser: local time (the default) or UTC. */}
+            {(utcChosen || zone !== 'UTC') && (
+              <>
+                {' · '}
+                <button
+                  type="button"
+                  className={styles.textButton}
+                  onClick={() => setUtc(!utcChosen)}
+                >
+                  {utcChosen
+                    ? t('analytics.zone.use_local', {
+                        zone: zoneName(browserZone(), query.to_ms, i18n.language),
+                      })
+                    : t('analytics.zone.use_utc')}
+                </button>
+              </>
+            )}
             {bucketSelected && <span> · {t('analytics.selected_bucket')}</span>}
             {query.search && <span> {`· ${t('analytics.search')}: ${query.search}`}</span>}
           </p>
@@ -285,7 +315,7 @@ export function AnalyticsPage() {
                   )}
                 </span>
                 <span>
-                  {`${t('analytics.updated')}: ${analyticsTime(data.generated_at_ms, i18n.language)} UTC`}
+                  {`${t('analytics.updated')}: ${analyticsTime(data.generated_at_ms, i18n.language, zone)} ${zoneName(zone, data.generated_at_ms, i18n.language)}`}
                 </span>
               </div>
               <details>
@@ -371,7 +401,7 @@ export function AnalyticsPage() {
           >
             <div className={styles.presetRow}>
               <Pills
-                label={t('analytics.range')}
+                label={t('analytics.range', { zone: zoneName(zone, query.to_ms, i18n.language) })}
                 values={ranges}
                 current={range}
                 onPick={(value) => resetRange(value)}
@@ -396,7 +426,7 @@ export function AnalyticsPage() {
                   disabled={activeFilters === 0 && !bucketSelected}
                   title={t('analytics.clear_filters')}
                   onClick={() => {
-                    setPages([rangeQuery(range, Date.now(), bucket)]);
+                    setPages([rangeQuery(range, Date.now(), bucket, zone)]);
                     setBucketSelected(false);
                     setSearch('');
                     setSelected(null);
@@ -574,6 +604,8 @@ export function AnalyticsPage() {
                 page={pages.length}
                 providerLabels={new Map(data.providers.map((p) => [p.key, p.label]))}
                 reveal={revealEmails}
+                zone={zone}
+                zoneLabel={zoneName(zone, query.to_ms, i18n.language)}
                 canPrevious={pages.length > 1}
                 canNext={next !== null}
                 onPrevious={() => {
@@ -600,6 +632,8 @@ export function AnalyticsPage() {
                 }}
                 onModel={(model) => drilldown({ ...withoutCursor(query), model })}
                 onProvider={(provider) => drilldown({ ...withoutCursor(query), provider })}
+                zone={zone}
+                reveal={revealEmails}
                 onShowHourly={() => {
                   resetRange(range, 'hour');
                   // The prompt unmounts while hours load; focus stays in the panel, not the page.

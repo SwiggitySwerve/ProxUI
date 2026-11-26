@@ -3072,7 +3072,7 @@
     "nav_meta": "Xu hướng sử dụng, chi phí và thực thi",
     "refresh": "Làm mới",
     "filters": "Bộ lọc chung",
-    "range": "Khoảng thời gian · UTC",
+    "range": "Khoảng thời gian · {{zone}}",
     "ranges": {
       "1h": "1 giờ qua",
       "24h": "24 giờ qua",
@@ -3139,7 +3139,7 @@
     "empty": "Không có sự kiện phù hợp. Thử mở rộng thời gian hoặc xóa bộ lọc.",
     "empty_chart": "Không có mẫu trong khoảng này.",
     "table_alternative": "Xem bảng dữ liệu",
-    "bucket_category": "Khoảng UTC / danh mục",
+    "bucket_category": "Khoảng / danh mục",
     "unavailable_value": "Không khả dụng",
     "not_reported": "Chưa báo cáo / không khả dụng",
     "yes": "Có",
@@ -3156,17 +3156,27 @@
     "by_provider": "Theo nhà cung cấp",
     "by_model": "Theo mô hình",
     "events_and_failures": "Sự kiện và lỗi",
+    "peak_in_flight": "Số yêu cầu đồng thời cao nhất theo tài khoản",
     "failed_count": "{{value}} lỗi",
     "failed_for": "của {{label}}",
     "failure_readout": "{{label}}: {{events}} sự kiện, {{failed}} lỗi",
+    "zone": {
+      "use_utc": "Dùng UTC",
+      "use_local": "Dùng giờ địa phương ({{zone}})",
+      "fallback": "Múi giờ của bạn lệch không tròn giờ nên thời gian hiển thị theo UTC."
+    },
     "heatmap": {
-      "title": "Sự kiện theo giờ · UTC",
+      "title": "Sự kiện theo giờ · {{zone}}",
+      "view": "Chế độ xem",
+      "days": "Theo ngày",
+      "weekdays": "Theo thứ",
+      "weekday": "Thứ",
       "events": "{{value}} sự kiện",
       "unmeasured": "chưa đo",
       "daily": "Bản đồ giờ cần nhóm theo giờ.",
       "show_hourly": "Xem theo giờ",
       "keys": "Phím mũi tên di chuyển giữa các giờ; Enter mở yêu cầu của giờ đó.",
-      "day": "Ngày (UTC)"
+      "day": "Ngày ({{zone}})"
     },
     "provider_split": {
       "title": "Token theo nhà cung cấp",
@@ -3186,7 +3196,7 @@
       "cell": "{{events}} sự kiện, {{failed}} lỗi",
       "unsupported": "Máy chủ này chưa báo cáo tài khoản."
     },
-    "timestamp": "Thời gian · UTC",
+    "timestamp": "Thời gian · {{zone}}",
     "provider_model": "Nhà cung cấp / mô hình",
     "tokens_in_out": "Token đầu vào / đầu ra",
     "cache_read_write": "Đọc / ghi bộ nhớ đệm",

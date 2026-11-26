@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { CopyButton } from '@/features/oauth/components/CopyButton';
 import { analyticsNumber, analyticsTime } from './format';
+import { zoneName } from './displayZone';
 import { maskIdentifier } from '@/domain/quotaPool/mask';
 import { providerInk } from '@/features/providers/identity';
 import styles from './AnalyticsPage.module.scss';
@@ -64,8 +65,11 @@ const accountFields = new Set<keyof AnalyticsRequest>(['account_label', 'auth_fi
 export function RequestDetails({
   request,
   reveal = true,
+  zone = 'UTC',
 }: {
   request: AnalyticsRequest;
+  /** The page's time zone for the timestamp. */
+  zone?: string;
   /** The browser's "Show emails" choice; off shows account names masked. */
   reveal?: boolean;
 }) {
@@ -74,8 +78,13 @@ export function RequestDetails({
     <>
       <p className={styles.muted}>{t('analytics.detail_note')}</p>
       <dl className={styles.details}>
-        <dt>{t('analytics.timestamp')}</dt>
-        <dd>{analyticsTime(request.timestamp_ms, i18n.language)} UTC</dd>
+        <dt>
+          {t('analytics.timestamp', { zone: zoneName(zone, request.timestamp_ms, i18n.language) })}
+        </dt>
+        <dd>
+          {analyticsTime(request.timestamp_ms, i18n.language, zone)}{' '}
+          {zoneName(zone, request.timestamp_ms, i18n.language)}
+        </dd>
         <dt>{t('analytics.outcome')}</dt>
         <dd>{t(`analytics.${request.failed ? 'failed_outcome' : 'success'}`)}</dd>
         {request.fail_summary && (
@@ -171,6 +180,8 @@ export function RequestTable({
   page,
   providerLabels,
   reveal = true,
+  zone = 'UTC',
+  zoneLabel = 'UTC',
 }: {
   data: AnalyticsResponse['requests'];
   selected: AnalyticsRequest | null;
@@ -184,6 +195,9 @@ export function RequestTable({
   providerLabels?: ReadonlyMap<string, string>;
   /** The browser's "Show emails" choice, for the request details. */
   reveal?: boolean;
+  /** The page's time zone for timestamps, and its short name for the column. */
+  zone?: string;
+  zoneLabel?: string;
 }) {
   const { t, i18n } = useTranslation();
   const n = (value: number | null, currency = false) =>
@@ -220,7 +234,7 @@ export function RequestTable({
                   'details',
                 ].map((key) => (
                   <th scope="col" key={key}>
-                    {t(`analytics.${key}`)}
+                    {t(`analytics.${key}`, { zone: zoneLabel })}
                   </th>
                 ))}
               </tr>
@@ -228,8 +242,8 @@ export function RequestTable({
             <tbody>
               {data.items.map((r) => (
                 <tr key={r.id}>
-                  <td data-label={t('analytics.timestamp')}>
-                    {analyticsTime(r.timestamp_ms, i18n.language)}
+                  <td data-label={t('analytics.timestamp', { zone: zoneLabel })}>
+                    {analyticsTime(r.timestamp_ms, i18n.language, zone)}
                   </td>
                   <td data-label={t('analytics.provider_model')}>
                     <strong>{r.model}</strong>
@@ -300,7 +314,7 @@ export function RequestTable({
         width={740}
         onClose={() => onSelect(null)}
       >
-        {selected && <RequestDetails request={selected} reveal={reveal} />}
+        {selected && <RequestDetails request={selected} reveal={reveal} zone={zone} />}
       </Modal>
     </section>
   );

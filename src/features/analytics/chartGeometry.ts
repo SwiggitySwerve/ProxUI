@@ -1,3 +1,4 @@
+import { localDayStart, nextLocalDay, zoneOffsetMinutes } from '@/domain/analytics/timeZone';
 export interface ChartDatum {
   key: string;
   label: string;
@@ -68,15 +69,34 @@ export function niceMaximum(value: number) {
 
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
-/** Evenly spaced UTC tick times on whole hours or days, at most `maxTicks` of them. */
-export function timeTicks(from: number, to: number, interval: number, maxTicks: number) {
+/**
+ * Evenly spaced tick times on whole hours or days of the page's zone, at most `maxTicks` of them.
+ * Hours align to the zone's clock (its offset is a whole number of hours); days start at its
+ * local midnight.
+ */
+export function timeTicks(
+  from: number,
+  to: number,
+  interval: number,
+  maxTicks: number,
+  zone = 'UTC'
+) {
   const steps = [1, 2, 3, 4, 6, 12]
     .map((h) => h * HOUR)
     .concat([1, 2, 5, 7, 14].map((d) => d * DAY));
   const step =
     steps.find((s) => s >= interval && (to - from) / s <= maxTicks) ?? steps[steps.length - 1];
   const ticks: number[] = [];
-  for (let at = Math.ceil(from / step) * step; at <= to; at += step) ticks.push(at);
+  if (step < DAY) {
+    const offset = zoneOffsetMinutes(zone, from) * 60_000;
+    for (let at = Math.ceil((from + offset) / step) * step - offset; at <= to; at += step)
+      ticks.push(at);
+    return ticks;
+  }
+  let day = localDayStart(zone, from);
+  if (day < from) day = nextLocalDay(zone, day);
+  for (let index = 0; day <= to; day = nextLocalDay(zone, day), index++)
+    if (index % (step / DAY) === 0) ticks.push(day);
   return ticks;
 }
 
@@ -84,11 +104,20 @@ export function timeTicks(from: number, to: number, interval: number, maxTicks: 
  * Every UTC bucket in the range, marking which ones the server returned. The service only returns
  * buckets that hold events, so an absent bucket in fully retained data had no traffic.
  */
-export function bucketTimeline(present: number[], from: number, to: number, interval: number) {
+export function bucketTimeline(
+  present: number[],
+  from: number,
+  to: number,
+  interval: number,
+  zone = 'UTC'
+) {
   const seen = new Set(present);
   const buckets: { at: number; present: boolean }[] = [];
-  for (let at = Math.floor(from / interval) * interval; at < to; at += interval)
-    buckets.push({ at, present: seen.has(at) });
+  // Days start at the zone's local midnight, as prox-usage buckets them (23 to 25 hours long).
+  const next = (at: number) => (interval >= DAY ? nextLocalDay(zone, at) : at + interval);
+  const first =
+    interval >= DAY ? localDayStart(zone, from) : Math.floor(from / interval) * interval;
+  for (let at = first; at < to; at = next(at)) buckets.push({ at, present: seen.has(at) });
   return buckets;
 }
 
@@ -140,13 +169,14 @@ export interface HourCell {
 export function hourGrid(
   values: ReadonlyMap<number, number | null>,
   from: number,
-  to: number
+  to: number,
+  zone = 'UTC'
 ): { day: number; cells: HourCell[] }[] {
-  const HOUR = 3_600_000;
-  const DAY = 24 * HOUR;
   const rows: { day: number; cells: HourCell[] }[] = [];
   if (to <= from) return rows;
-  for (let day = Math.floor(from / DAY) * DAY; day < to; day += DAY) {
+  // Rows are the zone's local days; on a daylight-saving day the 24 columns are its first 24
+  // hours, so the changeover hour can repeat or be skipped.
+  for (let day = localDayStart(zone, from); day < to; day = nextLocalDay(zone, day)) {
     const cells: HourCell[] = [];
     for (let hour = 0; hour < 24; hour++) {
       const at = day + hour * HOUR;

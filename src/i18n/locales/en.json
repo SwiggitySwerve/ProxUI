@@ -3066,7 +3066,7 @@
     "nav_meta": "Usage, cost and execution trends",
     "refresh": "Refresh",
     "filters": "Shared filters",
-    "range": "Time range · UTC",
+    "range": "Time range · {{zone}}",
     "ranges": {
       "1h": "Last hour",
       "24h": "Last 24 hours",
@@ -3133,7 +3133,7 @@
     "empty": "No retained events match these filters. Try a wider range or clear filters.",
     "empty_chart": "No samples in this interval.",
     "table_alternative": "View data table",
-    "bucket_category": "UTC bucket / category",
+    "bucket_category": "Bucket / category",
     "unavailable_value": "Unavailable",
     "not_reported": "Not reported / unavailable",
     "yes": "Yes",
@@ -3150,17 +3150,27 @@
     "by_provider": "By provider",
     "by_model": "By model",
     "events_and_failures": "Events and failures",
+    "peak_in_flight": "Peak requests in flight, by account",
     "failed_count": "{{value}} failed",
     "failed_for": "for {{label}}",
     "failure_readout": "{{label}}: {{events}} events, {{failed}} failed",
+    "zone": {
+      "use_utc": "Use UTC",
+      "use_local": "Use local time ({{zone}})",
+      "fallback": "Your time zone has a part-hour offset, so times are in UTC."
+    },
     "heatmap": {
-      "title": "Events by hour · UTC",
+      "title": "Events by hour · {{zone}}",
+      "view": "View",
+      "days": "By date",
+      "weekdays": "By weekday",
+      "weekday": "Weekday",
       "events": "{{value}} events",
       "unmeasured": "not measured",
       "daily": "The hour map needs hourly buckets.",
       "show_hourly": "Show by hour",
       "keys": "Arrow keys move between hours; Enter opens that hour's requests.",
-      "day": "Day (UTC)"
+      "day": "Day ({{zone}})"
     },
     "provider_split": {
       "title": "Tokens by provider",
@@ -3180,7 +3190,7 @@
       "cell": "{{events}} events, {{failed}} failed",
       "unsupported": "This server does not report accounts yet."
     },
-    "timestamp": "Time · UTC",
+    "timestamp": "Time · {{zone}}",
     "provider_model": "Provider / model",
     "tokens_in_out": "Input / output tokens",
     "cache_read_write": "Cache read / write",

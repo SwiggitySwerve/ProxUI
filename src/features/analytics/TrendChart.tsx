@@ -2,6 +2,8 @@ import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { lineSegments, niceMaximum, smoothPath, timeTicks } from './chartGeometry';
 import { analyticsCompact, analyticsNumber, analyticsShortTime, analyticsTime } from './format';
+import { localDayStart } from '@/domain/analytics/timeZone';
+import { zoneName } from './displayZone';
 import styles from './AnalyticsPage.module.scss';
 
 export interface TrendSeries {
@@ -35,6 +37,7 @@ export function TrendChart({
   sharedScale = false,
   area = true,
   onSelect,
+  zone = 'UTC',
 }: {
   title: string;
   series: TrendSeries[];
@@ -46,6 +49,8 @@ export function TrendChart({
   /** Fill under the first series; only volumes read as an area, never durations. */
   area?: boolean;
   onSelect?: (at: number) => void;
+  /** The page's time zone for labels and day ticks. */
+  zone?: string;
 }) {
   const { t, i18n } = useTranslation();
   const id = useId();
@@ -69,7 +74,7 @@ export function TrendChart({
   const value = (index: number, v: number | null | undefined) =>
     analyticsNumber(v ?? null, i18n.language, series[index].currency);
   const pointLabel = (point: TrendPoint) =>
-    `${analyticsTime(point.at, i18n.language)} UTC · ${series
+    `${analyticsTime(point.at, i18n.language, zone)} ${zoneName(zone, point.at, i18n.language)} · ${series
       .map((s, index) => `${s.label}: ${value(index, point.values[index])}`)
       .join(' · ')}`;
   const current = points.find((p) => p.at === inspected);
@@ -84,7 +89,7 @@ export function TrendChart({
           .filter((index) => measured[index])
           .slice(0, 3);
   const pct = (at: number) => ((at - from) / Math.max(1, to - from)) * 100;
-  const ticks = timeTicks(from, to, interval, 6);
+  const ticks = timeTicks(from, to, interval, 6, zone);
   // One count format for the whole chart, so neighbouring axes never mix 2,000 with 20K.
   const compactCounts = series.some((s, index) => !s.currency && lines[index].maximum >= 10_000);
   const tick = (index: number, fraction: number) => {
@@ -305,7 +310,12 @@ export function TrendChart({
                   }
                 >
                   {/* Hourly axes name the day where it changes. */}
-                  {analyticsShortTime(at, i18n.language, daily || at % 86_400_000 === 0)}
+                  {analyticsShortTime(
+                    at,
+                    i18n.language,
+                    daily || localDayStart(zone, at) === at,
+                    zone
+                  )}
                 </span>
               ))}
             </div>
@@ -356,10 +366,11 @@ export function TrendChart({
                             className={styles.textButton}
                             onClick={() => onSelect(point.at)}
                           >
-                            {analyticsTime(point.at, i18n.language)} UTC
+                            {analyticsTime(point.at, i18n.language, zone)}{' '}
+                            {zoneName(zone, point.at, i18n.language)}
                           </button>
                         ) : (
-                          `${analyticsTime(point.at, i18n.language)} UTC`
+                          `${analyticsTime(point.at, i18n.language, zone)} ${zoneName(zone, point.at, i18n.language)}`
                         )}
                       </th>
                       {series.map((s, index) => (
