@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/icons';
 import { AnalyticsChart } from './AnalyticsChart';
 import { HourHeatmap } from './HourHeatmap';
+import { ProviderStackChart } from './ProviderStackChart';
 import { bucketTimeline, lineSegments, smoothPath } from './chartGeometry';
 import { analyticsCompact, analyticsMoney, analyticsNumber } from './format';
 import type { AnalyticsTab } from './queryState';
@@ -396,6 +397,19 @@ export function AnalyticsViews({
               />
             )}
           </div>
+          {tab === 'tokens' && data.provider_timeline && data.provider_timeline.length > 0 && (
+            <ProviderStackChart
+              title={t('analytics.provider_split.title')}
+              split={data.provider_timeline}
+              buckets={buckets.map((bucket) => bucket.at)}
+              from={data.from_ms}
+              to={data.to_ms}
+              interval={interval}
+              label={(provider) =>
+                data.providers.find((p) => p.key === provider)?.label ?? provider
+              }
+            />
+          )}
           <div className={styles.chartGrid}>
             <AnalyticsChart
               title={`${t('analytics.by_provider')} · ${breakdownTitle}`}
@@ -405,10 +419,10 @@ export function AnalyticsViews({
                 label: p.label,
                 value: valueOf(p, breakdownMetric),
                 failed: p.failure_calls,
+                provider: p.key,
               }))}
               onSelect={onProvider}
               failures={failureSplit && { onSelect: failureSplit.onProvider }}
-              providers
             />
             <AnalyticsChart
               title={`${t('analytics.by_model')} · ${breakdownTitle}`}
@@ -418,6 +432,8 @@ export function AnalyticsViews({
                 label: m.label,
                 value: valueOf(m, breakdownMetric),
                 failed: m.failure_calls,
+                // A model takes a provider's colour only when one provider served all of it.
+                provider: m.providers?.length === 1 ? m.providers[0] : undefined,
               }))}
               onSelect={onModel}
               failures={failureSplit && { onSelect: failureSplit.onModel }}

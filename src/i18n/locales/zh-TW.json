@@ -3187,6 +3187,12 @@
       "keys": "方向鍵在小時之間移動；Enter 開啟該小時的請求。",
       "day": "日期 (UTC)"
     },
+    "provider_split": {
+      "title": "按供應商的權杖",
+      "other": "其他",
+      "none": "無權杖",
+      "open_quota": "在配額中開啟 {{provider}}"
+    },
     "timestamp": "時間 · UTC",
     "provider_model": "供應商 / 模型",
     "tokens_in_out": "輸入 / 輸出權杖",

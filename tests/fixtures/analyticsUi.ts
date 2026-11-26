@@ -199,6 +199,26 @@ export function analyticsScenario(
       p95_ttft_ms: i % 3 === 0 ? null : [150, 210, 320, 480, 260, 300][i % 6],
     })
   ).filter((_, i) => i !== 2); // A missing time bucket is different from an explicit zero.
+  // Each bucket split across three providers; the parts add up to the bucket.
+  data.provider_timeline = data.timeline.flatMap((point, i) => {
+    const shares: Array<[string, number]> = [
+      ['claude', [0.55, 0.3, 0.6, 0.45][i % 4]],
+      ['codex', [0.3, 0.5, 0.25, 0.35][i % 4]],
+    ];
+    shares.push(['antigravity', 1 - shares[0][1] - shares[1][1]]);
+    return shares.map(([provider, share]) => ({
+      provider,
+      bucket_ms: point.bucket_ms,
+      calls: Math.round(point.calls * share),
+      failure_calls: 0,
+      input_tokens: Math.round(point.input_tokens * share),
+      output_tokens: Math.round(point.output_tokens * share),
+      cache_read_tokens: Math.round(point.cache_read_tokens * share),
+      cache_creation_tokens: 0,
+      reasoning_tokens: 0,
+      total_tokens: Math.round(point.total_tokens * share),
+    }));
+  });
   data.providers.push({ ...data.summary, key: 'codex', label: 'GPT / Codex' });
   data.requests.items.push({
     ...structuredClone(analyticsUiRequest),

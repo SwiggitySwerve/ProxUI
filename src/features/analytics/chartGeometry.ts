@@ -4,6 +4,8 @@ export interface ChartDatum {
   value: number | null;
   /** Failed events within `value`, as prox-usage counted them. */
   failed?: number;
+  /** The provider whose colour this row takes; none keeps the neutral bar. */
+  provider?: string;
   at?: number;
 }
 export interface LinePoint {

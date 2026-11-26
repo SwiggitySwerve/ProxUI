@@ -3161,6 +3161,12 @@
       "keys": "Arrow keys move between hours; Enter opens that hour's requests.",
       "day": "Day (UTC)"
     },
+    "provider_split": {
+      "title": "Tokens by provider",
+      "other": "Other",
+      "none": "no tokens",
+      "open_quota": "Open {{provider}} in Quota"
+    },
     "timestamp": "Time · UTC",
     "provider_model": "Provider / model",
     "tokens_in_out": "Input / output tokens",
