@@ -31,7 +31,7 @@ export function createQuotaConfigs(session: SourceSession, store?: QuotaStore) {
     ...(config.enrichQuota ? { enrichQuota: guard(config.enrichQuota) } : {}),
   });
   return {
-    antigravity: bind(createAntigravityQuotaConfig(deps)),
+    antigravity: bind(createAntigravityQuotaConfig()),
     claude: bind(createClaudeQuotaConfig(deps)),
     codex: bind(createCodexQuotaConfig(deps)),
     devin: bind(createDevinQuotaConfig(deps)),

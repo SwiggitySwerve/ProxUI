@@ -604,19 +604,35 @@ export function buildDashboard(
   const weeklyOnly = suppliedWeeklyOnly ?? weeklyOnlyAccountIds(samples, options.nowMs);
   // Pools only for the providers a source is collected for. Where that is unknown (legacy history,
   // an instance no longer configured): Claude and Codex, and Antigravity once it has accounts.
-  const scopeProviders = (scope?: QuotaSourceView) => [
-    ...(scope?.providers ??
+  // Stored Antigravity history also stays visible if its source is still in the manifest even
+  // though Antigravity is never collected from a hub.
+  const hasStoredAntigravity = (instanceId?: string) =>
+    accounts.some((a) => a.instanceId === instanceId && a.provider === 'antigravity');
+  const scopeProviders = (scope?: QuotaSourceView) => {
+    const base =
+      scope?.providers ??
       QUOTA_PROVIDERS.filter(
-        (provider) =>
-          provider !== 'antigravity' ||
-          accounts.some((a) => a.instanceId === scope?.instanceId && a.provider === provider)
-      )),
-    ...(discovered?.pooled.get(scope?.instanceId ?? '')?.keys() ?? []),
-  ];
+        (provider) => provider !== 'antigravity' || hasStoredAntigravity(scope?.instanceId)
+      );
+    return [
+      ...base,
+      ...(!base.includes('antigravity') && hasStoredAntigravity(scope?.instanceId)
+        ? (['antigravity'] as const)
+        : []),
+      ...(discovered?.pooled.get(scope?.instanceId ?? '')?.keys() ?? []),
+    ];
+  };
   const allPools = (scoped ? [...scopes.values()] : [undefined]).flatMap((scope) => {
     const source = scope && { instanceId: scope.instanceId, sourceLabel: scope.sourceLabel };
+    const sourceEntry = sources?.find((entry) => entry.instanceId === source?.instanceId);
     return scopeProviders(scope).map((provider) => {
       const generic = discovered?.pooled.get(scope?.instanceId ?? '')?.get(provider);
+      const providerNotCollected =
+        sources !== undefined &&
+        (!sourceEntry ||
+          (provider === 'antigravity' &&
+            sourceEntry.providers !== undefined &&
+            !sourceEntry.providers.includes('antigravity')));
       return {
         ...buildPool(
           provider,
@@ -625,8 +641,7 @@ export function buildDashboard(
           options,
           fromMs,
           toMs,
-          (sources !== undefined &&
-            !sources.some((entry) => entry.instanceId === source?.instanceId)) ||
+          providerNotCollected ||
             collection.issues.some(
               (issue) =>
                 issue.instanceId === source?.instanceId &&

@@ -73,9 +73,13 @@ There is no Gemini / Antigravity source. The ProxD Gemini hub (port 8321) was ta
 down for good on 2026-11-23: Google suspended the account for a Terms of Service
 violation, and the Antigravity and Gemini CLI terms bar third-party tools from using
 their OAuth sign-in, so no hub may hold that login and prox-history may not read
-Google's quota endpoints with it. The Gemini history recorded until then stays
-readable on Quota Management (prox-history keeps a pool for stored accounts whose
-source is no longer configured).
+Google's quota endpoints with it. On 2026-11-26 the code that could do so was removed:
+prox-history never inventories or reads Antigravity credentials, even on a hub that
+declares them, the Auth Files card sends nothing for them, and
+`tests/noGoogleQuotaReads.test.ts` fails if any source file names Google's private
+Cloud Code backend. The Gemini history recorded until then stays readable on Quota
+Management (prox-history keeps a pool for stored accounts whose source is no longer
+configured).
 
 The checked-in source manifest, `deploy/provider-sources.json`, owns instance
 membership, ports, paths, aliases, and explicit authentication-sharing scopes.

@@ -3,7 +3,6 @@ import { isBuiltInPoolProvider } from '../../src/domain/quotaPool/providers';
 import type { BuiltInPoolProviderId, PoolProviderId } from '../../src/domain/quotaPool/types';
 import { isRecord } from '../../src/utils/helpers';
 import { normalizePlanType, parseCodexUsagePayload } from '../../src/utils/quota/parsers';
-import { parseAntigravitySubscriptionSummary } from '../../src/services/api/antigravitySubscription';
 import type { QuotaSample } from './types';
 import { sameResetCycle } from './values';
 
@@ -139,9 +138,4 @@ export function planFromClaudeProfile(body: unknown): string | null {
     .map(normalizePlanType)
     .filter((plan): plan is string => plan !== null);
   return candidates.find((plan) => planWeight('claude', plan).known) ?? candidates[0] ?? null;
-}
-
-/** Antigravity's `loadCodeAssist` names the plan as a tier id, the paid tier first. */
-export function planFromAntigravityCodeAssist(body: unknown): string | null {
-  return parseAntigravitySubscriptionSummary(body)?.tierId ?? null;
 }

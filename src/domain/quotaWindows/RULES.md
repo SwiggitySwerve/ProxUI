@@ -1,8 +1,9 @@
 # Provider quota windows
 
 This package owns Claude and Codex payload-to-window conversion for both the
-existing credential UI and the ProxUI history collector, and Antigravity's for the
-collector (`antigravity.ts`, over the shared `buildAntigravityQuotaGroups`): the
+existing credential UI and the ProxUI history collector, and Antigravity's
+(`antigravity.ts`, over the shared `buildAntigravityQuotaGroups`), which only decodes
+readings: nothing reads them from Google any more (`server/quota/RULES.md`). The
 Gemini group's `gemini-5h`/`gemini-weekly` buckets are its `five-hour`/`weekly`
 windows; every other bucket keeps its id and the `model` lane. Provider data modules
 re-export the builders for existing callers. Keep IDs, reset parsing, periods,

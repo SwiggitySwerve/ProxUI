@@ -748,6 +748,7 @@
     "load_failed": "Failed to load quota: {{message}}",
     "missing_auth_index": "Auth file missing auth_index",
     "missing_project_id": "Antigravity credential missing project_id. Re-login or refresh the credential to discover the project.",
+    "not_read": "ProxUI never reads Gemini quota through a hub: Google's terms bar third-party use of the Antigravity sign-in.",
     "empty_models": "No quota data available",
     "plan_label": "Plan",
     "group_gemini_models": "Gemini models",

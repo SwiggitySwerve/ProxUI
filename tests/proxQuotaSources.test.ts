@@ -649,7 +649,7 @@ describe('enumerated quota sources', () => {
     expect(f.store.listSamples(0, NOW + MANUAL_REFRESH_INTERVAL_MS)).toHaveLength(8);
   });
 
-  test('a non-pool source without a catalog is only probed; an Antigravity source keeps its pool', async () => {
+  test('a non-pool source without a catalog is only probed, and so is an Antigravity source', async () => {
     const f = fixture();
     const extra = (instanceId: string, providers: string[]) => {
       const managementKeyFile = join(temporary(), `${instanceId}.key`);
@@ -683,13 +683,13 @@ describe('enumerated quota sources', () => {
     });
     cleanups.push(() => collector.stop());
     await collector.refresh();
-    expect(
-      f.calls.filter((call) => call.instanceId === 'xai-only').map((call) => call.url.pathname)
-    ).toEqual(['/v8/management/providers']);
-    // Inventoried, but it lists no Antigravity credential, so no usage API is called there.
-    expect(f.calls.filter((call) => call.instanceId === 'antigravity-only' && call.body)).toEqual(
-      []
-    );
+    // Google's terms bar third-party use of the Antigravity sign-in: a source declaring it is
+    // never inventoried for it, so it is probed like any source without a pool.
+    for (const instanceId of ['xai-only', 'antigravity-only']) {
+      expect(
+        f.calls.filter((call) => call.instanceId === instanceId).map((call) => call.url.pathname)
+      ).toEqual(['/v8/management/providers']);
+    }
     expect(collector.sources?.map((source) => source.instanceId)).toEqual([
       'source-a',
       'source-b',
@@ -701,7 +701,7 @@ describe('enumerated quota sources', () => {
       collector.inventorySources
         .filter((s) => s.instanceId === 'antigravity-only' || s.instanceId === 'xai-only')
         .map((s) => [s.instanceId, s.provider])
-    ).toEqual([['antigravity-only', 'antigravity']]);
+    ).toEqual([]);
     expect(collector.issues).toEqual([]);
     const dashboard = buildDashboard(
       f.store.listAccounts(),
@@ -713,7 +713,7 @@ describe('enumerated quota sources', () => {
       dashboard.pools
         .filter((pool) => pool.instanceId === 'antigravity-only' || pool.instanceId === 'xai-only')
         .map((pool) => [pool.instanceId, pool.provider, pool.accountCount])
-    ).toEqual([['antigravity-only', 'antigravity', 0]]);
+    ).toEqual([]);
     expect(dashboard.combinations?.map((c) => [c.provider, c.occurrenceCount])).toEqual([
       ['claude', 3],
     ]);

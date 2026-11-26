@@ -30,9 +30,6 @@ import { decodeAntigravityQuotaWindows } from '../../src/domain/quotaWindows/ant
 import { laneOf } from '../../src/domain/quotaWindows/lanes';
 import { decodeNormalizedQuota } from '../../src/domain/quotaWindows/normalized';
 import {
-  ANTIGRAVITY_CODE_ASSIST_URL,
-  ANTIGRAVITY_QUOTA_URLS,
-  ANTIGRAVITY_REQUEST_HEADERS,
   CLAUDE_PROFILE_URL,
   CLAUDE_USAGE_WINDOW_KEYS,
   CLAUDE_REQUEST_HEADERS,
@@ -50,13 +47,7 @@ import {
 import { normalizeClaudeUsageSnapshot } from '../../src/services/api/claudeUsage';
 import type { ClaudeUsageSnapshot } from '../../src/types/quota';
 import { isRecord } from '../../src/utils/helpers';
-import {
-  planChangeSuspected,
-  planFromAntigravityCodeAssist,
-  planFromClaudeProfile,
-  planFromCodexUsage,
-} from './plans';
-import { CODE_ASSIST_REQUEST_BODY } from '../../src/services/api/antigravitySubscription';
+import { planChangeSuspected, planFromClaudeProfile, planFromCodexUsage } from './plans';
 import { QuotaStore } from './store';
 import type { InventorySourceState, InventorySourceStatus } from './inventory';
 import { codexCreditExpiries, readAccountResets, withCodexCreditDetails } from './resets';
@@ -79,7 +70,7 @@ import {
 /** A targeted read of one account starts at most this often. */
 const ACCOUNT_REFRESH_FLOOR_MS = 20_000;
 /**
- * Claude and Antigravity name the plan only in a separate profile read. Scheduled collections ask
+ * Claude names the plan only in a separate profile read. Scheduled collections ask
  * again once this long has passed since the last ask, so an upgrade or downgrade reweights the
  * pool at the first collection after it, without a restart.
  */
@@ -159,8 +150,6 @@ interface InventoryAccount {
   account: StoredAccount;
   authIndex: string;
   chatgptAccountId: string | null;
-  /** Antigravity's Cloud Code project, which its quota read names. */
-  projectId: string | null;
 }
 
 interface InventoryGroup {
@@ -181,10 +170,12 @@ function deletionNames(scopes: DeleteScopes, instanceId: string | undefined) {
 
 function collectionSource(source: DeploymentSource): CollectionSource {
   const declared = source.providers;
-  const providers = QUOTA_PROVIDERS.filter((id) =>
-    id === 'antigravity'
-      ? declared?.includes(id) === true
-      : !declared || declared.some((provider) => provider === 'claude' || provider === 'codex')
+  // Never Antigravity: Google's terms bar third-party use of its sign-in, so prox-history neither
+  // inventories nor reads it on any hub (docs/PROX-SETUP.md). Its stored history stays readable.
+  const providers = QUOTA_PROVIDERS.filter(
+    (id) =>
+      id !== 'antigravity' &&
+      (!declared || declared.some((provider) => provider === 'claude' || provider === 'codex'))
   );
   return Object.freeze({
     ...source,
@@ -255,7 +246,6 @@ function inventory(payload: unknown, provider: PoolProviderId, nowMs: number): I
         isRecord(file.id_token) && boundedString(file.id_token.chatgpt_account_id, 256)
           ? file.id_token.chatgpt_account_id
           : null,
-      projectId: boundedString(file.project_id, 256) ? file.project_id : null,
       account: {
         id,
         provider,
@@ -948,7 +938,6 @@ export class QuotaCollector {
           signal,
           new Map([[accountId, current.planObservedAtMs ?? null]]),
           entry.chatgptAccountId,
-          entry.projectId,
           // A targeted read (the row's Refresh) re-reads the plan sooner, so a changed
           // subscription shows at once.
           TARGETED_PLAN_FLOOR_MS
@@ -1012,8 +1001,8 @@ export class QuotaCollector {
     if (account.provider === 'codex') {
       plan = planFromCodexUsage(usageBody);
     } else {
-      // Claude names the plan only in its profile and Antigravity only in loadCodeAssist, so they
-      // are asked separately, at most every planIntervalMs.
+      // Claude names the plan only in its profile, so it is asked separately, at most every
+      // planIntervalMs.
       const observedAt = storedPlans.get(account.id) ?? null;
       const attemptedAt = this.profileAttempts.get(account.id) ?? null;
       const last = Math.max(observedAt ?? -Infinity, attemptedAt ?? -Infinity);
@@ -1021,30 +1010,18 @@ export class QuotaCollector {
       this.profileAttempts.set(account.id, this.now());
       this.suspectedPlanChanges.delete(account.id);
       try {
-        if (account.provider === 'antigravity') {
-          const response = await this.request(source, 'requests/api-call', key, signal, {
-            authIndex,
-            method: 'POST',
-            url: ANTIGRAVITY_CODE_ASSIST_URL,
-            header: ANTIGRAVITY_REQUEST_HEADERS,
-            data: CODE_ASSIST_REQUEST_BODY,
-          });
-          if (isRecord(response) && response.status_code === 200)
-            plan = planFromAntigravityCodeAssist(response.body);
-        } else {
-          const response = await this.request(source, 'requests/api-call', key, signal, {
-            authIndex,
-            method: 'GET',
-            url: CLAUDE_PROFILE_URL,
-            header: CLAUDE_REQUEST_HEADERS,
-          });
-          if (isRecord(response) && response.status_code === 200) {
-            const billing = billingFromClaudeProfile(response.body);
-            if (billing && !signal.aborted && this.store.isLive(account.id)) {
-              this.latestBilling.set(account.id, billing);
-            }
-            plan = planFromClaudeProfile(response.body);
+        const response = await this.request(source, 'requests/api-call', key, signal, {
+          authIndex,
+          method: 'GET',
+          url: CLAUDE_PROFILE_URL,
+          header: CLAUDE_REQUEST_HEADERS,
+        });
+        if (isRecord(response) && response.status_code === 200) {
+          const billing = billingFromClaudeProfile(response.body);
+          if (billing && !signal.aborted && this.store.isLive(account.id)) {
+            this.latestBilling.set(account.id, billing);
           }
+          plan = planFromClaudeProfile(response.body);
         }
       } catch {
         return;
@@ -1198,7 +1175,6 @@ export class QuotaCollector {
     outerSignal: AbortSignal,
     storedPlans: Map<string, number | null>,
     chatgptAccountId: string | null,
-    projectId: string | null = null,
     planIntervalMs = PLAN_REFRESH_MS
   ): Promise<boolean> {
     if (!this.store.isLive(account.id)) return false;
@@ -1215,7 +1191,6 @@ export class QuotaCollector {
         AbortSignal.any([outerSignal, own.signal]),
         storedPlans,
         chatgptAccountId,
-        projectId,
         planIntervalMs
       );
     } finally {
@@ -1234,49 +1209,34 @@ export class QuotaCollector {
     signal: AbortSignal,
     storedPlans: Map<string, number | null>,
     chatgptAccountId: string | null,
-    projectId: string | null,
     planIntervalMs: number
   ): Promise<boolean> {
     const provider = account.provider;
     if (!isBuiltInPoolProvider(provider)) {
       return this.pollDiscoveredAccount(account, authIndex, source, key, signal);
     }
+    // Never inventoried (`collectionSource`); without this an Antigravity credential would reach
+    // the Codex request below.
+    if (provider === 'antigravity') return false;
     let samples: QuotaSample[];
     let windows: AccountQuotaWindow[];
     let usageBody: unknown;
     let upstream: unknown;
     try {
-      if (account.provider === 'antigravity') {
-        const result = await this.readAntigravityQuota(
-          account.id,
-          source,
-          key,
-          signal,
-          authIndex,
-          projectId
-        );
-        upstream = result.response;
-        if (!result.samples || !result.windows) throw new Error('Quota request unavailable');
-        ({ samples, windows } = result);
-        usageBody = isRecord(result.response) ? result.response.body : undefined;
-      } else {
-        const claude = account.provider === 'claude';
-        const response = await this.request(source, 'requests/api-call', key, signal, {
-          authIndex,
-          method: 'GET',
-          url: claude
-            ? ANTHROPIC_API_ORIGIN + ANTHROPIC_RESET_GRANT_STATUS_PATH
-            : CODEX_USAGE_URL,
-          header: claude ? CLAUDE_REQUEST_HEADERS : CODEX_REQUEST_HEADERS,
-        });
-        upstream = response;
-        const body = quotaResponseBody(response);
-        if (body === null) {
-          throw new Error('Quota request unavailable');
-        }
-        ({ samples, windows } = quotaSamples(provider, account.id, body, this.now()));
-        usageBody = body;
+      const claude = account.provider === 'claude';
+      const response = await this.request(source, 'requests/api-call', key, signal, {
+        authIndex,
+        method: 'GET',
+        url: claude ? ANTHROPIC_API_ORIGIN + ANTHROPIC_RESET_GRANT_STATUS_PATH : CODEX_USAGE_URL,
+        header: claude ? CLAUDE_REQUEST_HEADERS : CODEX_REQUEST_HEADERS,
+      });
+      upstream = response;
+      const body = quotaResponseBody(response);
+      if (body === null) {
+        throw new Error('Quota request unavailable');
       }
+      ({ samples, windows } = quotaSamples(provider, account.id, body, this.now()));
+      usageBody = body;
     } catch {
       if (!signal.aborted && this.store.isLive(account.id)) {
         console.error(`Quota request failed: ${account.provider} ${failureDetail(upstream)}`);
@@ -1289,8 +1249,7 @@ export class QuotaCollector {
     // gone, so writing a sample would fail the whole collection; nothing may be stored for it.
     if (!signal.aborted && this.store.isLive(account.id)) {
       const readingAtMs = samples.length
-        ? // Antigravity may fill one window from a later endpoint: the poll began at the earliest.
-          Math.min(...samples.map((sample) => sample.observedAtMs))
+        ? Math.min(...samples.map((sample) => sample.observedAtMs))
         : undefined;
       if (
         provider !== 'codex' &&
@@ -1389,81 +1348,6 @@ export class QuotaCollector {
     if (reading.planLabel) this.latestDiscoveredPlanLabels.set(account.id, reading.planLabel);
     else this.latestDiscoveredPlanLabels.delete(account.id);
     return true;
-  }
-
-  /**
-   * Antigravity's quota summary for the credential's Cloud Code project, from the same endpoints,
-   * in the same order, as the hub-direct card (`ANTIGRAVITY_QUOTA_URLS`): each endpoint is
-   * validated in turn so a transport failure or malformed 200 continues to the next while
-   * cancellation stops immediately. No project id means nothing can be read.
-   */
-  private async readAntigravityQuota(
-    accountId: string,
-    source: CollectionSource,
-    key: string,
-    signal: AbortSignal,
-    authIndex: string,
-    projectId: string | null
-  ): Promise<{
-    response: unknown;
-    samples?: QuotaSample[];
-    windows?: AccountQuotaWindow[];
-  }> {
-    if (!projectId) return { response: null };
-    let lastResponse: unknown = null;
-    // An endpoint can answer 200 without one or both Gemini pool windows (a daily host may
-    // return only the Claude/GPT group). Its answer is kept and the next endpoint is asked for
-    // what is still missing, instead of recording a pool window as missing too early.
-    type Reading = { response: unknown; samples: QuotaSample[]; windows: AccountQuotaWindow[] };
-    let reading = null as Reading | null;
-    for (const url of ANTIGRAVITY_QUOTA_URLS) {
-      if (signal.aborted) throw new Error('Quota request aborted');
-      let response: unknown;
-      try {
-        response = await this.request(source, 'requests/api-call', key, signal, {
-          authIndex,
-          method: 'POST',
-          url,
-          header: ANTIGRAVITY_REQUEST_HEADERS,
-          data: JSON.stringify({ project: projectId }),
-        });
-      } catch (error) {
-        if (signal.aborted) throw error;
-        lastResponse = null;
-        continue;
-      }
-      lastResponse = response;
-      const body = quotaResponseBody(response);
-      if (body === null) continue;
-      let parsed: ReturnType<typeof quotaSamples>;
-      try {
-        parsed = quotaSamples('antigravity', accountId, body, this.now());
-      } catch {
-        continue;
-      }
-      if (reading === null) {
-        reading = { response, samples: parsed.samples, windows: parsed.windows };
-      } else {
-        // The earlier answer stands for what it reported; this one only fills the gaps.
-        const earlier: Reading = reading;
-        const known = new Set(earlier.windows.map((window) => window.id));
-        reading = {
-          response: earlier.response,
-          samples: earlier.samples.map((sample) =>
-            sample.remainingPercent !== null
-              ? sample
-              : (parsed.samples.find((filled) => filled.window === sample.window) ?? sample)
-          ),
-          windows: [
-            ...earlier.windows,
-            ...parsed.windows.filter((window) => !known.has(window.id)),
-          ],
-        };
-      }
-      // quotaSamples always returns both pool windows, null when the answer lacked one.
-      if (reading.samples.every((sample) => sample.remainingPercent !== null)) return reading;
-    }
-    return reading ?? { response: lastResponse };
   }
 
   private async readCatalog(
@@ -1690,7 +1574,7 @@ export class QuotaCollector {
     let cursor = 0;
     const worker = async () => {
       while (cursor < accounts.length && !signal.aborted) {
-        const { account, authIndex, chatgptAccountId, projectId, source, key } = accounts[cursor++];
+        const { account, authIndex, chatgptAccountId, source, key } = accounts[cursor++];
         await this.pollAccount(
           account,
           authIndex,
@@ -1698,8 +1582,7 @@ export class QuotaCollector {
           key,
           signal,
           storedPlans,
-          chatgptAccountId,
-          projectId
+          chatgptAccountId
         );
       }
     };

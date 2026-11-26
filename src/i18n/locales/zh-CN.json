@@ -746,6 +746,7 @@
     "load_failed": "额度获取失败：{{message}}",
     "missing_auth_index": "认证文件缺少 auth_index",
     "missing_project_id": "Antigravity 凭证缺少 project_id。请重新登录或刷新凭证以发现项目。",
+    "not_read": "ProxUI 不会通过 hub 读取 Gemini 额度：Google 条款禁止第三方使用 Antigravity 登录。",
     "empty_models": "暂无额度数据",
     "plan_label": "套餐",
     "group_gemini_models": "Gemini 模型",
