@@ -3064,7 +3064,7 @@
     "nav_meta": "用量、成本与执行趋势",
     "refresh": "刷新",
     "filters": "共享筛选",
-    "range": "时间范围 · UTC",
+    "range": "时间范围 · {{zone}}",
     "ranges": {
       "1h": "最近 1 小时",
       "24h": "最近 24 小时",
@@ -3131,7 +3131,7 @@
     "empty": "没有符合筛选条件的保留事件。请扩大范围或清除筛选。",
     "empty_chart": "此区间没有样本。",
     "table_alternative": "查看数据表",
-    "bucket_category": "UTC 时间桶 / 类别",
+    "bucket_category": "时间桶 / 类别",
     "unavailable_value": "不可用",
     "not_reported": "未报告 / 不可用",
     "yes": "是",
@@ -3148,17 +3148,30 @@
     "by_provider": "按提供商",
     "by_model": "按模型",
     "events_and_failures": "事件与失败",
+    "peak_in_flight": "按账号的同时进行请求峰值",
+    "peak_in_flight_note": "此时间范围内启动的请求的最大同时进行数（开始时间 + 执行时长）。",
+    "peak_at": "峰值时间",
     "failed_count": "{{value}} 次失败",
     "failed_for": "（{{label}}）",
     "failure_readout": "{{label}}：{{events}} 个事件，{{failed}} 个失败",
+    "zone": {
+      "use_utc": "使用 UTC",
+      "use_local": "使用本地时间 ({{zone}})",
+      "fallback": "你的时区偏移不是整小时，因此时间以 UTC 显示。"
+    },
     "heatmap": {
-      "title": "按小时的事件 · UTC",
+      "title": "按小时的事件 · {{zone}}",
+      "view": "视图",
+      "days": "按日期",
+      "weekdays": "按星期",
+      "weekday": "星期",
       "events": "{{value}} 个事件",
       "unmeasured": "未测量",
       "daily": "小时图需要按小时分桶。",
       "show_hourly": "按小时显示",
       "keys": "方向键在小时之间移动；Enter 打开该小时的请求。",
-      "day": "日期 (UTC)"
+      "day": "日期 ({{zone}})",
+      "skipped": "已跳过（夏令时）"
     },
     "provider_split": {
       "title": "按提供商的令牌",
@@ -3178,7 +3191,7 @@
       "cell": "{{events}} 个事件，{{failed}} 个失败",
       "unsupported": "此服务器尚未报告账号。"
     },
-    "timestamp": "时间 · UTC",
+    "timestamp": "时间 · {{zone}}",
     "provider_model": "提供商 / 模型",
     "tokens_in_out": "输入 / 输出令牌",
     "cache_read_write": "缓存读取 / 写入",

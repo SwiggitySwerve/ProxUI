@@ -3066,7 +3066,7 @@
     "nav_meta": "사용량, 비용 및 실행 추세",
     "refresh": "새로고침",
     "filters": "공통 필터",
-    "range": "기간 · UTC",
+    "range": "기간 · {{zone}}",
     "ranges": {
       "1h": "최근 1시간",
       "24h": "최근 24시간",
@@ -3133,7 +3133,7 @@
     "empty": "필터와 일치하는 보관 이벤트가 없습니다. 기간을 늘리거나 필터를 지우세요.",
     "empty_chart": "이 구간에 샘플이 없습니다.",
     "table_alternative": "데이터 표 보기",
-    "bucket_category": "UTC 구간 / 분류",
+    "bucket_category": "구간 / 분류",
     "unavailable_value": "사용 불가",
     "not_reported": "보고되지 않음 / 사용 불가",
     "yes": "예",
@@ -3150,17 +3150,30 @@
     "by_provider": "제공업체별",
     "by_model": "모델별",
     "events_and_failures": "이벤트 및 실패",
+    "peak_in_flight": "계정별 동시 처리 요청 최대치",
+    "peak_in_flight_note": "이 범위에서 시작된 요청의 최대 동시 처리 수(시작 시각 + 실행 시간 기준).",
+    "peak_at": "최대 시각",
     "failed_count": "{{value}}건 실패",
     "failed_for": "({{label}})",
     "failure_readout": "{{label}}: 이벤트 {{events}}건, 실패 {{failed}}건",
+    "zone": {
+      "use_utc": "UTC 사용",
+      "use_local": "현지 시간 사용 ({{zone}})",
+      "fallback": "시간대에 시간 단위가 아닌 오프셋이 있어 UTC로 표시합니다."
+    },
     "heatmap": {
-      "title": "시간별 이벤트 · UTC",
+      "title": "시간별 이벤트 · {{zone}}",
+      "view": "보기",
+      "days": "날짜별",
+      "weekdays": "요일별",
+      "weekday": "요일",
       "events": "이벤트 {{value}}건",
       "unmeasured": "측정 안 됨",
       "daily": "시간 지도에는 시간 단위 버킷이 필요합니다.",
       "show_hourly": "시간별로 보기",
       "keys": "화살표 키로 시간을 이동하고 Enter로 해당 시간의 요청을 엽니다.",
-      "day": "날짜 (UTC)"
+      "day": "날짜 ({{zone}})",
+      "skipped": "건너뜀(DST)"
     },
     "provider_split": {
       "title": "제공업체별 토큰",
@@ -3180,7 +3193,7 @@
       "cell": "이벤트 {{events}}건, 실패 {{failed}}건",
       "unsupported": "이 서버는 아직 계정을 보고하지 않습니다."
     },
-    "timestamp": "시간 · UTC",
+    "timestamp": "시간 · {{zone}}",
     "provider_model": "제공업체 / 모델",
     "tokens_in_out": "입력 / 출력 토큰",
     "cache_read_write": "캐시 읽기 / 쓰기",

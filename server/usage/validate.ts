@@ -1,4 +1,9 @@
 // JSON and query bounds belong at the HTTP boundary, before admission.
+import {
+  canonicalTimeZone,
+  isKnownTimeZone,
+  wholeHourZone,
+} from '../../src/domain/analytics/timeZone';
 import type { AnalyticsQuery, RegisteredAnalyticsModel } from '../../src/domain/analytics/types';
 
 export interface UsageAnalyticsQuery extends AnalyticsQuery {
@@ -61,7 +66,16 @@ export function validateAnalyticsQuery(input: unknown): UsageAnalyticsQuery {
     invalid('granularity must be hour or day');
   if (q.outcome !== 'all' && q.outcome !== 'success' && q.outcome !== 'failed')
     invalid('outcome must be all, success or failed');
-  if (q.time_zone !== 'UTC') invalid('time_zone must be UTC');
+  // Hours stay UTC hours, so only zones whose offset is a whole number of hours over the range
+  // can name local hours and days exactly.
+  let timeZone = 'UTC';
+  if (q.time_zone !== 'UTC') {
+    if (typeof q.time_zone !== 'string' || !text(q.time_zone, 64) || !isKnownTimeZone(q.time_zone))
+      invalid('time_zone must be UTC or a known IANA time zone');
+    timeZone = canonicalTimeZone(q.time_zone);
+    if (!wholeHourZone(timeZone, q.from_ms, q.to_ms))
+      invalid('time_zone must have a whole-hour UTC offset over the range');
+  }
   if (q.limit != null && (!integer(q.limit) || q.limit < 0 || q.limit > 200))
     invalid('limit must be between 1 and 200 when supplied');
   const ms = q.before_ms ?? undefined;
@@ -101,7 +115,7 @@ export function validateAnalyticsQuery(input: unknown): UsageAnalyticsQuery {
   return {
     from_ms: q.from_ms,
     to_ms: q.to_ms,
-    time_zone: 'UTC',
+    time_zone: timeZone,
     granularity: q.granularity,
     outcome: q.outcome as AnalyticsQuery['outcome'],
     provider: (q.provider ?? '') as string,

@@ -1,4 +1,11 @@
 import type { AnalyticsQuery, AnalyticsResponse } from '@/domain/analytics/types';
+import {
+  canonicalTimeZone,
+  isKnownTimeZone,
+  localDayStart,
+  nextLocalDay,
+  wholeHourZone,
+} from '@/domain/analytics/timeZone';
 
 export const ranges = ['1h', '24h', 'today', 'yesterday', '7d', '30d'] as const;
 export type AnalyticsRange = (typeof ranges)[number];
@@ -28,20 +35,29 @@ export function analyticsTab(value: string | null): AnalyticsTab {
 export function rangeQuery(
   range: AnalyticsRange,
   now: number,
-  bucket: AnalyticsBucket = 'auto'
+  bucket: AnalyticsBucket = 'auto',
+  zone = 'UTC'
 ): AnalyticsQuery {
-  // Today and Yesterday are UTC calendar days, matching the page's UTC scope.
-  const midnight = Math.floor(now / DAY) * DAY;
-  const [from, to] =
-    range === 'today'
+  const bounds = (inZone: string): [number, number] => {
+    const midnight = localDayStart(inZone, now);
+    return range === 'today'
       ? [midnight, now]
       : range === 'yesterday'
-        ? [midnight - DAY, midnight]
+        ? [localDayStart(inZone, midnight - 1), midnight]
         : [now - rangeMilliseconds[range], now];
+  };
+  let effective = zone !== 'UTC' && isKnownTimeZone(zone) ? canonicalTimeZone(zone) : 'UTC';
+  let [from, to] = bounds(effective);
+  // Only fall back to UTC when this selected range contains a part-hour offset, and rebuild
+  // Today/Yesterday bounds in UTC when it does.
+  if (effective !== 'UTC' && !wholeHourZone(effective, from, to)) {
+    effective = 'UTC';
+    [from, to] = bounds('UTC');
+  }
   return {
     from_ms: from,
     to_ms: to,
-    time_zone: 'UTC',
+    time_zone: effective,
     granularity: bucket !== 'auto' ? bucket : range === '7d' || range === '30d' ? 'day' : 'hour',
     outcome: 'all',
     limit: 25,
@@ -79,11 +95,13 @@ export function withoutCursor(query: AnalyticsQuery): AnalyticsQuery {
 }
 /** A bucket click uses the same half-open UTC interval as the server's rollup. */
 export function bucketQuery(query: AnalyticsQuery, bucket: number): AnalyticsQuery {
-  const width = query.granularity === 'day' ? 86_400_000 : 3_600_000;
+  // A local day can be 23 or 25 hours long; it ends at the next local midnight.
+  const end =
+    query.granularity === 'day' ? nextLocalDay(query.time_zone, bucket) : bucket + 3_600_000;
   return {
     ...withoutCursor(query),
     from_ms: Math.max(query.from_ms, bucket),
-    to_ms: Math.min(query.to_ms, bucket + width),
+    to_ms: Math.min(query.to_ms, end),
   };
 }
 /**

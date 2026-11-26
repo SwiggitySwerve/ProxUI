@@ -8,6 +8,7 @@ import { analyticsCosts } from './analyticsPricing';
 import { buildRateInventory } from './pricing';
 import { queryFilter, requestPage, type CpampSearchReplay, type Dimension } from './search';
 import { KNOWN_PROVIDERS } from './types';
+import { zoneOffsetMinutes } from '../../src/domain/analytics/timeZone';
 import type { RateBookState } from './rates';
 import type { UsageAnalyticsQuery } from './validate';
 
@@ -67,6 +68,85 @@ function group(map: Map<number, Metrics>, key: number): Metrics {
   }
   return metrics;
 }
+/**
+ * Each credential's most requests in flight at once among requests started in the range: at each
+ * distinct start timestamp, all previously started requests still running (end > ts) plus every
+ * request of that credential starting at ts. Equal-start events are batched so a missing or zero
+ * duration counts once at its start without depending on row order.
+ */
+function readPeaks(
+  db: Database,
+  filter: ReturnType<typeof queryFilter>,
+  check: () => void
+): Map<string, { peak: number; at: number }> {
+  const running = new Map<string, number[]>();
+  const peaks = new Map<string, { peak: number; at: number }>();
+  const batch = new Map<string, { count: number; ends: number[] }>();
+  let currentTs: number | null = null;
+  const flushBatch = () => {
+    if (currentTs === null || batch.size === 0) return;
+    const ts = currentTs;
+    for (const [key, group] of batch) {
+      const ends = running.get(key) ?? running.set(key, []).get(key)!;
+      // Drop requests that finished at or before this start instant.
+      while (ends.length && ends[0] <= ts) heapPop(ends);
+      const inFlight = ends.length + group.count;
+      const best = peaks.get(key);
+      if (!best || inFlight > best.peak) peaks.set(key, { peak: inFlight, at: ts });
+      for (const end of group.ends) heapPush(ends, end);
+    }
+    batch.clear();
+  };
+  let scanned = 0;
+  for (const row of db
+    .query<
+      {
+        ts_ms: number;
+        latency_ms: number | null;
+        instance_id: number | null;
+        auth_index_id: number | null;
+      },
+      (number | string)[]
+    >(
+      `SELECT e.ts_ms, e.latency_ms, e.instance_id, e.auth_index_id
+       FROM events e WHERE ${filter.sql} ORDER BY e.ts_ms`
+    )
+    .iterate(...filter.args)) {
+    if ((++scanned & 4095) === 0) check();
+    if (currentTs !== null && row.ts_ms !== currentTs) flushBatch();
+    currentTs = row.ts_ms;
+    const key = `${row.instance_id}:${row.auth_index_id}`;
+    const entry = batch.get(key) ?? batch.set(key, { count: 0, ends: [] }).get(key)!;
+    entry.count += 1;
+    if (row.latency_ms !== null && row.latency_ms > 0) entry.ends.push(row.ts_ms + row.latency_ms);
+  }
+  flushBatch();
+  return peaks;
+}
+function heapPush(heap: number[], value: number) {
+  heap.push(value);
+  for (let i = heap.length - 1; i > 0;) {
+    const parent = (i - 1) >> 1;
+    if (heap[parent] <= heap[i]) break;
+    [heap[parent], heap[i]] = [heap[i], heap[parent]];
+    i = parent;
+  }
+}
+function heapPop(heap: number[]) {
+  const last = heap.pop()!;
+  if (!heap.length) return;
+  heap[0] = last;
+  for (let i = 0; ;) {
+    const left = 2 * i + 1;
+    const right = left + 1;
+    let smallest = i;
+    if (left < heap.length && heap[left] < heap[smallest]) smallest = left;
+    if (right < heap.length && heap[right] < heap[smallest]) smallest = right;
+    if (smallest === i) break;
+    [heap[smallest], heap[i]] = [heap[i], heap[smallest]];
+    i = smallest;
+  }
+}
 interface AccountGroup {
   instance_id: number | null;
   auth_index_id: number | null;
@@ -89,6 +169,7 @@ function readAccounts(
   names: Map<number, string>,
   check: () => void
 ): Pick<AnalyticsResponse, 'accounts' | 'routes'> {
+  const peaks = readPeaks(db, filter, check);
   const name = (id: number | null) => (id === null ? null : (names.get(id) ?? null));
   const accounts = new Map<
     string,
@@ -121,6 +202,8 @@ function readAccounts(
           calls: 0,
           failure_calls: 0,
           total_tokens: 0,
+          peak_in_flight: peaks.get(`${row.instance_id}:${row.auth_index_id}`)?.peak ?? 0,
+          peak_at_ms: peaks.get(`${row.instance_id}:${row.auth_index_id}`)?.at ?? null,
           labels: new Map(),
         })
         .get(key)!;
@@ -233,6 +316,17 @@ export function queryAnalytics(
         // Keyed by dimension ids: labels are reported text and could collide when joined.
         observed.set(`${row.provider_id}:${row.model_id}`, { provider, id: model });
       }
+      // Hourly answers also total events by local weekday and hour (Sunday = 0) from timeline.
+      let weekly: number[] | null = null;
+      if (q.granularity === 'hour') {
+        weekly = new Array<number>(7 * 24).fill(0);
+        for (const [bucket, metrics] of timeline) {
+          // A clipped first bucket uses its first instant inside [from_ms, to_ms) for local offset.
+          const at = Math.max(bucket, q.from_ms);
+          const local = new Date(at + zoneOffsetMinutes(q.time_zone, at) * 60_000);
+          weekly[local.getUTCDay() * 24 + local.getUTCHours()] += metrics.value.calls;
+        }
+      }
 
       const { accounts, routes } = readAccounts(db, filter, names, check);
       options.onPhase?.('accounts');
@@ -329,6 +423,15 @@ export function queryAnalytics(
         })),
         accounts,
         routes,
+        ...(weekly
+          ? {
+              weekly: weekly.map((calls, slot) => ({
+                weekday: Math.floor(slot / 24),
+                hour: slot % 24,
+                calls,
+              })),
+            }
+          : {}),
         provider_timeline: [...providerBuckets.values()]
           .sort((a, b) => a.bucket - b.bucket || (a.provider < b.provider ? -1 : 1))
           .map(({ provider, bucket, m }) => ({

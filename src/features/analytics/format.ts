@@ -48,9 +48,10 @@ export function analyticsCompact(
   }).format(value);
 }
 
-export function analyticsTime(value: number, locale: string) {
+/** Date and time in the page's zone (UTC unless given). */
+export function analyticsTime(value: number, locale: string, zone = 'UTC') {
   return new Intl.DateTimeFormat(locale, {
-    timeZone: 'UTC',
+    timeZone: zone,
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
@@ -59,11 +60,11 @@ export function analyticsTime(value: number, locale: string) {
   }).format(value);
 }
 
-export function analyticsShortTime(value: number, locale: string, daily: boolean) {
+export function analyticsShortTime(value: number, locale: string, daily: boolean, zone = 'UTC') {
   return new Intl.DateTimeFormat(
     locale,
     daily
-      ? { timeZone: 'UTC', month: 'short', day: 'numeric' }
-      : { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }
+      ? { timeZone: zone, month: 'short', day: 'numeric' }
+      : { timeZone: zone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }
   ).format(value);
 }

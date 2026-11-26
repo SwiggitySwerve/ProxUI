@@ -57,13 +57,14 @@ needs a new grouping.
 A review against today's screens, and the owner's answers, settled where each chart goes. New
 charts go on Analytics; the Dashboard is not extended (`/` opens Quota).
 
-| Chart | Place | When |
+| Chart | Place | Shipped in |
 |-------|-------|------|
-| Failure bars (10), by provider and by model | Analytics › Overview, replacing the two plain breakdowns | Step 2 (shipped with this note) |
-| Tokens per day by provider (2) | Analytics › Tokens & Cache, under the token trend | Step 4 |
-| Hour heatmap (3) | Analytics › Overview, full width at the end; date × hour first | Step 3 |
-| Model → account (6) | A new Analytics "Routing" tab, as a grid or per-account bars rather than a sankey | Step 5 |
-| Peak concurrency (8), per account | Analytics › Performance | Step 6 |
+| Failure bars (10), by provider and by model | Analytics › Overview, replacing the two plain breakdowns | #137 |
+| Hour heatmap (3), date × hour | Analytics › Overview, full width at the end | #138 |
+| Tokens per bucket by provider (2) | Analytics › Tokens & Cache, under the token trend | #140 |
+| Model → credential (6) | Analytics › Routing, as a model × credential grid | #142 |
+| Hour of week (3) | The hour heatmap's "By weekday" view | Step 6 |
+| Peak requests in flight (8), per account | Analytics › Performance | Step 6 |
 | Big-number header (1) | Nowhere: it would repeat the Overview cards and the Dashboard header | Dropped |
 
 1. **One owner for provider colour.** `src/features/providers/identity.ts` gives every screen
@@ -80,22 +81,27 @@ charts go on Analytics; the Dashboard is not extended (`/` opens Quota).
    daily bars (2).
 5. **prox-usage: per-account breakdown**, then the Routing tab and an Auth Files link that opens
    one account (Auth Files keeps its view in browser storage today, so it has no such link).
-6. **Local time.** The owner reads in local time, so the query contract (UTC only today,
-   `server/usage/validate.ts`) and the bucketing move to a time zone, with one app-wide UTC/local
-   setting. Hour-of-week grouping and per-account peak concurrency follow.
+6. **Local time.** Analytics reads in the browser's zone by default, with one per-browser choice
+   of UTC instead (a link in the page header). The query sends the zone; prox-usage accepts any
+   zone whose offset is a whole number of hours over the range (hours stay UTC hours, which are
+   then local hours) and files each hour under its local midnight for day buckets. A part-hour
+   zone falls back to UTC, and the page says so. Hourly answers also total events by local
+   weekday and hour (the heatmap's "By weekday" view), and each credential reports its most
+   requests in flight at once (Performance tab, read-only).
 
 ## Acting on what a chart shows
 
 Charts never edit anything. Each one links to the screen that owns the action: a failed count to
-Requests, a provider to Quota, a heatmap cell to that hour's requests, a model → account cell to
-Models, an account's failures to Auth Files. Account links use the source instance and auth
-index, never label text. Concurrency stays read-only: ProxUI has no concurrency-limit setting.
+Requests, a provider in the tokens legend to Quota, a heatmap hour to that hour's requests, a
+model in Routing to its requests, a credential in Routing to Auth Files (filtered to exactly that
+credential). Credential links use the source instance and auth index, never label text.
+Concurrency stays read-only: ProxUI has no concurrency-limit setting.
 
 The charts themselves need little management. Tab, range, bucket and filters already live in the
-address and in per-browser storage. Two preferences are worth having: **Show emails** becomes one
-setting that Quota and Analytics both follow, and the UTC/local setting above. Per-chart hiding,
-reordering, pinning to the Dashboard and a hide-provider switch are not planned; a legend click
-can set the provider filter instead.
+address and in per-browser storage. Two preferences are worth having, and both shipped: **Show
+emails**, one setting that Quota and Analytics both follow, and the UTC/local setting above.
+Per-chart hiding, reordering, pinning to the Dashboard and a hide-provider switch are not
+planned.
 
 ## Not recommended
 

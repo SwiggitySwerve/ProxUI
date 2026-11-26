@@ -1,3 +1,5 @@
+import { localDayStart } from '../../src/domain/analytics/timeZone';
+
 export type Query = Record<string, unknown>;
 // A degraded body is good data computed while some source's catalog was unavailable.
 export type Outcome =
@@ -57,6 +59,16 @@ interface Entry {
  * window is keyed by its span (or its fixed UTC midnight start, for "today") plus filters;
  * everything else, including cursor pages, is keyed exactly.
  */
+/** A midnight in the query's own zone: "today" starts there, "yesterday" ends there. */
+function midnight(query: Query, ms: number): boolean {
+  const zone = typeof query.time_zone === 'string' ? query.time_zone : 'UTC';
+  try {
+    return localDayStart(zone, ms) === ms;
+  } catch {
+    return ms % DAY === 0;
+  }
+}
+
 function shape(query: Query, now: number): { key: string; live: boolean } {
   const { from_ms: from, to_ms: to, ...rest } = query;
   const live =
@@ -64,11 +76,11 @@ function shape(query: Query, now: number): { key: string; live: boolean } {
     typeof to === 'number' &&
     rest.before_ms === undefined &&
     rest.before_id === undefined &&
-    to % DAY !== 0 &&
+    !midnight(query, to) &&
     Math.abs(now - to) <= LIVE_SLACK;
   const window = !live
     ? { from_ms: from, to_ms: to }
-    : from % DAY === 0
+    : midnight(query, from as number)
       ? { from_ms: from }
       : { span: Math.round((to - from) / MINUTE) };
   const entries = Object.entries({ ...rest, ...window })
@@ -81,7 +93,7 @@ function shape(query: Query, now: number): { key: string; live: boolean } {
 function rebase(query: Query, now: number): Query {
   const from = query.from_ms as number;
   const to = query.to_ms as number;
-  return { ...query, from_ms: from % DAY === 0 ? from : from + (now - to), to_ms: now };
+  return { ...query, from_ms: midnight(query, from) ? from : from + (now - to), to_ms: now };
 }
 
 /**

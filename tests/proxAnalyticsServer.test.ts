@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAnalyticsHandler } from '../server/analytics/handler';
+import { localDayStart } from '../src/domain/analytics/timeZone';
 import { dashboardAnalyticsQuery } from '../src/features/dashboard/analyticsTraffic';
 import {
   validateSourceManifest,
@@ -265,6 +266,25 @@ describe('ProxUI analytics bridge', () => {
         const bypass = { 'Cache-Control': 'no-cache' };
         expect(await generation(await f.handler(request(live(f), undefined, bypass)))).toBe(2);
         expect(await generation(await f.handler(request(live(f))))).toBe(2);
+      } finally {
+        f.clean();
+      }
+    });
+    test('a local Today is one view all day, anchored at its local midnight', async () => {
+      const f = fixture();
+      try {
+        const zone = 'America/New_York';
+        // Today in New York, as the page builds it, asked twice a few minutes apart.
+        const today = () => ({
+          ...query,
+          time_zone: zone,
+          from_ms: localDayStart(zone, f.now()),
+          to_ms: f.now(),
+        });
+        expect(await generation(await f.handler(request(today())))).toBe(1);
+        // Minutes later the window is longer; it is still the same view, answered at once.
+        f.advance(3 * 60_000);
+        expect(await generation(await f.handler(request(today())))).toBe(1);
       } finally {
         f.clean();
       }
