@@ -39,6 +39,7 @@ import {
   formatPoolNumber,
   providerAccountCount,
 } from './presentation';
+import { usePrivacyStore } from '@/stores/usePrivacyStore';
 import styles from './QuotaPoolPage.module.scss';
 
 /** Points per plan (server/quota/plans.ts), listed in About so each weight reads on its own line. */
@@ -81,13 +82,17 @@ export function QuotaPoolPage() {
       { replace: true }
     );
   }, [view, setParams]);
-  // The date offset is relative to today and "Show emails" is private, so neither is shared.
-  const [local, setLocal] = useState({ offsetDays: 0, reveal: false });
+  // The date offset is relative to today, so it is not shared. "Show emails" is private: it stays
+  // out of the address and is one choice per browser, shared with Analytics.
+  const [local, setLocal] = useState({ offsetDays: 0 });
+  const reveal = usePrivacyStore((state) => state.revealEmails);
+  const setReveal = usePrivacyStore((state) => state.setRevealEmails);
   const query: PoolQuery = {
     window: view.window,
     lookback: view.lookback,
     multiplier: forecastMultiplier(view),
     ...local,
+    reveal,
   };
   const state = usePoolDashboard(query);
   // Whether a Claude account is served from the history server (its resets row then does not poll
@@ -219,7 +224,7 @@ export function QuotaPoolPage() {
               <input
                 type="checkbox"
                 checked={query.reveal}
-                onChange={(event) => change('reveal', event.target.checked)}
+                onChange={(event) => setReveal(event.target.checked)}
               />
               <IconEye size={18} aria-hidden="true" />
               {t('quota_pool.show_emails')}

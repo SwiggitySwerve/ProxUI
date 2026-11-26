@@ -31,6 +31,8 @@ import {
 } from './queryState';
 import { AnalyticsViews } from './AnalyticsViews';
 import { ModelRates } from './ModelRates';
+import { RoutingView } from './RoutingView';
+import { usePrivacyStore } from '@/stores/usePrivacyStore';
 import { RequestTable } from './RequestTable';
 import { analyticsTime } from './format';
 import { readAnalyticsUiState, writeAnalyticsUiState } from './uiState';
@@ -42,6 +44,7 @@ const skeletonCards: Record<AnalyticsTab, number> = {
   tokens: 6,
   cost: 3,
   performance: 3,
+  routing: 0,
   requests: 0,
   rates: 0,
 };
@@ -80,6 +83,7 @@ export function AnalyticsPage() {
   const { t, i18n } = useTranslation();
   const [params, setParams] = useSearchParams();
   const location = useLocation();
+  const revealEmails = usePrivacyStore((state) => state.revealEmails);
   // The address wins, then the last view on this machine, then the defaults.
   const [saved] = useState(readAnalyticsUiState);
   const tab = analyticsTab(params.get('tab') ?? saved.tab ?? null);
@@ -552,6 +556,12 @@ export function AnalyticsPage() {
             )}
             {tab === 'rates' ? (
               <ModelRates data={data} />
+            ) : tab === 'routing' ? (
+              <RoutingView
+                data={data}
+                reveal={revealEmails}
+                onModel={(model) => drilldown({ ...withoutCursor(query), model })}
+              />
             ) : tab === 'requests' ? (
               <RequestTable
                 data={data.requests}
@@ -563,6 +573,7 @@ export function AnalyticsPage() {
                 onSelect={(request) => setSelected(request ? { request, query, session } : null)}
                 page={pages.length}
                 providerLabels={new Map(data.providers.map((p) => [p.key, p.label]))}
+                reveal={revealEmails}
                 canPrevious={pages.length > 1}
                 canNext={next !== null}
                 onPrevious={() => {

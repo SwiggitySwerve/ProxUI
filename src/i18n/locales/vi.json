@@ -3111,6 +3111,7 @@
       "tokens": "Token và bộ nhớ đệm",
       "cost": "Chi phí",
       "performance": "Hiệu năng",
+      "routing": "Định tuyến",
       "requests": "Yêu cầu",
       "rates": "Đơn giá mô hình"
     },
@@ -3173,6 +3174,17 @@
       "none": "không có token",
       "unmeasured": "chưa đo",
       "open_quota": "Mở {{provider}} trong Hạn mức"
+    },
+    "routing": {
+      "title": "Tài khoản nào phục vụ từng mô hình",
+      "help": "Sự kiện theo mô hình và tài khoản trong khoảng này. Tài khoản mở trong Tệp xác thực; mô hình mở yêu cầu của nó.",
+      "model": "Mô hình",
+      "credential": "Thông tin xác thực {{index}}",
+      "unattributed": "Không xác định",
+      "open_account": "Mở trong Tệp xác thực",
+      "account_totals": "{{events}} sự kiện · {{failed}} lỗi",
+      "cell": "{{events}} sự kiện, {{failed}} lỗi",
+      "unsupported": "Máy chủ này chưa báo cáo tài khoản."
     },
     "timestamp": "Thời gian · UTC",
     "provider_model": "Nhà cung cấp / mô hình",

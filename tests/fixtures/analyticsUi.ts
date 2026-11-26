@@ -221,6 +221,62 @@ export function analyticsScenario(
     data.requests.next_before_ms = null;
     data.requests.next_before_id = null;
   }
+  // Two named credentials and one event without attribution; they add up to the summary.
+  data.accounts = [
+    {
+      instance: 'claude-primary',
+      auth_index: '1',
+      label: 'ada.lovelace@example.test',
+      providers: ['claude'],
+      calls: 96,
+      failure_calls: 8,
+      total_tokens: 70_000,
+    },
+    {
+      instance: 'codex-primary',
+      auth_index: '4',
+      label: 'grace.hopper@example.test',
+      providers: ['codex'],
+      calls: 31,
+      failure_calls: 0,
+      total_tokens: 27_000,
+    },
+    {
+      instance: null,
+      auth_index: null,
+      label: null,
+      providers: ['claude'],
+      calls: 1,
+      failure_calls: 0,
+      total_tokens: 1_000,
+    },
+  ];
+  data.routes = [
+    {
+      model: 'fixture-model',
+      instance: 'claude-primary',
+      auth_index: '1',
+      calls: 96,
+      failure_calls: 8,
+      total_tokens: 70_000,
+    },
+    {
+      model: 'fixture-model',
+      instance: 'codex-primary',
+      auth_index: '4',
+      calls: 31,
+      failure_calls: 0,
+      total_tokens: 27_000,
+    },
+    {
+      model: 'fixture-model',
+      instance: null,
+      auth_index: null,
+      calls: 1,
+      failure_calls: 0,
+      total_tokens: 1_000,
+    },
+  ];
   if (scenario === 'long-provider') data.providers[0].key = 'p'.repeat(201);
   if (scenario === 'large') {
     data.summary.input_tokens = 3_500_360_831;

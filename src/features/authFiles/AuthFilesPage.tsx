@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router-dom';
 import { useHeaderRefresh, type HeaderRefreshRound } from '@/hooks/useHeaderRefresh';
 import { providerSources } from '@/stores/useProviderSources';
 import { Button } from '@/components/ui/Button';
@@ -206,6 +207,35 @@ export function AuthFilesPage() {
   /** Known: answered at least once and its files are in the inventory (stale ones count). */
   const isKnown = (instanceId: string) =>
     answerOf(instanceId).state !== 'loading' && filesBySource[instanceId] !== undefined;
+
+  // A link from Analytics names one credential by its source and the proxy's auth index (never
+  // its label). Once that source has answered, show just that credential, then drop the link
+  // from the address so the filters stay the user's own.
+  const [params, setParams] = useSearchParams();
+  const linkSource = params.get('source');
+  const linkIndex = params.get('auth_index');
+  const linkReady = linkSource !== null && linkIndex !== null && isKnown(linkSource);
+  useEffect(() => {
+    if (!linkReady) return;
+    const file = filesBySource[linkSource!]?.find(
+      (item) => String(item.authIndex ?? '').trim() === linkIndex
+    );
+    if (file) {
+      filterState.setSource(linkSource!);
+      filterState.setSearch(file.name);
+    }
+    setParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.delete('source');
+        next.delete('auth_index');
+        return next;
+      },
+      { replace: true }
+    );
+    // Runs once per link, when its source is known.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkReady]);
 
   // A persisted source or provider that no longer applies means "all", and the controls say so.
   const effectiveSource = resolveSourceFilter(

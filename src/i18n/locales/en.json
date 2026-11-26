@@ -3105,6 +3105,7 @@
       "tokens": "Tokens & Cache",
       "cost": "Cost",
       "performance": "Performance",
+      "routing": "Routing",
       "requests": "Requests",
       "rates": "Model Rates"
     },
@@ -3167,6 +3168,17 @@
       "none": "no tokens",
       "unmeasured": "not measured",
       "open_quota": "Open {{provider}} in Quota"
+    },
+    "routing": {
+      "title": "Which account served each model",
+      "help": "Events per model and account in this range. An account opens in Auth Files; a model opens its requests.",
+      "model": "Model",
+      "credential": "Credential {{index}}",
+      "unattributed": "Not attributed",
+      "open_account": "Open in Auth Files",
+      "account_totals": "{{events}} events · {{failed}} failed",
+      "cell": "{{events}} events, {{failed}} failed",
+      "unsupported": "This server does not report accounts yet."
     },
     "timestamp": "Time · UTC",
     "provider_model": "Provider / model",

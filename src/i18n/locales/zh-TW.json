@@ -3131,6 +3131,7 @@
       "tokens": "權杖與快取",
       "cost": "成本",
       "performance": "效能",
+      "routing": "路由",
       "requests": "請求",
       "rates": "模型費率"
     },
@@ -3193,6 +3194,17 @@
       "none": "無權杖",
       "unmeasured": "未測量",
       "open_quota": "在配額中開啟 {{provider}}"
+    },
+    "routing": {
+      "title": "每個模型由哪個帳號處理",
+      "help": "此範圍內按模型和帳號的事件。帳號在認證檔案中開啟；模型開啟其請求。",
+      "model": "模型",
+      "credential": "憑證 {{index}}",
+      "unattributed": "未歸屬",
+      "open_account": "在認證檔案中開啟",
+      "account_totals": "{{events}} 個事件 · {{failed}} 個失敗",
+      "cell": "{{events}} 個事件，{{failed}} 個失敗",
+      "unsupported": "此伺服器尚未回報帳號。"
     },
     "timestamp": "時間 · UTC",
     "provider_model": "供應商 / 模型",
