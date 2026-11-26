@@ -48,6 +48,22 @@ export interface AnalyticsTimelinePoint extends AnalyticsMetrics {
 export interface AnalyticsBreakdown extends AnalyticsMetrics {
   key: string;
   label: string;
+  /** Models only: the providers that served this model in the range, sorted. */
+  providers?: string[];
+}
+
+/** One provider's events and tokens in one bucket. Per bucket, these add up to `timeline`. */
+export interface AnalyticsProviderBucket {
+  provider: string;
+  bucket_ms: number;
+  calls: number;
+  failure_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  reasoning_tokens: number;
+  total_tokens: number;
 }
 
 /** A request's absent measurements are null; aggregate counters are known subtotals. */
@@ -160,6 +176,8 @@ export interface AnalyticsResponse {
   timeline: AnalyticsTimelinePoint[];
   models: AnalyticsBreakdown[];
   providers: AnalyticsBreakdown[];
+  /** Absent from servers older than this field. Sorted by bucket, then provider. */
+  provider_timeline?: AnalyticsProviderBucket[];
   filter_options: { models: string[]; providers: string[] };
   requests: {
     items: AnalyticsRequest[];
