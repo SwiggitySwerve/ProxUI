@@ -1,9 +1,11 @@
 // Snapshot read planning: use only whole, closed, clean hours under the current band layout.
 import type { Database } from 'bun:sqlite';
+import { localDayStart } from '../../src/domain/analytics/timeZone';
 import {
   aggregateKey,
   bandLayout,
   compareAggregates,
+  DAY_MS,
   groupDimensions,
   HOUR_MS,
   readAggregates,
@@ -50,6 +52,17 @@ export function readAnalyticsGroups(
   onPhase?: (phase: string) => void,
   afterAggregate?: () => void
 ) {
+  // Days in another zone start at its local midnight: read hours, then file each hour under its
+  // local day. Hours are local hours already (the contract accepts whole-hour offsets only).
+  const localDays = bucketSize === DAY_MS && q.time_zone !== 'UTC';
+  const sqlSize = localDays ? HOUR_MS : bucketSize;
+  const days = new Map<number, number>();
+  const bucketOf = (bucket: number) => {
+    if (!localDays) return bucket;
+    let day = days.get(bucket);
+    if (day === undefined) days.set(bucket, (day = localDayStart(q.time_zone, bucket)));
+    return day;
+  };
   const latency = new LatencyGroups();
   const rows: AggregateRow[] = [];
   const coverageRows: CoverageRow[] = [];
@@ -104,7 +117,7 @@ export function readAnalyticsGroups(
         .all(...hours);
       onPhase?.('rollup-select');
       for (const row of rollupRows) {
-        row.bucket = Math.floor(row.bucket / bucketSize) * bucketSize;
+        row.bucket = bucketOf(Math.floor(row.bucket / sqlSize) * sqlSize);
         row.band = row.band === -1 ? null : row.band;
         rows.push(row);
         if ((++scanned & 4095) === 0) check();
@@ -116,7 +129,7 @@ export function readAnalyticsGroups(
         for (const row of db
           .query<StoredSamples, number[]>(
             `
-        SELECT (r.bucket / ${bucketSize}) * ${bucketSize} AS sample_bucket,
+        SELECT (r.bucket / ${sqlSize}) * ${sqlSize} AS sample_bucket,
           r.model_id, r.provider_id,
           CAST(group_concat(r.latencies, '') AS BLOB) AS latencies,
           CAST(group_concat(r.ttfts, '') AS BLOB) AS ttfts
@@ -126,7 +139,7 @@ export function readAnalyticsGroups(
           )
           .all(...hours)) {
           latency.addSamples(
-            row.sample_bucket,
+            bucketOf(row.sample_bucket),
             row.model_id,
             row.provider_id,
             samples(row.latencies),
@@ -143,7 +156,10 @@ export function readAnalyticsGroups(
     args: [span.from, span.to, ...filter.args.slice(2)],
   }));
   for (const raw of rawFilters)
-    for (const row of readAggregates(db, raw, dims, book, bucketSize)) rows.push(row);
+    for (const row of readAggregates(db, raw, dims, book, sqlSize)) {
+      row.bucket = bucketOf(row.bucket);
+      rows.push(row);
+    }
   afterAggregate?.();
   readStoredSamples?.();
   onPhase?.('rollup-read');
@@ -158,12 +174,12 @@ export function readAnalyticsGroups(
       },
       (number | string)[]
     >(`
-      SELECT (e.ts_ms / ${bucketSize}) * ${bucketSize} AS bucket, e.model_id, e.provider_id,
+      SELECT (e.ts_ms / ${sqlSize}) * ${sqlSize} AS bucket, e.model_id, e.provider_id,
         e.latency_ms, e.ttft_ms FROM events e WHERE ${raw.sql}
     `);
     let scanned = 0;
     for (const row of select.iterate(...raw.args)) {
-      latency.add(row.bucket, row.model_id, row.provider_id, row.latency_ms, row.ttft_ms);
+      latency.add(bucketOf(row.bucket), row.model_id, row.provider_id, row.latency_ms, row.ttft_ms);
       if ((++scanned & 4095) === 0) check();
     }
     coverageRows.push(...readCoverage(db, Number(raw.args[0]), Number(raw.args[1])));
@@ -174,7 +190,7 @@ export function readAnalyticsGroups(
   // hour separately would change floats, priced-call statuses and the first-seen reason order.
   // Whole clean hours and raw spans are disjoint. Hourly groups cannot overlap, so
   // concatenation already merges them; daily groups still need integer addition.
-  if (bucketSize === HOUR_MS) {
+  if (sqlSize === bucketSize && bucketSize === HOUR_MS) {
     rows.sort(compareAggregates);
     onPhase?.('merge');
     return { rows, latency, coverageRows };

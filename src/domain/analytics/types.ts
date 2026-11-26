@@ -62,6 +62,10 @@ export interface AnalyticsAccount {
   calls: number;
   failure_calls: number;
   total_tokens: number;
+  /** Most of its requests in flight at once, seen at request starts in the range. */
+  peak_in_flight: number;
+  /** When that peak was first reached; null with no events. */
+  peak_at_ms: number | null;
 }
 
 /** Events for one model through one credential. */
@@ -203,6 +207,11 @@ export interface AnalyticsResponse {
   /** Absent from older servers. Each sums to the summary for the same query. */
   accounts?: AnalyticsAccount[];
   routes?: AnalyticsRoute[];
+  /**
+   * Hourly answers only: events per local weekday (Sunday = 0) and hour in the query's zone,
+   * summed over the range; all 168 slots, quiet ones as zero.
+   */
+  weekly?: { weekday: number; hour: number; calls: number }[];
   filter_options: { models: string[]; providers: string[] };
   requests: {
     items: AnalyticsRequest[];

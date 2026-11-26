@@ -365,3 +365,28 @@ test('P3 importChunk invalidates rollups in the same transaction as rows and its
   drain(f);
   equal(f);
 });
+
+test('days in a whole-hour zone start at its local midnight, from rollups and raw rows alike', () => {
+  const f = setup();
+  const zone = 'America/New_York';
+  // Hours spread over two New York days, a few of them before 05:00 UTC (the previous local day).
+  f.insert(
+    Array.from({ length: 30 }, (_, i) =>
+      event(i + 1, { tsMs: start + i * 2 * HOUR_MS + 17, latencyMs: 100 + i })
+    )
+  );
+  drain(f);
+  const response = equal(f, { granularity: 'day', time_zone: zone });
+  const local = (ms: number) =>
+    new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', hourCycle: 'h23' }).format(
+      ms
+    );
+  // Every day bucket is a New York midnight, and together they hold every event.
+  for (const point of response.timeline) expect(local(point.bucket_ms)).toBe('00');
+  expect(response.timeline.reduce((sum, p) => sum + p.calls, 0)).toBe(30);
+  // UTC days would put the same events in other buckets.
+  const utc = equal(f, { granularity: 'day' });
+  expect(utc.timeline.map((p) => p.bucket_ms)).not.toEqual(
+    response.timeline.map((p) => p.bucket_ms)
+  );
+});

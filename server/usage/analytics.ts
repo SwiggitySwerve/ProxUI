@@ -8,6 +8,7 @@ import { analyticsCosts } from './analyticsPricing';
 import { buildRateInventory } from './pricing';
 import { queryFilter, requestPage, type CpampSearchReplay, type Dimension } from './search';
 import { KNOWN_PROVIDERS } from './types';
+import { zoneOffsetMinutes } from '../../src/domain/analytics/timeZone';
 import type { RateBookState } from './rates';
 import type { UsageAnalyticsQuery } from './validate';
 
@@ -67,6 +68,69 @@ function group(map: Map<number, Metrics>, key: number): Metrics {
   }
   return metrics;
 }
+/**
+ * Each credential's most requests in flight at once: at every request start, the requests of the
+ * same credential that started earlier and had not finished (start + execution duration). A
+ * request with no duration counts only at its own start. Requests that began before the range
+ * are not seen, so this is a floor for the first minutes of the range.
+ */
+function readPeaks(
+  db: Database,
+  filter: ReturnType<typeof queryFilter>,
+  check: () => void
+): Map<string, { peak: number; at: number }> {
+  const running = new Map<string, number[]>();
+  const peaks = new Map<string, { peak: number; at: number }>();
+  let scanned = 0;
+  for (const row of db
+    .query<
+      {
+        ts_ms: number;
+        latency_ms: number | null;
+        instance_id: number | null;
+        auth_index_id: number | null;
+      },
+      (number | string)[]
+    >(
+      `SELECT e.ts_ms, e.latency_ms, e.instance_id, e.auth_index_id
+       FROM events e WHERE ${filter.sql} ORDER BY e.ts_ms`
+    )
+    .iterate(...filter.args)) {
+    if ((++scanned & 4095) === 0) check();
+    const key = `${row.instance_id}:${row.auth_index_id}`;
+    const ends = running.get(key) ?? running.set(key, []).get(key)!;
+    // A min-heap of end times: drop the finished, add this one.
+    while (ends.length && ends[0] <= row.ts_ms) heapPop(ends);
+    heapPush(ends, row.ts_ms + Math.max(0, row.latency_ms ?? 0));
+    const best = peaks.get(key);
+    if (!best || ends.length > best.peak) peaks.set(key, { peak: ends.length, at: row.ts_ms });
+  }
+  return peaks;
+}
+function heapPush(heap: number[], value: number) {
+  heap.push(value);
+  for (let i = heap.length - 1; i > 0;) {
+    const parent = (i - 1) >> 1;
+    if (heap[parent] <= heap[i]) break;
+    [heap[parent], heap[i]] = [heap[i], heap[parent]];
+    i = parent;
+  }
+}
+function heapPop(heap: number[]) {
+  const last = heap.pop()!;
+  if (!heap.length) return;
+  heap[0] = last;
+  for (let i = 0; ;) {
+    const left = 2 * i + 1;
+    const right = left + 1;
+    let smallest = i;
+    if (left < heap.length && heap[left] < heap[smallest]) smallest = left;
+    if (right < heap.length && heap[right] < heap[smallest]) smallest = right;
+    if (smallest === i) break;
+    [heap[smallest], heap[i]] = [heap[i], heap[smallest]];
+    i = smallest;
+  }
+}
 interface AccountGroup {
   instance_id: number | null;
   auth_index_id: number | null;
@@ -89,6 +153,7 @@ function readAccounts(
   names: Map<number, string>,
   check: () => void
 ): Pick<AnalyticsResponse, 'accounts' | 'routes'> {
+  const peaks = readPeaks(db, filter, check);
   const name = (id: number | null) => (id === null ? null : (names.get(id) ?? null));
   const accounts = new Map<
     string,
@@ -121,6 +186,8 @@ function readAccounts(
           calls: 0,
           failure_calls: 0,
           total_tokens: 0,
+          peak_in_flight: peaks.get(`${row.instance_id}:${row.auth_index_id}`)?.peak ?? 0,
+          peak_at_ms: peaks.get(`${row.instance_id}:${row.auth_index_id}`)?.at ?? null,
           labels: new Map(),
         })
         .get(key)!;
@@ -219,6 +286,9 @@ export function queryAnalytics(
       // Each provider's share of each bucket, from the same rows as the totals, so it adds up.
       const providerBuckets = new Map<string, { provider: string; bucket: number; m: Metrics }>();
       const observed = new Map<string, { provider: string; id: string }>();
+      // Hourly answers also total events by local weekday and hour (Sunday = 0).
+      const weekly = q.granularity === 'hour' ? new Array<number>(7 * 24).fill(0) : null;
+      const weekSlot = new Map<number, number>();
       for (const row of rows) {
         const model = names.get(row.model_id)!;
         const provider = names.get(row.provider_id)!;
@@ -232,6 +302,17 @@ export function queryAnalytics(
         providerBuckets.get(split)!.m.add(row);
         // Keyed by dimension ids: labels are reported text and could collide when joined.
         observed.set(`${row.provider_id}:${row.model_id}`, { provider, id: model });
+        if (weekly) {
+          let slot = weekSlot.get(row.bucket);
+          if (slot === undefined) {
+            const local = new Date(
+              row.bucket + zoneOffsetMinutes(q.time_zone, row.bucket) * 60_000
+            );
+            slot = local.getUTCDay() * 24 + local.getUTCHours();
+            weekSlot.set(row.bucket, slot);
+          }
+          weekly[slot] += row.calls;
+        }
       }
 
       const { accounts, routes } = readAccounts(db, filter, names, check);
@@ -329,6 +410,15 @@ export function queryAnalytics(
         })),
         accounts,
         routes,
+        ...(weekly
+          ? {
+              weekly: weekly.map((calls, slot) => ({
+                weekday: Math.floor(slot / 24),
+                hour: slot % 24,
+                calls,
+              })),
+            }
+          : {}),
         provider_timeline: [...providerBuckets.values()]
           .sort((a, b) => a.bucket - b.bucket || (a.provider < b.provider ? -1 : 1))
           .map(({ provider, bucket, m }) => ({

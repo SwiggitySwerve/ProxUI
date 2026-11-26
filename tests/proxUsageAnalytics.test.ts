@@ -27,7 +27,9 @@ test('CPAMP bounds, strict JSON and UTC narrowing', () => {
     { from_ms: 253402300799998, to_ms: 253402300800000 },
     { granularity: 'minute' },
     { outcome: 'unknown' },
-    { time_zone: 'America/New_York' },
+    { time_zone: 'Asia/Kolkata' },
+    { time_zone: 'Not/AZone' },
+    { time_zone: 'Europe/London\u0000' },
     { limit: 201 },
     { limit: -1 },
     { limit: 1.5 },
@@ -48,6 +50,8 @@ test('CPAMP bounds, strict JSON and UTC narrowing', () => {
     expect(() => validateAnalyticsQuery({ ...valid, ...patch })).toThrow();
   for (const suffix of [' {}', ' true', ' trailing'])
     expect(() => parseAnalyticsQuery(JSON.stringify(valid) + suffix)).toThrow();
+  // Whole-hour zones name local days; a half-hour offset could not keep hours exact.
+  expect(query({ time_zone: 'America/New_York' }).time_zone).toBe('America/New_York');
   expect(query({ limit: 0 }).limit).toBe(100);
   expect(query({ limit: 200, search: 'é'.repeat(128), to_ms: BASE + 31 * 86400000 }).limit).toBe(
     200
@@ -498,4 +502,48 @@ test('accounts and routes group by source and auth index, and add up to the summ
   // Filters apply to accounts as to every other total.
   const failed = queryAnalytics(f.db, query({ outcome: 'failed' }), rateState());
   expect(failed.accounts!.map((x) => [x.instance, x.calls])).toEqual([['hub-a', 1]]);
+});
+
+test('each account reports its most requests in flight at once', () => {
+  const f = setup();
+  const a = { instance: 'hub-a', authIndex: '7' };
+  const t = BASE + 1000;
+  f.insert([
+    event(1, { ...a, tsMs: t, latencyMs: 1000 }),
+    event(2, { ...a, tsMs: t + 100, latencyMs: 1000 }),
+    event(3, { ...a, tsMs: t + 200, latencyMs: 50 }),
+    // Starts after the first three finished.
+    event(4, { ...a, tsMs: t + 5000, latencyMs: 10 }),
+    // Another credential running at the same time is not counted with hub-a.
+    event(5, { instance: 'hub-b', authIndex: '7', tsMs: t + 150, latencyMs: 1000 }),
+  ]);
+  const response = queryAnalytics(f.db, query(), rateState());
+  const peaks = Object.fromEntries(
+    response.accounts!.map((x) => [x.instance, [x.peak_in_flight, x.peak_at_ms]])
+  );
+  expect(peaks).toEqual({ 'hub-a': [3, t + 200], 'hub-b': [1, t + 150] });
+});
+
+test('hourly answers total events by local weekday and hour', () => {
+  const f = setup();
+  const HOUR = 3600000;
+  // 2026-11-02 is a Monday. 14:30 UTC is 09:30 in New York (UTC-5 in November).
+  const monday = Date.UTC(2026, 10, 2, 14, 30);
+  f.insert([
+    event(1, { tsMs: monday }),
+    event(2, { tsMs: monday + 10 * 60_000 }),
+    event(3, { tsMs: monday + 7 * 24 * HOUR }),
+  ]);
+  const q = (patch = {}) =>
+    query({ from_ms: monday - HOUR, to_ms: monday + 8 * 24 * HOUR, ...patch });
+  const slot = (response: ReturnType<typeof queryAnalytics>, weekday: number, hour: number) =>
+    response.weekly!.find((s) => s.weekday === weekday && s.hour === hour)!.calls;
+  const utc = queryAnalytics(f.db, q(), rateState());
+  expect(utc.weekly).toHaveLength(168);
+  expect(slot(utc, 1, 14)).toBe(3);
+  const local = queryAnalytics(f.db, q({ time_zone: 'America/New_York' }), rateState());
+  expect(slot(local, 1, 9)).toBe(3);
+  expect(local.weekly!.reduce((sum, s) => sum + s.calls, 0)).toBe(local.summary.calls);
+  // Daily answers have no hours to place.
+  expect(queryAnalytics(f.db, q({ granularity: 'day' }), rateState()).weekly).toBeUndefined();
 });
