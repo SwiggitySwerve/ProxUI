@@ -11,6 +11,7 @@ import { weeklyOnlyAccountIds } from './quota/values';
 import { buildInventory, inventoryVersion, type InventorySourceStatus } from './quota/inventory';
 import type { ClaudeUsageSnapshot } from '../src/types/quota';
 import { DAY_MS, HOUR_MS, type InventoryChange } from './quota/types';
+import type { AgyStatusSnapshot } from './quota/agySnapshot';
 import { parsePoolProfile, parsePoolProfileKey, validProfileWindows } from './quota/poolProfiles';
 
 /** `GET /v1/inventory` re-reads the sources when the last read is older than this. */
@@ -37,6 +38,7 @@ interface CollectorState extends Omit<CollectionState, 'historyStartedAtMs'> {
   pollAdded(accountIds: readonly string[]): Promise<void>;
   inventorySources: readonly InventorySourceStatus[];
   inventorySyncedAtMs: number | null;
+  agyStatus?: () => Promise<AgyStatusSnapshot>;
 }
 export interface AppDependencies {
   store: QuotaStore;
@@ -416,6 +418,19 @@ export function createHandler({
         console.error('Quota accounts read failed');
         return json({ error: 'Quota accounts are temporarily unavailable' }, 503);
       }
+    }
+    if (url.pathname === '/v1/agy-status' && request.method === 'GET') {
+      return (async () => {
+        try {
+          const status = collector.agyStatus
+            ? await collector.agyStatus()
+            : { snapshot: null, circuitBreaker: { open: false }, recentEvents: [] };
+          return json(status);
+        } catch {
+          console.error('Agy status read failed');
+          return json({ error: 'Agy status is temporarily unavailable' }, 503);
+        }
+      })();
     }
     if (url.pathname !== '/v1/pools' || request.method !== 'GET')
       return json({ error: 'Not found' }, 404);

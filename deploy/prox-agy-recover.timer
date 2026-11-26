@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic agy circuit-breaker recovery check and timer watchdog (disabled by default)
+
+[Timer]
+OnCalendar=*:5/30
+RandomizedDelaySec=15s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

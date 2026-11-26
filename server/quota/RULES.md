@@ -32,7 +32,13 @@ credential UI. The store owns persistence; the collector uses only public APIs.
   non-retired Antigravity account for that `instanceId` so stored history and plan history
   stay continuous. After 30 minutes without a fresh snapshot, the collector marks the
   ingested account disabled and removes its live source entry so Gemini reverts to dormant
-  history without blocking the combined "All" forecast for Claude and Codex. Only the
+  history without blocking the combined "All" forecast for Claude and Codex. Circuit-breaker
+  state (`agy-usage.stopped`) and sanitized transition events (`agy-events.jsonl`) are
+  exposed read-only at authenticated `GET /v1/agy-status`; `deploy/prox-agy-recover.sh`
+  (driven by `prox-agy-recover.path` + `prox-agy-recover.timer`) performs at most one
+  post-cooldown probe for `transient` failures, escalates a second failure to `hard_stop`,
+  never auto-probes `hard_stop` or `version_changed`, and restarts `prox-agy-usage.timer`
+  on recovery or unexpected stop. Only the
   "Gemini Models" group feeds the pool (user direction, 21 Nov 2026); the "Claude and GPT
   models" group is its own model-lane window. It has no resets: claims are refused
   before anything is sent, and `/v1/accounts` leaves its accounts out (its cards

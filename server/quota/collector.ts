@@ -6,6 +6,7 @@ import {
 import { buildApiCallApi } from '../../src/services/api/apiCall';
 import { readJson } from '../http/readJson';
 import { readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import type { DeploymentSource } from '../../src/domain/providerSources/types';
 import { loadSourceManifest } from '../providerSources/config';
 import { LEGACY_SOURCE_MAPPING, legacyAccountId } from './identity';
@@ -47,7 +48,13 @@ import {
 import { normalizeClaudeUsageSnapshot } from '../../src/services/api/claudeUsage';
 import type { ClaudeUsageSnapshot } from '../../src/types/quota';
 import { isRecord } from '../../src/utils/helpers';
-import { AGY_ACTIVE_TTL_MS, readAgySnapshotFile } from './agySnapshot';
+import {
+  AGY_ACTIVE_TTL_MS,
+  readAgyRecentEvents,
+  readAgySnapshotFile,
+  readAgyStopFlag,
+  type AgyStatusSnapshot,
+} from './agySnapshot';
 import { planChangeSuspected, planFromClaudeProfile, planFromCodexUsage } from './plans';
 import { QuotaStore } from './store';
 import type { InventorySourceState, InventorySourceStatus } from './inventory';
@@ -1020,6 +1027,31 @@ export class QuotaCollector {
    * the account disabled again once 30 minutes pass without a fresh snapshot so Gemini drops out
    * of the combined "All" forecast instead of holding Claude/Codex stale.
    */
+  /** Read-only snapshot, circuit-breaker state, and recent events for the local `agy` ingest. */
+  async agyStatus(): Promise<AgyStatusSnapshot> {
+    const nowMs = this.now();
+    if (!this.agySnapshotPath) {
+      return { snapshot: null, circuitBreaker: { open: false }, recentEvents: [] };
+    }
+    const dir = dirname(this.agySnapshotPath);
+    const [circuitBreaker, recentEvents] = await Promise.all([
+      readAgyStopFlag(join(dir, 'agy-usage.stopped')),
+      readAgyRecentEvents(join(dir, 'agy-events.jsonl')),
+    ]);
+    return {
+      snapshot: this.agyState
+        ? {
+            instanceId: this.agyState.instanceId,
+            observedAtMs: this.agyState.observedAtMs,
+            ageMs: Math.max(0, nowMs - this.agyState.observedAtMs),
+            active: this.agyState.active,
+          }
+        : null,
+      circuitBreaker,
+      recentEvents,
+    };
+  }
+
   ingestAgySnapshot(): Promise<boolean> {
     if (!this.agySnapshotPath) return Promise.resolve(false);
     if (this.agyInFlight) return this.agyInFlight;
