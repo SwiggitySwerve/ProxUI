@@ -1,7 +1,6 @@
 import type { AuthFileItem } from '@/types';
 import { createApiCallApi } from '@/services/api/apiCall';
 import { createAuthFilesApi } from '@/services/api/authFiles';
-import { antigravitySubscriptionApi } from '@/services/api/antigravitySubscription';
 import { resolveKimiQuotaUrl } from '@/services/api/kimiQuota';
 import { pluginsApi } from '@/services/api/plugins';
 import type { ManagementTransport, SourceSession } from '@/services/api/sourceSession';
@@ -21,7 +20,6 @@ export interface QuotaDependencies {
   generation: (name: string) => { session: number; file: number };
   revision: () => number;
   loadPlugins: typeof pluginsApi.list;
-  antigravitySubscriptionApi: Pick<typeof antigravitySubscriptionApi, 'get'>;
   resolveKimiQuotaUrl: (file: AuthFileItem) => Promise<string>;
 }
 
@@ -76,9 +74,6 @@ export function createQuotaDependencies(
       return session.owner.sourceGeneration;
     },
     loadPlugins: () => guarded(() => pluginsApi.list(session.management)),
-    antigravitySubscriptionApi: {
-      get: (authIndex) => guarded(() => antigravitySubscriptionApi.get(authIndex, api)),
-    },
     resolveKimiQuotaUrl: (file) => guarded(() => resolveKimiQuotaUrl(file, scopedFiles)),
   };
 }

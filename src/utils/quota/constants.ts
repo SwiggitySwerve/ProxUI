@@ -64,39 +64,6 @@ export const TYPE_COLORS: Record<string, TypeColorSet> = {
   },
 };
 
-// Antigravity API configuration
-export const ANTIGRAVITY_QUOTA_URLS = [
-  'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
-  'https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary',
-  'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
-];
-
-export const ANTIGRAVITY_CODE_ASSIST_URL =
-  'https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist';
-
-// Keep aligned with the backend Antigravity Hub UA (internal/misc/antigravity_version.go):
-// Cloud Code rejects newer models for clients below 2.23.0.
-export const ANTIGRAVITY_HUB_VERSION = '2.23.0';
-export const ANTIGRAVITY_HUB_PLATFORM = 'darwin/arm64';
-
-type AntigravityUserAgentOptions = {
-  version?: string;
-  platform?: string;
-};
-
-export const buildAntigravityUserAgent = ({
-  version = ANTIGRAVITY_HUB_VERSION,
-  platform = ANTIGRAVITY_HUB_PLATFORM,
-}: AntigravityUserAgentOptions = {}) => `antigravity/hub/${version} ${platform}`;
-
-export const ANTIGRAVITY_USER_AGENT = buildAntigravityUserAgent();
-
-export const ANTIGRAVITY_REQUEST_HEADERS = {
-  Authorization: 'Bearer $TOKEN$',
-  'Content-Type': 'application/json',
-  'User-Agent': ANTIGRAVITY_USER_AGENT,
-};
-
 // Claude API configuration
 export const CLAUDE_PROFILE_URL = 'https://api.anthropic.com/api/oauth/profile';
 

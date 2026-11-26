@@ -2,7 +2,6 @@ import { apiCallApi } from '@/services/api/apiCall';
 import { authFilesApi } from '@/services/api/authFiles';
 import { apiClient } from '@/services/api/client';
 import { guardConfigConnection } from '@/services/api/configValue';
-import { antigravitySubscriptionApi } from '@/services/api/antigravitySubscription';
 import { resolveKimiQuotaUrl } from '@/services/api/kimiQuota';
 import type { QuotaDependencies } from '@/features/quota/providers/dependencies';
 import { pluginsApi } from '@/services/api/plugins';
@@ -27,6 +26,5 @@ export const testQuotaDependencies: QuotaDependencies = {
   },
   revision: () => apiClient.getConnectionRevision(),
   loadPlugins: () => pluginsApi.list(),
-  antigravitySubscriptionApi,
   resolveKimiQuotaUrl: (file) => resolveKimiQuotaUrl(file, authFilesApi),
 };

@@ -746,6 +746,7 @@
     "load_failed": "配額取得失敗：{{message}}",
     "missing_auth_index": "驗證檔案缺少 auth_index",
     "missing_project_id": "Antigravity 憑證缺少 project_id。請重新登入或重新整理憑證以探索專案。",
+    "not_read": "ProxUI 不會透過 hub 讀取 Gemini 額度：Google 條款禁止第三方使用 Antigravity 登入。",
     "empty_models": "暫無配額資料",
     "plan_label": "方案",
     "group_gemini_models": "Gemini 模型",

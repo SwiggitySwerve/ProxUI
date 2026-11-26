@@ -748,6 +748,7 @@
     "load_failed": "Không thể tải quota: {{message}}",
     "missing_auth_index": "File xác thực thiếu auth_index",
     "missing_project_id": "Credential Antigravity thiếu project_id. Đăng nhập lại hoặc làm mới credential để xác định project.",
+    "not_read": "ProxUI không đọc hạn mức Gemini qua hub: điều khoản của Google cấm công cụ bên thứ ba dùng đăng nhập Antigravity.",
     "empty_models": "Chưa có dữ liệu quota",
     "plan_label": "Gói",
     "group_gemini_models": "Model Gemini",

@@ -324,22 +324,17 @@ test('plugin fallback list/cache and nested quota route cannot mix identical pro
   expect(f.calls.filter((call) => call.path === '/plugins')).toHaveLength(2);
 });
 
-test('Antigravity project download and subscription metadata retain owner', async () => {
+test('the Antigravity card sends nothing for any owner and says why', async () => {
   forbidSingleton();
-  const f = fixture(({ path, owner, payload }) => {
-    if (path.includes('/credentials/download'))
-      return new Blob([JSON.stringify({ project_id: `${owner}-project` })]);
-    if (payload.url.includes('loadCodeAssist'))
-      return envelope({ currentTier: { id: 'g1-pro-tier', name: 'Pro' } });
-    expect(payload.data).toContain(`${owner}-project`);
-    return envelope({ groups: [] });
+  const f = fixture(() => {
+    throw new Error('Unexpected request');
   });
-  await Promise.all(
-    ['alpha', 'beta'].map((id) =>
+  for (const id of ['alpha', 'beta']) {
+    await expect(
       createQuotaAdapters(f.capture(id)).antigravity.fetchQuota(file, t)
-    )
-  );
-  expect(f.calls.filter((call) => call.payload.url?.includes('loadCodeAssist'))).toHaveLength(2);
+    ).rejects.toThrow('antigravity_quota.not_read');
+  }
+  expect(f.calls).toEqual([]);
 });
 
 test('xAI fallback inference and optional metadata run only explicitly and retain owner', async () => {
@@ -518,7 +513,8 @@ test('retiring source during grant preflight prevents status and spending dispat
 test('quota config factories require explicit dependencies and export no ambient defaults', () => {
   for (const provider of Object.keys(QUOTA_PRESENTATION)) {
     const source = readFileSync(`src/features/quota/providers/${provider}/data.ts`, 'utf8');
-    expect(source).toMatch(/export function create\w+QuotaConfig\(deps: QuotaDependencies\)/);
+    // A factory that reads nothing (Antigravity) takes no dependencies.
+    expect(source).toMatch(/export function create\w+QuotaConfig\((?:deps: QuotaDependencies)?\)/);
     expect(source).not.toMatch(/export const \w+_CONFIG\b/);
   }
   const dependencies = readFileSync('src/features/quota/providers/dependencies.ts', 'utf8');

@@ -765,6 +765,7 @@
     "load_failed": "Не удалось загрузить квоту: {{message}}",
     "missing_auth_index": "В файле авторизации отсутствует auth_index",
     "missing_project_id": "В учётных данных Antigravity отсутствует project_id. Войдите заново или обновите учётные данные, чтобы определить проект.",
+    "not_read": "ProxUI не читает квоту Gemini через hub: условия Google запрещают сторонним инструментам использовать вход Antigravity.",
     "empty_models": "Данные по квоте отсутствуют",
     "plan_label": "План",
     "group_gemini_models": "Модели Gemini",

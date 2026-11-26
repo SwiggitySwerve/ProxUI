@@ -11,24 +11,21 @@ credential UI. The store owns persistence; the collector uses only public APIs.
   next read and records the revision. Existing bindings stay pinned, even when
   the next manifest omits them or changes their origin or key file reference.
   Stopping aborts in-flight requests and prevents their subsequent writes.
-  Each instance is inventoried once, including all supported Claude/Codex kinds,
-  and Antigravity only on an instance that declares `antigravity` (the Gemini hub,
-  which therefore has an Antigravity pool and no Claude or Codex ones). Other kinds
+  Each instance is inventoried once, including all supported Claude/Codex kinds.
+  Antigravity is never inventoried or read, even on an instance that declares it. Other kinds
   use a normalized reader only when a fresh provider catalog reports them active
   with a supported reader. Full collections and inventory sync probe the catalog
   on each instance. A 404, failed probe or malformed response preserves the last
   catalog and skips generic account retirement and polling for that read.
-- Antigravity (Gemini) quota is `retrieveUserQuotaSummary` for the credential's
-  `project_id` from the inventory, posted through `/requests/api-call` to the same
-  endpoints, in the same order, as the hub-direct card. Only the "Gemini Models"
-  group feeds the pool (user direction, 21 Nov 2026); the "Claude and GPT models"
-  group is shown as its own model-lane window. An endpoint can answer 200
-  without one or both Gemini pool windows (a daily host may return only the Claude/GPT
-  group). That is not a missing window yet: the next endpoint is asked until both pool
-  windows are known, the earliest answer stands for whatever it reported, and later
-  answers only fill gaps. A pool window is recorded as missing only when no endpoint
-  reports it. (The hub-direct card stops at the first answer with any Gemini bucket; it
-  only displays what it got.) It has no resets: claims are refused
+- Antigravity (Gemini) quota is never read from Google (removed 26 Nov 2026). Google
+  suspended the account while a hub used its Antigravity sign-in, and the terms bar
+  third-party tools from it (`docs/PROX-SETUP.md`). No code may name Google's private
+  Cloud Code backend; `tests/noGoogleQuotaReads.test.ts` scans for it. The collector skips
+  Antigravity in `collectionSource` and again before any usage request, so it never
+  sends a request with that credential, a plan read or a hub `quota/fetch`. The history
+  recorded until 23 Nov 2026 stays readable: `quotaSamples` still decodes Antigravity
+  summaries (only the "Gemini Models" group feeds the pool, user direction, 21 Nov 2026;
+  the "Claude and GPT models" group is its own model-lane window). It has no resets: claims are refused
   before anything is sent, and `/v1/accounts` leaves its accounts out (its cards
   stay hub-direct). Databases from before it are migrated once: `quota_accounts`
   is rebuilt to allow open provider IDs, keeping every row and reference. The
@@ -74,9 +71,10 @@ credential UI. The store owns persistence; the collector uses only public APIs.
   5, like Claude Max (user direction, 21 Nov 2026). A window's remaining percent times
   that weight gives pool points; resets restore each account to its own capacity.
   An unknown plan counts as one unit and is shown as unknown. Points are not tokens.
-- Plans come from provider responses only: Codex's usage `plan_type`, Claude's
-  OAuth profile tier and Antigravity's `loadCodeAssist` tier id (the paid tier
-  first). The last two are separate reads, asked at most every 30 minutes. A
+- Plans come from provider responses only: Codex's usage `plan_type` and Claude's
+  OAuth profile tier. Antigravity's stored plan (from `loadCodeAssist` before 23 Nov
+  2026) is kept and never read again. Claude's is a separate read, asked at most every
+  30 minutes. A
   targeted refresh, or a poll whose windows suggest a plan change
   (`planChangeSuspected`: a window in use restarted before its reset, or moved 20+
   points within one cycle), asks again when the last ask is at least 5 minutes old,

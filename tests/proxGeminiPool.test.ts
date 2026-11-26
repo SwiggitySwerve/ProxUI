@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,7 +9,7 @@ import { QuotaCollector, quotaSamples } from '../server/quota/collector';
 import { buildDashboard, type DashboardOptions } from '../server/quota/domain';
 import { planWeight } from '../server/quota/plans';
 import { QuotaStore } from '../server/quota/store';
-import { DAY_MS, HOUR_MS, MANUAL_REFRESH_INTERVAL_MS } from '../server/quota/types';
+import { DAY_MS, HOUR_MS } from '../server/quota/types';
 import { validateSourceManifest } from '../src/domain/providerSources/manifest';
 import { laneOf, poolWindowId } from '../src/domain/quotaWindows/lanes';
 import {
@@ -17,11 +17,7 @@ import {
   resolveViewProvider,
   visibleProviders,
 } from '../src/features/quotaPool/model/viewState';
-import {
-  ANTIGRAVITY_CODE_ASSIST_URL,
-  ANTIGRAVITY_QUOTA_URLS,
-  CLAUDE_USAGE_URL,
-} from '../src/utils/quota/constants';
+import { CLAUDE_USAGE_URL } from '../src/utils/quota/constants';
 
 const NOW = 1_800_000_000_000;
 const SENTINEL = 'SYNTHETIC_PRIVATE_GEMINI_VALUE';
@@ -36,7 +32,7 @@ function temporary() {
   return root;
 }
 
-/** The live retrieveUserQuotaSummary shape (2026-11-21), values synthetic. */
+/** The retrieveUserQuotaSummary shape the stored history was decoded from (2026-11-21), values synthetic. */
 function summary(geminiWeekly = 0.9, gemini5h = 0.75) {
   return {
     groups: [
@@ -138,36 +134,14 @@ function fixture() {
       },
     ],
   ]);
-  const calls: { instanceId: string; body?: Record<string, unknown> }[] = [];
-  let quota: unknown = summary();
-  let tier = 'g1-ultra-lite-tier';
-  let tierReadMs = 0;
-  // Answers of the later Antigravity endpoints, by index into ANTIGRAVITY_QUOTA_URLS.
-  let fallbackQuotas: unknown[] = [];
-  let quotaReadMs = 0;
+  const calls: { instanceId: string; path: string; body?: Record<string, unknown> }[] = [];
   const fetcher = Object.assign(
     async (input: string | URL | Request, init: RequestInit = {}) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       const instanceId = url.hostname.replace('.invalid', '');
       const body = init.body ? JSON.parse(String(init.body)) : undefined;
-      calls.push({ instanceId, body });
+      calls.push({ instanceId, path: url.pathname, body });
       if (!body) return Response.json(inventories.get(instanceId));
-      if (body.url === ANTIGRAVITY_QUOTA_URLS[0]) {
-        clock += quotaReadMs;
-        return Response.json({ status_code: 200, body: JSON.stringify(quota) });
-      }
-      const fallback = fallbackQuotas[ANTIGRAVITY_QUOTA_URLS.indexOf(body.url)];
-      if (fallback !== undefined) {
-        clock += quotaReadMs;
-        return Response.json({ status_code: 200, body: JSON.stringify(fallback) });
-      }
-      if (body.url === ANTIGRAVITY_CODE_ASSIST_URL) {
-        clock += tierReadMs;
-        return Response.json({
-          status_code: 200,
-          body: { paidTier: { id: tier, name: 'Google AI Ultra' } },
-        });
-      }
       if (body.url === `${CLAUDE_USAGE_URL}?cedar_ember=1&skip_spend=1`)
         return Response.json({
           status_code: 200,
@@ -182,14 +156,38 @@ function fixture() {
   ) satisfies typeof fetch;
   const store = new QuotaStore(':memory:');
   cleanups.push(() => store.close());
-  let clock = NOW;
   const collector = new QuotaCollector(store, {
     sources: manifest.sources,
     revision: 'synthetic-revision',
     fetcher,
-    now: () => clock,
+    now: () => NOW,
   });
   cleanups.push(() => collector.stop());
+  /** The Gemini account as prox-history stored it before its hub was taken down. */
+  const seedGemini = (plan = 'g1-ultra-lite-tier') => {
+    const id = store.accountIdFor('gemini-src', 'antigravity', 'gemini-index');
+    store.recordInventory(
+      'antigravity',
+      [
+        {
+          id,
+          instanceId: 'gemini-src',
+          provider: 'antigravity',
+          name: 'antigravity.json',
+          email: 'gemini@example.test',
+          disabled: false,
+          retired: false,
+          lastSeenAtMs: NOW,
+          lastErrorAtMs: null,
+        },
+      ],
+      NOW,
+      'gemini-src'
+    );
+    store.recordPlan(id, plan, NOW, 0);
+    store.recordSamples(quotaSamples('antigravity', id, summary(), NOW).samples);
+    return id;
+  };
   const options: DashboardOptions = {
     nowMs: NOW,
     window: 'weekly',
@@ -213,220 +211,51 @@ function fixture() {
         windows: collector.windows,
       }
     );
-  return {
-    store,
-    collector,
-    calls,
-    dashboard,
-    setQuota: (value: unknown) => (quota = value),
-    setTier: (value: string) => (tier = value),
-    advance: (ms: number) => (clock += ms),
-    setTierReadMs: (ms: number) => (tierReadMs = ms),
-    setFallbackQuotas: (values: unknown[]) => (fallbackQuotas = values),
-    setQuotaReadMs: (ms: number) => (quotaReadMs = ms),
-  };
+  return { store, collector, calls, dashboard, seedGemini };
 }
 
 describe('Gemini (Antigravity) in the quota pool', () => {
-  test('an Antigravity source is collected and pooled with its Gemini windows and Ultra weight', async () => {
+  test('a source declaring Antigravity is never inventoried for it, and nothing reads its quota', async () => {
     const f = fixture();
+    const id = f.seedGemini();
     await f.collector.refresh();
 
-    // The Gemini hub is inventoried for Antigravity only; the Claude hub never for Antigravity.
     expect(
       f.collector.inventorySources.map(({ instanceId, provider }) => [instanceId, provider])
     ).toEqual([
       ['claude-src', 'claude'],
       ['claude-src', 'codex'],
-      ['gemini-src', 'antigravity'],
     ]);
-    const quotaCall = f.calls.find((call) => call.body?.url === ANTIGRAVITY_QUOTA_URLS[0])!;
-    expect(quotaCall.instanceId).toBe('gemini-src');
-    expect(quotaCall.body).toMatchObject({
-      authIndex: 'gemini-index',
-      method: 'POST',
-      data: JSON.stringify({ project: 'synthetic-project' }),
+    // No request names the Antigravity credential: no quota read, plan read or hub quota fetch.
+    expect(JSON.stringify(f.calls)).not.toContain('gemini-index');
+    expect(f.calls.filter((call) => call.instanceId === 'gemini-src' && call.body)).toEqual([]);
+
+    // The row's Refresh reads nothing either, and the stored readings stay as they were.
+    const sent = f.calls.length;
+    expect(await f.collector.refreshAccount(id)).toBe(false);
+    expect(JSON.stringify(f.calls.slice(sent))).not.toContain('gemini-index');
+    expect(f.store.listSamples(0, NOW).filter((sample) => sample.accountId === id)).toHaveLength(2);
+    expect(f.store.listAccounts().find((account) => account.id === id)).toMatchObject({
+      disabled: false,
+      retired: false,
     });
-    expect(f.collector.issues).toEqual([]);
 
+    // Stored Gemini history stays visible even while that source is still in the manifest,
+    // without claiming a live balance or adding an empty Gemini card beside the Claude hub.
     const weekly = f.dashboard('weekly');
-    const pool = weekly.pools.find((entry) => entry.provider === 'antigravity')!;
-    expect(pool.instanceId).toBe('gemini-src');
-    expect(pool.accountCount).toBe(1);
-    // The fixture account is Ultra Lite: 5 base plans.
-    expect(pool.capacityPoints).toBe(500);
-    expect(pool.remainingPoints).toBeCloseTo(450, 6);
-    const [account] = pool.accounts;
-    expect(account.label).toBe('Gemini 1');
-    expect(account.plan).toEqual({ label: 'Ultra Lite', capacityPoints: 500, known: true });
-    expect(account.status).toBe('ok');
-    // The Claude and GPT group rides along as its own namespaced window, never in the pool balance.
-    expect(account.windows.map((window) => [window.id, laneOf('antigravity', window.id)])).toEqual([
-      ['five-hour', 'five-hour'],
-      ['weekly', 'weekly'],
-      ['claude-and-gpt-models:3p-5h', 'model'],
-      ['claude-and-gpt-models:3p-weekly', 'model'],
-    ]);
-    expect(weekly.combined?.antigravity?.series?.capacityPoints).toBe(500);
-    expect(weekly.combined?.all.series?.capacityPoints).toBe(500 + 100);
-
-    const fiveHour = f.dashboard('five-hour');
-    expect(
-      fiveHour.pools.find((entry) => entry.provider === 'antigravity')!.remainingPoints
-    ).toBeCloseTo(375, 6);
-    // No empty Gemini card beside the Claude hub, and no Claude card beside the Gemini hub.
     expect(weekly.pools.map((entry) => [entry.instanceId, entry.provider])).toEqual([
       ['claude-src', 'claude'],
       ['gemini-src', 'antigravity'],
     ]);
+    const gemini = weekly.pools.find((entry) => entry.provider === 'antigravity')!;
+    expect(gemini.recorded.at(-1)?.remainingPoints).toBeCloseTo(450, 6);
+    expect(gemini.remainingPoints).toBeNull();
     expect(JSON.stringify(weekly)).not.toContain(SENTINEL);
-  });
-
-  test('an upgrade from Ultra Lite to Ultra is picked up 30 minutes after the last plan read, or at once on a targeted refresh', async () => {
-    const f = fixture();
-    const plan = () => f.store.listAccounts().find((a) => a.provider === 'antigravity')!.plan;
-    const tierReads = () =>
-      f.calls.filter((call) => call.body?.url === ANTIGRAVITY_CODE_ASSIST_URL).length;
-    await f.collector.refresh();
-    expect(plan()).toBe('g1-ultra-lite-tier');
-    expect(tierReads()).toBe(1);
-
-    // The subscription changes upstream. A scheduled collection inside the plan interval keeps
-    // the stored tier; the first one after it reads the new tier.
-    f.setTier('g1-ultra-tier');
-    f.advance(MANUAL_REFRESH_INTERVAL_MS);
-    await f.collector.refresh();
-    expect(tierReads()).toBe(1);
-    f.advance(30 * 60_000 - MANUAL_REFRESH_INTERVAL_MS);
-    await f.collector.refresh();
-    expect(tierReads()).toBe(2);
-    expect(plan()).toBe('g1-ultra-tier');
-
-    // A targeted refresh (the row's Refresh) re-reads the tier without waiting for the interval.
-    f.setTier('g1-ultra-lite-tier');
-    f.advance(5 * 60_000);
-    const account = f.store.listAccounts().find((a) => a.provider === 'antigravity')!;
-    expect(await f.collector.refreshAccount(account.id)).toBe(true);
-    expect(tierReads()).toBe(3);
-    expect(plan()).toBe('g1-ultra-lite-tier');
-
-    // A targeted refresh that fails before the plan read leaves the scheduled interval alone.
-    f.advance(5 * 60_000);
-    f.setQuota({});
-    expect(await f.collector.refreshAccount(account.id)).toBe(false);
-    f.setQuota(summary());
-    f.advance(MANUAL_REFRESH_INTERVAL_MS);
-    await f.collector.refresh();
-    expect(tierReads()).toBe(3);
-  });
-  test('fresh windows before the old ones reset read the plan in that poll', async () => {
-    const f = fixture();
-    const tierReads = () =>
-      f.calls.filter((call) => call.body?.url === ANTIGRAVITY_CODE_ASSIST_URL).length;
-    f.setQuota(summary(0.3, 0.002));
-    await f.collector.refresh();
-    expect(tierReads()).toBe(1);
-    // Five minutes later the upgrade has opened fresh Gemini windows, long before the old resets.
-    f.advance(5 * 60_000);
-    f.setTier('g1-ultra-tier');
-    const fresh = summary(1, 1);
-    for (const bucket of fresh.groups[0].buckets) {
-      const length = bucket.window === '5h' ? 5 * HOUR_MS : 7 * DAY_MS;
-      bucket.resetTime = new Date(NOW + 5 * 60_000 + length).toISOString();
-    }
-    f.setQuota(fresh);
-    await f.collector.refresh();
-    expect(tierReads()).toBe(2);
-    const account = f.store.listAccounts().find((a) => a.provider === 'antigravity')!;
-    expect(account.planHistory).toEqual([
-      { plan: 'g1-ultra-lite-tier', fromMs: 0 },
-      { plan: 'g1-ultra-tier', fromMs: NOW + 5 * 60_000 },
-    ]);
-    // Ordinary use afterwards does not ask again inside the plan interval.
-    f.advance(5 * 60_000);
-    f.setQuota(fresh);
-    await f.collector.refresh();
-    expect(tierReads()).toBe(2);
-  });
-
-  test('a plan change signal waits for the plan floor, and the change starts at its reading', async () => {
-    const f = fixture();
-    const tierReads = () =>
-      f.calls.filter((call) => call.body?.url === ANTIGRAVITY_CODE_ASSIST_URL).length;
-    f.setQuota(summary(0.3, 0.002));
-    await f.collector.refresh();
-    // Four minutes later (inside the five-minute floor) the upgrade has opened fresh windows.
-    f.advance(4 * 60_000);
-    f.setTier('g1-ultra-tier');
-    const fresh = summary(1, 1);
-    for (const bucket of fresh.groups[0].buckets) {
-      const length = bucket.window === '5h' ? 5 * HOUR_MS : 7 * DAY_MS;
-      bucket.resetTime = new Date(NOW + 4 * 60_000 + length).toISOString();
-    }
-    f.setQuota(fresh);
-    await f.collector.refresh();
-    expect(tierReads()).toBe(1);
-    // The next poll shows nothing new, but the held signal reads the plan once the floor allows.
-    f.advance(4 * 60_000);
-    await f.collector.refresh();
-    expect(tierReads()).toBe(2);
-    const account = f.store.listAccounts().find((a) => a.provider === 'antigravity')!;
-    expect(account.planHistory?.at(-1)).toEqual({
-      plan: 'g1-ultra-tier',
-      fromMs: NOW + 4 * 60_000,
-    });
-  });
-
-  test('a plan change starts at the reading its poll took, not at the later tier read', async () => {
-    const f = fixture();
-    await f.collector.refresh();
-    f.setTier('g1-ultra-tier');
-    f.setTierReadMs(250);
-    f.advance(30 * 60_000);
-    await f.collector.refresh();
-    const account = f.store.listAccounts().find((a) => a.provider === 'antigravity')!;
-    const readingAtMs = Math.max(
-      ...f.store
-        .listSamples(0, Number.MAX_SAFE_INTEGER)
-        .filter((sample) => sample.accountId === account.id)
-        .map((sample) => sample.observedAtMs)
-    );
-    expect(account.planHistory).toEqual([
-      { plan: 'g1-ultra-lite-tier', fromMs: 0 },
-      { plan: 'g1-ultra-tier', fromMs: readingAtMs },
-    ]);
-    expect(account.planObservedAtMs).toBe(readingAtMs + 250);
-  });
-
-  test('a plan change starts at the earliest reading of a poll that asked several endpoints', async () => {
-    const f = fixture();
-    await f.collector.refresh();
-    const pollStart = NOW + 30 * 60_000;
-    f.advance(30 * 60_000);
-    f.setTier('g1-ultra-tier');
-    // The first endpoint has no Gemini group, the next only its five-hour window and the third
-    // only the weekly one, each 400 ms later: the weekly reading is listed first but read last.
-    const [gemini, thirdParty] = summary(0.2, 0.6).groups;
-    f.setQuota({ groups: [{ ...thirdParty, buckets: thirdParty.buckets.slice(0, 1) }] });
-    f.setFallbackQuotas([
-      undefined,
-      { groups: [{ ...gemini, buckets: gemini.buckets.slice(1) }] },
-      { groups: [{ ...gemini, buckets: gemini.buckets.slice(0, 1) }] },
-    ]);
-    f.setQuotaReadMs(400);
-    await f.collector.refresh();
-    const account = f.store.listAccounts().find((a) => a.provider === 'antigravity')!;
-    const poll = f.store
-      .listSamples(pollStart, Number.MAX_SAFE_INTEGER)
-      .filter((sample) => sample.accountId === account.id);
-    expect(new Set(poll.map((sample) => sample.observedAtMs)).size).toBe(2);
-    const fromMs = account.planHistory!.at(-1)!.fromMs;
-    expect(account.planHistory!.at(-1)!.plan).toBe('g1-ultra-tier');
-    expect(fromMs).toBe(Math.min(...poll.map((sample) => sample.observedAtMs)));
   });
 
   test('a Gemini source taken out of the manifest keeps its stored pool and history', async () => {
     const f = fixture();
+    f.seedGemini();
     await f.collector.refresh();
     // Built as prox-history does after the Gemini hub left the manifest: only the Claude source
     // is configured, the Gemini account and its samples are still stored.
@@ -458,6 +287,7 @@ describe('Gemini (Antigravity) in the quota pool', () => {
 
   test('a disabled account keeps the history it recorded, and leaves the pool after it', async () => {
     const f = fixture();
+    f.seedGemini();
     await f.collector.refresh();
     // The suspended Gemini credential was disabled before its source was removed.
     const accounts = f.store
@@ -483,7 +313,7 @@ describe('Gemini (Antigravity) in the quota pool', () => {
           nextRefreshAtMs: NOW,
           refreshing: false,
           issues: [],
-          sources: f.collector.sources,
+          sources: f.collector.sources.filter((source) => source.instanceId !== 'gemini-src'),
         }
       ).pools.find((pool) => pool.provider === 'antigravity')!;
     const gemini = at(NOW);
@@ -497,8 +327,9 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     expect(at(NOW + DAY_MS).recorded.at(-1)).toMatchObject({ atMs: NOW });
   });
 
-  test('the combined chart keeps a retired, disabled Gemini account\'s history', async () => {
+  test("the combined chart keeps a retired, disabled Gemini account's history", async () => {
     const f = fixture();
+    f.seedGemini();
     await f.collector.refresh();
     const accounts = f.store
       .listAccounts()
@@ -633,337 +464,41 @@ describe('Gemini (Antigravity) in the quota pool', () => {
     ]);
     // Inherited object keys must stay plain strings and survive JSON serialization intact.
     const serialized = JSON.parse(JSON.stringify(windows)) as typeof windows;
-    expect(serialized.every((w) => typeof w.id === 'string' && typeof w.labelKey === 'string')).toBe(
-      true
-    );
+    expect(
+      serialized.every((w) => typeof w.id === 'string' && typeof w.labelKey === 'string')
+    ).toBe(true);
   });
 
-  test('malformed 200 and transport errors fall through to the next Antigravity endpoint, while abort stops', async () => {
-    const makeCollector = (
-      handler: (url: string, signal?: AbortSignal) => Promise<Response> | Response
-    ) => {
-      const root = temporary();
-      const managementKeyFile = join(root, 'gemini.key');
-      writeFileSync(managementKeyFile, 'synthetic-key-gemini');
-      const manifest = validateSourceManifest({
-        schemaVersion: 1,
-        defaultInstanceId: 'gemini-src',
-        history: { upstreamOrigin: 'http://history.invalid', managementKeyFile },
-        sources: [
-          {
-            instanceId: 'gemini-src',
-            label: 'Gemini',
-            publicBasePath: '/gemini',
-            aliases: [],
-            authScope: 'shared',
-            providers: ['antigravity'],
-            upstreamOrigin: 'http://gemini-src.invalid',
-            managementKeyFile,
-          },
-        ],
-      });
-      const attempted: string[] = [];
-      const fetcher = Object.assign(
-        async (_input: string | URL | Request, init: RequestInit = {}) => {
-          const body = init.body ? JSON.parse(String(init.body)) : undefined;
-          if (!body) {
-            return Response.json({
-              files: [
-                {
-                  provider: 'antigravity',
-                  type: 'antigravity',
-                  auth_index: 'gemini-index',
-                  name: 'antigravity.json',
-                  email: 'gemini@example.test',
-                  disabled: false,
-                  project_id: 'synthetic-project',
-                },
-              ],
-            });
-          }
-          if (body.url === ANTIGRAVITY_CODE_ASSIST_URL) {
-            return Response.json({
-              status_code: 200,
-              body: { paidTier: { id: 'g1-ultra-tier', name: 'Google AI Ultra' } },
-            });
-          }
-          attempted.push(String(body.url));
-          return handler(String(body.url), init.signal ?? undefined);
-        },
-        { preconnect: () => {} }
-      ) satisfies typeof fetch;
-      const store = new QuotaStore(':memory:');
-      cleanups.push(() => store.close());
-      const collector = new QuotaCollector(store, {
-        sources: manifest.sources,
-        revision: 'synthetic-revision',
-        fetcher,
-        now: () => NOW,
-      });
-      cleanups.push(() => collector.stop());
-      return { store, collector, attempted };
-    };
-
-    // Case 1: invalid HTTP 200 on first endpoint (including malformed nested group/buckets) falls through.
-    const malformed = makeCollector((url) =>
-      url === ANTIGRAVITY_QUOTA_URLS[0]
-        ? Response.json({
-            status_code: 200,
-            body: JSON.stringify({ groups: [{ displayName: 'Gemini Models', buckets: {} }] }),
-          })
-        : Response.json({ status_code: 200, body: JSON.stringify(summary(0.8, 0.6)) })
-    );
-    await malformed.collector.refresh();
-    expect(malformed.attempted).toEqual(ANTIGRAVITY_QUOTA_URLS.slice(0, 2));
-    expect(malformed.collector.issues).toEqual([]);
-    expect(malformed.store.listSamples(0, NOW).find((s) => s.window === 'weekly')?.remainingPercent)
-      .toBeCloseTo(80, 6);
-
-    // Case 1b: a bare "%" fraction is malformed and falls through to the next endpoint instead of recording 0%.
-    const barePercent = makeCollector((url) =>
-      url === ANTIGRAVITY_QUOTA_URLS[0]
-        ? Response.json({
-            status_code: 200,
-            body: JSON.stringify({
-              groups: [
-                {
-                  displayName: 'Gemini Models',
-                  buckets: [
-                    {
-                      bucketId: 'gemini-weekly',
-                      window: 'weekly',
-                      remainingFraction: '%',
-                    },
-                  ],
-                },
-              ],
-            }),
-          })
-        : Response.json({ status_code: 200, body: JSON.stringify(summary(0.85, 0.65)) })
-    );
-    await barePercent.collector.refresh();
-    expect(barePercent.attempted).toEqual(ANTIGRAVITY_QUOTA_URLS.slice(0, 2));
-    expect(barePercent.collector.issues).toEqual([]);
-    expect(barePercent.store.listSamples(0, NOW).find((s) => s.window === 'weekly')?.remainingPercent)
-      .toBeCloseTo(85, 6);
-
-    // Case 1c: unpersistable or out-of-Date-range resetTime falls through for both pooled and model windows.
-    for (const [resetTime, modelWindow] of [
-      ['1e20', false],
-      ['8640000000000001', false],
-      ['8640000000000001', true],
-    ] as const) {
-      const badReset = makeCollector((url) =>
-        url === ANTIGRAVITY_QUOTA_URLS[0]
-          ? Response.json({
-              status_code: 200,
-              body: JSON.stringify({
-                groups: modelWindow
-                  ? [
-                      summary().groups[0],
-                      {
-                        displayName: 'Claude and GPT models',
-                        buckets: [
-                          {
-                            bucketId: '3p-weekly',
-                            window: 'weekly',
-                            resetTime,
-                            remainingFraction: 0.5,
-                          },
-                        ],
-                      },
-                    ]
-                  : [
-                      {
-                        displayName: 'Gemini Models',
-                        buckets: [
-                          {
-                            bucketId: 'gemini-weekly',
-                            window: 'weekly',
-                            resetTime,
-                            remainingFraction: 0.9,
-                          },
-                        ],
-                      },
-                    ],
-              }),
-            })
-          : Response.json({ status_code: 200, body: JSON.stringify(summary(0.72, 0.52)) })
-      );
-      await badReset.collector.refresh();
-      expect(badReset.attempted).toEqual(ANTIGRAVITY_QUOTA_URLS.slice(0, 2));
-      expect(badReset.collector.issues).toEqual([]);
-      expect(
-        badReset.store.listSamples(0, NOW).find((s) => s.window === 'weekly')?.remainingPercent
-      ).toBeCloseTo(72, 6);
-    }
-
-    // Case 1d: duplicate pooled window IDs with conflicting balances are rejected and fall through.
-    const duplicatePool = makeCollector((url) =>
-      url === ANTIGRAVITY_QUOTA_URLS[0]
-        ? Response.json({
-            status_code: 200,
-            body: JSON.stringify({
-              groups: [
-                {
-                  displayName: 'Gemini Models',
-                  buckets: [
-                    {
-                      bucketId: 'gemini-weekly',
-                      window: 'weekly',
-                      resetTime: new Date(NOW + 5 * DAY_MS).toISOString(),
-                      remainingFraction: 0.9,
-                    },
-                    {
-                      bucketId: 'gemini-weekly',
-                      window: 'weekly',
-                      resetTime: new Date(NOW + 5 * DAY_MS).toISOString(),
-                      remainingFraction: 0.2,
-                    },
-                  ],
-                },
-              ],
-            }),
-          })
-        : Response.json({ status_code: 200, body: JSON.stringify(summary(0.64, 0.44)) })
-    );
-    await duplicatePool.collector.refresh();
-    expect(duplicatePool.attempted).toEqual(ANTIGRAVITY_QUOTA_URLS.slice(0, 2));
-    expect(duplicatePool.collector.issues).toEqual([]);
-    expect(
-      duplicatePool.store.listSamples(0, NOW).find((s) => s.window === 'weekly')?.remainingPercent
-    ).toBeCloseTo(64, 6);
-
-    // Malformed bucket fractions also fail validation instead of recording missing or zero observations.
+  test('a malformed or ambiguous Antigravity reading is rejected, never recorded as 0 or missing', () => {
+    const reading =
+      (buckets: unknown[], displayName = 'Gemini Models') =>
+      () =>
+        quotaSamples('antigravity', 'account', { groups: [{ displayName, buckets }] }, NOW);
     for (const badFraction of ['bad', '%', '  % ', 1.5]) {
-      expect(() =>
-        quotaSamples(
-          'antigravity',
-          'account',
-          {
-            groups: [
-              {
-                displayName: 'Gemini Models',
-                buckets: [{ bucketId: 'gemini-weekly', remainingFraction: badFraction }],
-              },
-            ],
-          },
-          NOW
+      expect(reading([{ bucketId: 'gemini-weekly', remainingFraction: badFraction }])).toThrow();
+    }
+    // Unpersistable or out-of-Date-range reset times, on a pool window and on a model window.
+    for (const resetTime of ['1e20', '8640000000000001']) {
+      expect(
+        reading([
+          { bucketId: 'gemini-weekly', window: 'weekly', resetTime, remainingFraction: 0.9 },
+        ])
+      ).toThrow();
+      expect(
+        reading(
+          [{ bucketId: '3p-weekly', window: 'weekly', resetTime, remainingFraction: 0.5 }],
+          'Claude and GPT models'
         )
       ).toThrow();
     }
-
-    // Case 2: transport error on first endpoint falls through to valid second endpoint.
-    const transport = makeCollector((url) => {
-      if (url === ANTIGRAVITY_QUOTA_URLS[0]) throw new Error('upstream reset');
-      return Response.json({ status_code: 200, body: JSON.stringify(summary(0.7, 0.5)) });
-    });
-    await transport.collector.refresh();
-    expect(transport.attempted).toEqual(ANTIGRAVITY_QUOTA_URLS.slice(0, 2));
-    expect(transport.collector.issues).toEqual([]);
-    expect(transport.store.listSamples(0, NOW).find((s) => s.window === 'weekly')?.remainingPercent)
-      .toBeCloseTo(70, 6);
-
-    // Case 2b: a daily host can answer 200 with only the Claude/GPT group. That is not a missing
-    // Gemini pool: the next endpoint is asked, and its Gemini windows are recorded.
-    const thirdPartyOnly = () => ({ groups: summary().groups.slice(1) });
-    const partial = makeCollector((url) =>
-      url === ANTIGRAVITY_QUOTA_URLS[0]
-        ? Response.json({ status_code: 200, body: JSON.stringify(thirdPartyOnly()) })
-        : Response.json({
-            status_code: 200,
-            body: JSON.stringify({ groups: summary(0.6, 0.4).groups.slice(0, 1) }),
-          })
-    );
-    await partial.collector.refresh();
-    expect(partial.attempted).toEqual(ANTIGRAVITY_QUOTA_URLS.slice(0, 2));
-    expect(partial.collector.issues).toEqual([]);
-    const partialSamples = partial.store.listSamples(0, NOW);
-    expect(partialSamples.find((s) => s.window === 'weekly')?.remainingPercent).toBeCloseTo(60, 6);
-    expect(partialSamples.find((s) => s.window === 'five-hour')?.remainingPercent).toBeCloseTo(
-      40,
-      6
-    );
-    // The Claude/GPT windows of the first answer are kept beside the Gemini ones.
-    const partialAccount = partial.store.listAccounts()[0]!;
+    // Two pool buckets with one id and different balances.
+    const resetTime = new Date(NOW + 5 * DAY_MS).toISOString();
     expect(
-      (partial.collector.windows.get(partialAccount.id) ?? []).map((window) => window.id).sort()
-    ).toEqual([
-      'claude-and-gpt-models:3p-5h',
-      'claude-and-gpt-models:3p-weekly',
-      'five-hour',
-      'weekly',
-    ]);
-
-    // Case 2b': the first answer has only the weekly Gemini window. The next endpoint is still
-    // asked for the 5-hour one; the first answer's weekly reading stands.
-    const weeklyOnly = () => {
-      const groups = summary(0.7, 0.3).groups;
-      return { groups: [{ ...groups[0], buckets: groups[0].buckets.slice(0, 1) }] };
-    };
-    const split = makeCollector((url) =>
-      url === ANTIGRAVITY_QUOTA_URLS[0]
-        ? Response.json({ status_code: 200, body: JSON.stringify(weeklyOnly()) })
-        : Response.json({ status_code: 200, body: JSON.stringify(summary(0.2, 0.45)) })
-    );
-    await split.collector.refresh();
-    expect(split.attempted).toEqual(ANTIGRAVITY_QUOTA_URLS.slice(0, 2));
-    const splitSamples = split.store.listSamples(0, NOW);
-    expect(splitSamples.find((s) => s.window === 'weekly')?.remainingPercent).toBeCloseTo(70, 6);
-    expect(splitSamples.find((s) => s.window === 'five-hour')?.remainingPercent).toBeCloseTo(
-      45,
-      6
-    );
-
-    // Case 2c: no endpoint has a Gemini group, so the Claude/GPT answer stands and the pool
-    // windows are recorded as missing, as before.
-    const noGemini = makeCollector(() =>
-      Response.json({ status_code: 200, body: JSON.stringify(thirdPartyOnly()) })
-    );
-    await noGemini.collector.refresh();
-    expect(noGemini.attempted).toEqual(ANTIGRAVITY_QUOTA_URLS);
-    expect(noGemini.collector.issues).toEqual([]);
-    expect(
-      noGemini.store.listSamples(0, NOW).find((s) => s.window === 'weekly')?.remainingPercent
-    ).toBeNull();
-
-    // Case 3: stopping/aborting during the first endpoint does not attempt the second.
-    let releaseFirst!: () => void;
-    const firstReached = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    const aborted = makeCollector(async (_url, signal) => {
-      releaseFirst();
-      await new Promise((_resolve, reject) => {
-        signal?.addEventListener('abort', () => reject(new Error('Aborted')), { once: true });
-      });
-      return Response.json({ status_code: 200, body: JSON.stringify(summary()) });
-    });
-    const refreshPromise = aborted.collector.refresh().catch(() => {});
-    await firstReached;
-    aborted.collector.stop();
-    await refreshPromise;
-    expect(aborted.attempted).toEqual([ANTIGRAVITY_QUOTA_URLS[0]]);
-
-    // Case 4: failed Gemini poll logs status, retry-after and header names without any account suffix.
-    const failed = makeCollector(() =>
-      Response.json({
-        status_code: 429,
-        header: { 'Retry-After': ['45'], 'X-Secret-Cookie': [SENTINEL] },
-        body: '',
-      })
-    );
-    const logged = spyOn(console, 'error').mockImplementation(() => {});
-    await failed.collector.refresh();
-    const lines = logged.mock.calls.map((call) => call.join(' '));
-    logged.mockRestore();
-    const geminiAccount = failed.store.listAccounts()[0]!;
-    expect(lines).toContainEqual(
-      'Quota request failed: antigravity 429 retry-after=45 headers=retry-after,x-secret-cookie'
-    );
-    expect(lines.join('\n')).not.toContain('account=');
-    expect(lines.join('\n')).not.toContain(geminiAccount.id.slice(-8));
-    expect(lines.join('\n')).not.toContain(SENTINEL);
+      reading([
+        { bucketId: 'gemini-weekly', window: 'weekly', resetTime, remainingFraction: 0.9 },
+        { bucketId: 'gemini-weekly', window: 'weekly', resetTime, remainingFraction: 0.2 },
+      ])
+    ).toThrow();
   });
 
   test('Google AI Ultra counts 2000 points, Ultra Lite 500; other tiers stay unknown', () => {
@@ -987,6 +522,7 @@ describe('Gemini (Antigravity) in the quota pool', () => {
 
   test('/v1/accounts still serves only Claude and Codex accounts', async () => {
     const f = fixture();
+    f.seedGemini();
     await f.collector.refresh();
     const body = buildAccounts({
       accounts: f.store.listAccounts(),
@@ -1004,6 +540,7 @@ describe('Gemini (Antigravity) in the quota pool', () => {
 
   test('a reset claim on a Gemini account is refused before anything is sent', async () => {
     const f = fixture();
+    f.seedGemini();
     await f.collector.refresh();
     const account = f.store.listAccounts().find((entry) => entry.provider === 'antigravity')!;
     const sent = f.calls.length;

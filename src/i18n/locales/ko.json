@@ -748,6 +748,7 @@
     "load_failed": "할당량 불러오기 실패: {{message}}",
     "missing_auth_index": "인증 파일에 auth_index가 없습니다",
     "missing_project_id": "Antigravity 자격 증명에 project_id가 없습니다. 프로젝트를 찾으려면 다시 로그인하거나 자격 증명을 새로 고침하세요.",
+    "not_read": "ProxUI는 hub를 통해 Gemini 할당량을 읽지 않습니다. Google 약관은 제3자 도구의 Antigravity 로그인 사용을 금지합니다.",
     "empty_models": "사용 가능한 할당량 데이터가 없습니다",
     "plan_label": "플랜",
     "group_gemini_models": "Gemini 모델",
