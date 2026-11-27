@@ -576,9 +576,7 @@ export function QuotaPoolPage() {
           <div className={styles.loading} aria-busy="true" data-skeleton-row="card">
             <div className={styles.loadingHead}>
               <h2>{t('quota_pool.combined_usage')}</h2>
-              {/* Phones: the graph toggle beside the heading, and the chart-view select on its own row. */}
               <Skeleton className={styles.loadingToggle} rounded={999} inert />
-              <Skeleton className={styles.loadingSelect} rounded={999} inert />
             </div>
             {/* The combined card has a label-above-value headline in a number card, matching loaded cards. */}
             <div className={`${styles.loadingHero} ${styles.loadingHeroCard}`}>
@@ -731,7 +729,7 @@ export function QuotaPoolPage() {
                     ))}
                   </dl>
                 </li>
-                <li>{t('quota_pool.stacked_description')}</li>
+                <li>{t('quota_pool.combined_lanes_about')}</li>
                 <li>{t('quota_pool.rates_note')}</li>
                 <li>{t('quota_pool.limit_note')}</li>
                 <li>{t('quota_pool.polling')}</li>

@@ -123,63 +123,38 @@ function knownRuns<T>(items: readonly T[], known: (item: T) => boolean): T[][] {
   return runs;
 }
 
-export interface StackSample extends ChartSample {
-  lower: number | null;
-  upper: number | null;
+/** Y-axis tick values; guarantees an explicit zero tick whenever signed values cross zero. */
+export function axisTicks(min: number, max: number): number[] {
+  if (min === max) return [min];
+  if (min < 0 && max > 0) return [min, 0, max];
+  return [min, (min + max) / 2, max];
 }
 
-/** Display offsets only. The server supplies aligned provider values and their total. */
-export function stackSamples(
-  layers: ChartSample[][],
-  total: ChartSample[],
-  mode: ChartMode
-): StackSample[][] {
-  const field = metricField[mode];
-  const output: StackSample[][] = layers.map(() => []);
-  total.forEach((reference, index) => {
-    const aligned = layers.map((layer) => layer[index]);
-    const known =
-      reference.point[field] !== null &&
-      aligned.every(
-        (sample) =>
-          sample?.point.atMs === reference.point.atMs &&
-          sample.projected === reference.projected &&
-          sample.point[field] !== null
-      );
-    let positive = 0;
-    let negative = 0;
-    aligned.forEach((sample, layer) => {
-      const value = sample?.point[field] ?? null;
-      let lower: number | null = null;
-      let upper: number | null = null;
-      if (known && value !== null) {
-        lower = value >= 0 ? positive : negative;
-        upper = lower + value;
-        if (value >= 0) positive = upper;
-        else negative = upper;
-      }
-      output[layer].push({ ...(sample ?? reference), lower, upper });
-    });
-  });
-  return output;
-}
-
-export function bandSegments(
-  samples: StackSample[],
-  projected: boolean,
+/** Zero-dx upward projected steps (reset jumps), drawn solid so dash gaps never hide them. */
+export function verticalResetSteps(
+  samples: readonly ChartSample[],
+  mode: ChartMode,
   x: (at: number) => number,
   y: (value: number) => number
-): string[] {
-  return knownRuns(
-    samples.filter((sample) => sample.projected === projected),
-    (sample) => sample.lower !== null && sample.upper !== null
-  ).map((run) => {
-    const top = run.map((sample) => `${x(sample.point.atMs)},${y(sample.upper!)}`);
-    const bottom = [...run]
-      .reverse()
-      .map((sample) => `${x(sample.point.atMs)},${y(sample.lower!)}`);
-    return `M${top.join(' L')} L${bottom.join(' L')} Z`;
-  });
+): { x: number; y1: number; y2: number }[] {
+  const field = metricField[mode];
+  const projected = samples.filter((sample) => sample.projected);
+  const steps: { x: number; y1: number; y2: number }[] = [];
+  for (let i = 1; i < projected.length; i += 1) {
+    const prev = projected[i - 1];
+    const curr = projected[i];
+    const before = prev.point[field];
+    const after = curr.point[field];
+    if (
+      prev.point.atMs === curr.point.atMs &&
+      before !== null &&
+      after !== null &&
+      after > before
+    ) {
+      steps.push({ x: x(curr.point.atMs), y1: y(before), y2: y(after) });
+    }
+  }
+  return steps;
 }
 
 /** The next value from 1, 2, 3, 4, 5, 6 or 8 times a power of ten, so the axis midpoint is round too. */
@@ -187,6 +162,12 @@ function roundUp(value: number) {
   if (value <= 0) return 0;
   const scale = 10 ** Math.floor(Math.log10(value));
   return ([1, 2, 3, 4, 5, 6, 8, 10].find((step) => step * scale >= value - 1e-9) ?? 10) * scale;
+}
+
+export interface SegmentRun {
+  path: string;
+  firstX: number;
+  lastX: number;
 }
 
 /** SVG coordinates only. Never infer quota or fill absent observations. */
@@ -210,18 +191,21 @@ export function chartGeometry(
   const x = (at: number) =>
     frame.left + ((at - from) / (to - from || 1)) * (frame.right - frame.left);
   const y = (value: number) => frame.bottom - ((value - min) / span) * (frame.bottom - frame.top);
-  const segments = (projected: boolean, series: ChartSample[] = samples) => {
-    return knownRuns(
+  const segmentRuns = (projected: boolean, series: ChartSample[] = samples): SegmentRun[] =>
+    knownRuns(
       series.filter((item) => item.projected === projected),
       (sample) => sample.point[metricField[mode]] !== null
-    ).map((run) =>
-      run
+    ).map((run) => ({
+      path: run
         .map(
           (sample, index) =>
             `${index ? ' L' : 'M'}${x(sample.point.atMs)},${y(sample.point[metricField[mode]]!)}`
         )
-        .join('')
-    );
-  };
-  return { x, y, min, max, segments };
+        .join(''),
+      firstX: x(run[0].point.atMs),
+      lastX: x(run[run.length - 1].point.atMs),
+    }));
+  const segments = (projected: boolean, series: ChartSample[] = samples) =>
+    segmentRuns(projected, series).map((run) => run.path);
+  return { x, y, min, max, segments, segmentRuns };
 }
