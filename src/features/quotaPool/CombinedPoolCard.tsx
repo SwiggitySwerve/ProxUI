@@ -6,7 +6,7 @@ import { isBuiltInPoolProvider } from '@/domain/quotaPool/providers';
 import { poolKey } from './poolOrder';
 import { PoolGraph } from './PoolGraph';
 import { PoolGraphToggle } from './PoolGraphToggle';
-import { PoolComparisonChart } from './PoolChart';
+import { CombinedLanesChart } from './CombinedLanesChart';
 import { metricField, type ChartMode } from './chartGeometry';
 import styles from './QuotaPoolPage.module.scss';
 
@@ -29,15 +29,12 @@ export function CombinedPoolCard({
   const { t, i18n } = useTranslation();
   const id = useId();
   const [minimized, setMinimized] = useState(false);
-  const [view, setView] = useState<'providers' | 'stacked'>('stacked');
   const total = dashboard.combined?.[provider];
-  // Without a server total there is nothing to stack; each provider's own line still is.
-  const stackable = Boolean(total?.layers && total.series);
-  const shownView = stackable ? view : 'providers';
-  const series =
-    shownView === 'providers'
-      ? pools
-      : pools.flatMap((pool) => total!.layers!.filter((layer) => poolKey(layer) === poolKey(pool)));
+  const hasServerTotal = Boolean(total?.series);
+  const orderedLayers = total?.layers?.length
+    ? pools.flatMap((pool) => total.layers!.filter((layer) => poolKey(layer) === poolKey(pool)))
+    : [];
+  const lanes = orderedLayers.length > 0 ? orderedLayers : pools;
   const headline = total?.series ? total.series[metricField[mode]] : null;
   const windowLabel = t(`quota_pool.${dashboard.window === 'weekly' ? 'weekly' : 'five_hour'}`);
   // Count the accounts that hold the total back, as each provider card does.
@@ -64,17 +61,6 @@ export function CombinedPoolCard({
       return t('quota_pool.stale_count', { count: stale, total: accounts.length });
     return t(`quota_pool.state_note.${state}`, { window: windowLabel });
   };
-  const viewSelect = (
-    <label>
-      <span className={styles.srOnly}>{t('quota_pool.series_view')}</span>
-      <select value={shownView} onChange={(event) => setView(event.target.value as typeof view)}>
-        <option value="providers">{t('quota_pool.provider_lines')}</option>
-        <option value="stacked" disabled={!stackable}>
-          {t('quota_pool.stacked_providers')}
-        </option>
-      </select>
-    </label>
-  );
   const headlineContext = (
     <div className={styles.headlineContext}>
       <p className={styles.metricLabel}>
@@ -91,8 +77,6 @@ export function CombinedPoolCard({
     <section className={`${styles.pool} ${styles.combined}`} aria-labelledby={`${id}-title`}>
       <div className={styles.graphHeader}>
         <h2 id={`${id}-title`}>{t('quota_pool.combined_usage')}</h2>
-        {/* The chart's view control sits beside the actions on wide cards; below the title row otherwise. */}
-        <div className={styles.combinedOptions}>{viewSelect}</div>
         <span className={styles.reorder}>
           <PoolGraphToggle
             minimized={minimized}
@@ -156,19 +140,19 @@ export function CombinedPoolCard({
       {(headline === null || estimated > 0) &&
         total?.series &&
         total.series.forecastState !== 'ready' && (
-        <p className={styles.stateNote} role="status" data-state={total.series.forecastState}>
-          <span>{stateNote(total.series.forecastState)}</span>
-          {onRefresh &&
-            (total.series.forecastState === 'partial' ||
-              total.series.forecastState === 'stale') && (
-              <button type="button" className={styles.noteAction} onClick={onRefresh}>
-                {t('quota_pool.refresh_now')}
-              </button>
-            )}
-        </p>
-      )}
-      {/* Why there is no total to stack, under the headline it explains. */}
-      {!stackable && (
+          <p className={styles.stateNote} role="status" data-state={total.series.forecastState}>
+            <span>{stateNote(total.series.forecastState)}</span>
+            {onRefresh &&
+              (total.series.forecastState === 'partial' ||
+                total.series.forecastState === 'stale') && (
+                <button type="button" className={styles.noteAction} onClick={onRefresh}>
+                  {t('quota_pool.refresh_now')}
+                </button>
+              )}
+          </p>
+        )}
+      {/* Why there is no combined total line, under the headline it explains. */}
+      {!hasServerTotal && (
         <p className={styles.stateNote} role="status">
           {t(
             total?.unavailableReason === 'ambiguous-sources'
@@ -178,11 +162,11 @@ export function CombinedPoolCard({
         </p>
       )}
       <PoolGraph id={`${id}-plot`} title={t('quota_pool.history_forecast')} minimized={minimized}>
-        {series.length > 0 && (
-          <PoolComparisonChart
-            key={`${mode}-${dashboard.fromMs}-${shownView}`}
-            pools={series}
-            stackedTotal={shownView === 'stacked' ? (total?.series ?? undefined) : undefined}
+        {lanes.length > 0 && (
+          <CombinedLanesChart
+            key={`${mode}-${dashboard.fromMs}-${provider}`}
+            lanes={lanes}
+            totalSeries={total?.series ?? undefined}
             dashboard={dashboard}
             mode={mode}
             minimized={minimized}

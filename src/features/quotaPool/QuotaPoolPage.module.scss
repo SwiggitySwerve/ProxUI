@@ -1655,44 +1655,8 @@ $table-tiers: (
     font-size: 16px;
   }
 }
-.combinedOptions select {
-  border-radius: 999px;
-  padding-inline: 12px 8px;
-}
-.combinedOptions {
-  display: flex;
-  align-items: center;
-  gap: 8px 16px;
-  flex-wrap: wrap;
-  // Beside the actions on wide cards; below 901px it takes the row under the title and actions.
-  margin: 0 0 0 auto;
-  @media (max-width: 900px) {
-    order: 3;
-    flex-basis: 100%;
-    justify-content: flex-end;
-    margin: 0;
-  }
-  // Phones: the title and toggle keep their row; the select takes the next one.
-  @media (max-width: 640px) {
-    justify-content: flex-start;
-    margin: 4px 0 0;
-  }
-  select {
-    font-size: 13px;
-  }
-  .comparisonNote {
-    flex: 1;
-    min-width: 180px;
-  }
-}
 .total {
-  --pool-accent: #c4b5fd;
-}
-@media (min-width: 901px) {
-  .combinedOptions select {
-    min-height: 32px;
-    padding: 4px 8px;
-  }
+  --pool-accent: var(--text-primary);
 }
 
 .page .expandAccounts {
@@ -1841,7 +1805,7 @@ $table-tiers: (
       // source) has no tracks: React drops the empty property, so the empty fallback keeps the row valid.
       grid-template-columns:
         20px var(--name-track) var(--plan-track)
-        var(--limit-tracks, )
+        var(--limit-tracks,)
         128px;
       justify-content: start;
       column-gap: var(--col-gap);
@@ -1974,7 +1938,7 @@ $table-tiers: (
       .accountHead,
       .account > summary {
         // As above: the limits share the rest of the row.
-        grid-template-columns: 20px var(--name-track) var(--plan-track) var(--limit-tracks, );
+        grid-template-columns: 20px var(--name-track) var(--plan-track) var(--limit-tracks,);
       }
       // Here the last header is a limit's, not the balance's: it wraps inside its track like the others.
       .accountHead span:last-child {
@@ -2743,18 +2707,13 @@ $table-tiers: (
   }
 }
 /* G */
-// Combined card, 901px up: the chart view select sits right before the graph toggle, which ends at
-// the card's content edge (the select's auto margin pushes both to the right).
 @media (min-width: 901px) {
   .graphHeader {
     column-gap: 8px;
   }
-  .combinedOptions + .reorder {
-    margin-left: 0;
-  }
 }
 // Phones: the heading and the toggle keep one row, so a long heading wraps inside its cell and never
-// pushes the toggle down (S1); the select takes the row below.
+// pushes the toggle down (S1).
 @media (max-width: 640px) {
   .graphHeader {
     display: grid;
@@ -2768,9 +2727,6 @@ $table-tiers: (
     }
     > .reorder {
       grid-area: 1 / 2;
-    }
-    > .combinedOptions {
-      grid-area: 2 / 1 / 3 / -1;
     }
   }
 }
@@ -3241,7 +3197,6 @@ $table-tiers: (
   .page .reorder button,
   .page .reorder button.graphToggle[aria-pressed='true'],
   .page .pool .expandAccounts,
-  .page .combinedOptions select,
   .privacy,
   .accountLink {
     height: 36px;
@@ -3451,16 +3406,6 @@ $table-tiers: (
 .badge[data-tone='warning'] {
   background: transparent;
   padding-inline: 0;
-}
-// Phones: the Combined title row and the chart-view select sit one standard row gap (4px, as the card
-// headers' rows) apart, not 16px.
-@media (max-width: 640px) {
-  .graphHeader {
-    row-gap: 4px;
-    > .combinedOptions {
-      margin: 0;
-    }
-  }
 }
 
 /* H2-E */
@@ -3971,14 +3916,6 @@ $table-tiers: (
   }
 }
 
-// Stacked chart legend: filled band swatches with top stroke so the key reads as stacked areas.
-.legend span[data-stacked-swatch] i {
-  height: 8px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--pool-accent) 42%, transparent);
-  border-top: 2px solid var(--pool-accent);
-}
-
 // Vertical alignment rails: snap card inner content, Accounts headers/rows, footer, toolbar row 2,
 // KPI-to-Facts columns, and Claude/Codex table columns onto consistent vertical lines.
 .accounts {
@@ -4133,13 +4070,6 @@ $table-tiers: (
 .providerBar button[aria-pressed='true'] {
   border-color: transparent;
 }
-.page .combinedOptions select {
-  border: 1px solid var(--action-border);
-  background-color: transparent;
-  &:hover:not(:disabled) {
-    background-color: var(--bg-hover);
-  }
-}
 .page .showAll {
   margin-left: 0;
 }
@@ -4197,7 +4127,11 @@ $table-tiers: (
 // Phone missing active-window reason ("No 5-hour limit") keeps the muted tone of wide tables
 // while preserving the active-window weight invariant.
 @include block-rows {
-  .account[data-phone-blocks] > summary > .limits > li[data-missing='true'][data-counted='true'] > em {
+  .account[data-phone-blocks]
+    > summary
+    > .limits
+    > li[data-missing='true'][data-counted='true']
+    > em {
     font-size: 13px;
     color: var(--text-tertiary);
   }
@@ -4304,14 +4238,6 @@ $table-tiers: (
     color: var(--text-secondary);
     cursor: default;
   }
-}
-.page .combinedOptions select {
-  appearance: none;
-  padding-inline: 14px 32px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23b5b5b5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-  background-size: 14px 14px;
 }
 .page .rosterLow {
   border-color: var(--action-border);
@@ -5431,5 +5357,171 @@ $table-tiers: (
   .reorder .moveGroup {
     display: flex;
     gap: 8px;
+  }
+}
+
+// Combined usage: single Total line above synchronized own-scale provider lanes.
+.lanesReadout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  margin: 6px 0 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  font-size: 12px;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+.lanesReadoutMain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+}
+.lanesReadoutTime {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.lanesReadoutMeta {
+  color: var(--text-secondary);
+}
+.lanesReadoutTotal {
+  color: var(--text-secondary);
+  strong {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+}
+.lanesResetPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--pool-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--pool-accent) 14%, transparent);
+  color: var(--pool-accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.lanesNextReset {
+  color: var(--text-secondary);
+}
+.lanesNowButton {
+  flex: none;
+  min-height: 28px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--action-border);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  &:hover {
+    background: var(--bg-hover);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+@media (pointer: coarse), (max-width: 640px) {
+  .lanesNowButton {
+    min-height: 36px;
+    min-width: 44px;
+    padding: 4px 12px;
+  }
+}
+.lanesChart {
+  display: block;
+  width: 100%;
+  user-select: none;
+  touch-action: pan-y;
+  cursor: crosshair;
+  &:focus:not(:focus-visible) {
+    outline: none;
+  }
+  &:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+}
+.zeroAxis {
+  line {
+    stroke: var(--border-hover);
+    stroke-width: 1.25;
+  }
+  text {
+    fill: var(--text-secondary);
+    font-size: var(--caption-size);
+    font-weight: 500;
+  }
+}
+.laneName {
+  fill: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.laneStatus {
+  fill: var(--text-secondary);
+  font-weight: 400;
+}
+.laneValue {
+  fill: var(--text-secondary);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.laneValueReset {
+  fill: var(--pool-accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.laneResetGuide {
+  stroke: var(--pool-accent);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  opacity: 0.38;
+}
+.laneResetGain {
+  fill: var(--pool-accent);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  paint-order: stroke;
+  stroke: var(--bg-primary);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+.lanesShowAll {
+  margin-top: 8px;
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--action-border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  &:hover {
+    background: var(--bg-hover);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+@media (pointer: coarse), (max-width: 640px) {
+  .lanesShowAll {
+    min-height: 44px;
   }
 }

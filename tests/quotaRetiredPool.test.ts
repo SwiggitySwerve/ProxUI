@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import i18n from '../src/i18n';
 import type { PoolDashboard, PoolPoint, QuotaPool } from '../src/domain/quotaPool/types';
 import { PoolCard } from '../src/features/quotaPool/PoolCard';
-import { PoolComparisonChart } from '../src/features/quotaPool/PoolChart';
+import { CombinedLanesChart } from '../src/features/quotaPool/CombinedLanesChart';
 import { poolChip } from '../src/features/quotaPool/model/poolChip';
 
 const point = (atMs: number, remainingPoints: number): PoolPoint => ({
@@ -63,7 +63,9 @@ const dashboard: PoolDashboard = {
   pools: [retired],
 };
 const card = (pool: QuotaPool) =>
-  renderToStaticMarkup(createElement(PoolCard, { pool, dashboard, mode: 'remaining', reveal: false }));
+  renderToStaticMarkup(
+    createElement(PoolCard, { pool, dashboard, mode: 'remaining', reveal: false })
+  );
 
 describe('a retired source', () => {
   test('its card shows history only, with no warning, total, forecast or coverage count', async () => {
@@ -97,7 +99,13 @@ describe('a retired source', () => {
 
   test('held resets cached on its account never bring back a coverage count', async () => {
     await i18n.changeLanguage('en');
-    const resets = { available: 1, usable: 0, blocker: null, nextExpiryAtMs: null, observedAtMs: 300 };
+    const resets = {
+      available: 1,
+      usable: 0,
+      blocker: null,
+      nextExpiryAtMs: null,
+      observedAtMs: 300,
+    };
     const markup = card({ ...retired, accounts: [{ ...account, resets }] });
     expect(markup).not.toContain('Reporting');
   });
@@ -105,7 +113,13 @@ describe('a retired source', () => {
   test('a failed refresh keeps its chip as history only', async () => {
     await i18n.changeLanguage('en');
     const markup = renderToStaticMarkup(
-      createElement(PoolCard, { pool: retired, dashboard, mode: 'remaining', reveal: false, savedData: true })
+      createElement(PoolCard, {
+        pool: retired,
+        dashboard,
+        mode: 'remaining',
+        reveal: false,
+        savedData: true,
+      })
     );
     expect(markup).toContain('History only');
     expect(markup).not.toContain('Forecast saved');
@@ -114,7 +128,12 @@ describe('a retired source', () => {
   test('a pool with one live account is not retired', async () => {
     await i18n.changeLanguage('en');
     const live = { ...account, id: 'opaque-live', disabled: false, status: 'error' as const };
-    const markup = card({ ...retired, accountCount: 2, eligibleCount: 1, accounts: [account, live] });
+    const markup = card({
+      ...retired,
+      accountCount: 2,
+      eligibleCount: 1,
+      accounts: [account, live],
+    });
     expect(markup).not.toContain('History only');
     expect(markup).toContain('Withheld');
     expect(markup).toContain('data-group="forecast"');
@@ -144,8 +163,8 @@ describe('a retired source', () => {
       accounts: [],
     };
     const markup = renderToStaticMarkup(
-      createElement(PoolComparisonChart, {
-        pools: [live, { ...retired, historyOnly: true }],
+      createElement(CombinedLanesChart, {
+        lanes: [live, { ...retired, historyOnly: true }],
         dashboard,
         mode: 'remaining',
       })

@@ -1,13 +1,12 @@
 import { useEffect, useId, useRef, useState, type PointerEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { PoolDashboard, QuotaPool, PoolTrace, PoolProviderId } from '@/domain/quotaPool/types';
+import type { PoolDashboard, QuotaPool } from '@/domain/quotaPool/types';
 import {
+  axisTicks,
   chartFrame as defaultChartFrame,
   fitChartFrame,
   chartGeometry,
   chartSamples,
-  stackSamples,
-  bandSegments,
   dayTicks,
   hourTicks,
   inRange,
@@ -19,40 +18,20 @@ import { formatPoolDate, formatPoolNumber, formatPoolTick } from './presentation
 import { poolProviderLabel, poolProviderStyle } from './providerPresentation';
 import styles from './QuotaPoolPage.module.scss';
 
-type ChartPool = PoolTrace & {
-  provider: PoolProviderId | 'total';
-  sourceLabel?: string;
-  instanceId?: string;
-  displayName?: string;
-  /** A layer with history only: its zero projection aligns the stack and is not drawn. */
-  historyOnly?: true;
-};
-
 interface ChartProps {
   dashboard: Pick<PoolDashboard, 'fromMs' | 'toMs' | 'nowMs' | 'window'>;
   mode: ChartMode;
   savedData?: boolean;
   minimized?: boolean;
-  stackedTotal?: PoolTrace;
 }
 
-export function PoolChart({ pool, ...props }: ChartProps & { pool: QuotaPool }) {
-  return <PoolChartView {...props} pools={[pool]} />;
-}
-
-export function PoolComparisonChart(props: ChartProps & { pools: ChartPool[] }) {
-  return <PoolChartView {...props} comparison />;
-}
-
-function PoolChartView({
-  pools,
+export function PoolChart({
+  pool,
   dashboard,
   mode,
   savedData = false,
   minimized = false,
-  comparison = false,
-  stackedTotal,
-}: ChartProps & { pools: ChartPool[]; comparison?: boolean }) {
+}: ChartProps & { pool: QuotaPool }) {
   const { t, i18n } = useTranslation();
   const id = useId();
   const container = useRef<HTMLDivElement>(null);
@@ -79,88 +58,23 @@ function PoolChartView({
   // Two days or less: one tick per few hours instead of one per day.
   const hourly = toMs - fromMs <= 2.5 * 86_400_000;
   const field = metricField[mode];
-  const rawSeries = pools.map((pool) => {
-    const samples = inRange(chartSamples(pool.recorded, pool.projected, mode), fromMs, toMs);
-    return {
-      pool,
-      samples,
-      sparseProjection: samples.filter((sample) => sample.projected).length < 3,
-    };
-  });
-  const totalSamples = stackedTotal
-    ? inRange(chartSamples(stackedTotal.recorded, stackedTotal.projected, mode), fromMs, toMs)
-    : [];
-  const stacked = stackedTotal
-    ? stackSamples(
-        rawSeries.map((series) => series.samples),
-        totalSamples,
-        mode
-      )
-    : undefined;
-  const series = rawSeries.map((series, index) => {
-    const samples = series.samples.map((sample, at) => {
-      const position = stacked ? (stacked[index][at]?.upper ?? null) : sample.point[field];
-      return {
-        ...sample,
-        position,
-        base: stacked?.[index][at]?.lower ?? 0,
-        point: stacked && position === null ? { ...sample.point, [field]: null } : sample.point,
-      };
-    });
-    return {
-      ...series,
-      samples,
-      plotSamples: samples.map((sample) => ({
-        ...sample,
-        point: { ...sample.point, [field]: sample.position },
-      })),
-      band: stacked?.[index],
-    };
-  });
-  // A history-only layer's forecast zeros only align the stack: nothing to inspect or mark.
-  const samples = series.flatMap(({ pool, samples }) =>
-    samples
-      .filter((sample) => !(pool.historyOnly && sample.projected))
-      .map((sample) => ({ ...sample, pool }))
-  );
-  // The y axis labels min, middle and max (below). Its gutter is as wide as the widest of them, and
-  // never narrower than the capacity it was sized from before, so a chart whose data stays inside
-  // capacity keeps its layout. A retired pool (no capacity) or a stack topped by retired history
-  // labels its data instead, and those labels must not clip.
-  const axisCapacity =
-    stackedTotal?.capacityPoints ?? Math.max(0, ...pools.map((pool) => pool.capacityPoints));
-  const axisSamples = stacked
-    ? stacked.flatMap((layer) =>
-        layer.flatMap((sample) =>
-          [sample.lower, sample.upper].map((value) => ({
-            ...sample,
-            point: { ...sample.point, [field]: value },
-          }))
-        )
-      )
-    : samples;
-  const axis = chartGeometry(axisSamples, mode, axisCapacity, fromMs, toMs);
+  const samples = inRange(chartSamples(pool.recorded, pool.projected, mode), fromMs, toMs);
+  const sparseProjection = samples.filter((sample) => sample.projected).length < 3;
+  const axis = chartGeometry(samples, mode, pool.capacityPoints, fromMs, toMs);
+  const yTicks = axisTicks(axis.min, axis.max);
   const numberChars = Math.max(
-    ...[
-      Math.max(0, stackedTotal?.capacityPoints ?? 0, ...pools.map((pool) => pool.capacityPoints)),
-      ...(axis.min === axis.max ? [axis.min] : [axis.min, (axis.min + axis.max) / 2, axis.max]),
-    ].map((value) => formatPoolNumber(value, i18n.language).length)
+    ...[pool.capacityPoints, ...yTicks].map(
+      (value) => formatPoolNumber(value, i18n.language).length
+    )
   );
   const alignUnitEnd = width >= 600;
   const baseFrame = fitChartFrame(
     width,
-    savedData || pools.some((pool) => pool.forecastState !== 'ready') || mode !== 'remaining',
+    savedData || pool.forecastState !== 'ready' || mode !== 'remaining',
     // One reading draws a point, not a line, so it gets the compact height.
-    minimized || Math.max(...pools.map((pool) => pool.recorded.length)) === 1,
+    minimized || pool.recorded.length === 1,
     alignUnitEnd ? Math.max(numberChars, Math.ceil(unit.length * 0.72)) : numberChars
   );
-  // Order inspection by time without joining or resampling separate source traces.
-  if (comparison) samples.sort((a, b) => a.point.atMs - b.point.atMs);
-  // The source only tells series apart when one provider has several; otherwise it is noise.
-  const sharesProvider = (pool: ChartPool) =>
-    pools.filter((other) => other.provider === pool.provider).length > 1;
-  const poolLabel = (pool: ChartPool) =>
-    `${poolProviderLabel(t, pool.provider, pool.displayName)}${(pool.sourceLabel || pool.instanceId) && sharesProvider(pool) ? ` · ${pool.sourceLabel ?? pool.instanceId}` : ''}`;
   const number = (value: number | null) => formatPoolNumber(value, i18n.language);
   const date = (value: number) => formatPoolDate(value, i18n.language);
   const visible = (at: number | null): at is number => at !== null && at >= fromMs && at <= toMs;
@@ -174,25 +88,20 @@ function PoolChartView({
   // label moves to the left of its line instead of sitting under that reset label (G10b).
   const resetJustAfter =
     snapshotX !== null &&
-    (comparison || mode !== 'remaining' ? [] : pools).some((pool) =>
-      pool.resets.some((reset) => {
-        if (!visible(reset.atMs) || reset.gainPoints <= 0) return false;
-        const gap = projectX(reset.atMs) - snapshotX;
-        return gap >= 0 && gap < snapW / 2 + 40;
-      })
-    );
+    mode === 'remaining' &&
+    pool.resets.some((reset) => {
+      if (!visible(reset.atMs) || reset.gainPoints <= 0) return false;
+      const gap = projectX(reset.atMs) - snapshotX;
+      return gap >= 0 && gap < snapW / 2 + 40;
+    });
   const snapshotAnchor =
     snapshotX === null
       ? 'middle'
-      : baseFrame.right - snapshotX < 60 ||
-          (resetJustAfter && snapshotX - baseFrame.left >= snapW)
+      : baseFrame.right - snapshotX < 60 || (resetJustAfter && snapshotX - baseFrame.left >= snapW)
         ? 'end'
         : snapshotX - baseFrame.left < 60
           ? 'start'
           : 'middle';
-  // Place scheduled reset labels on the primary annotation baseline when all clear Snapshot and
-  // siblings; if any collides, elevate all reset labels in that chart onto one uniform upper rail
-  // so reset amounts stay level with each other and well clear of Snapshot.
   const snapLeft =
     snapshotX === null
       ? Infinity
@@ -210,14 +119,12 @@ function PoolChartView({
           ? snapshotX + 8
           : snapshotX + snapW / 2;
   const axisUnitRight = alignUnitEnd ? baseFrame.left - 10 : unit.length * 7.5 + 12;
-  const rawResets = (comparison || mode !== 'remaining' ? [] : pools)
-    .flatMap((pool) => pool.resets)
+  const rawResets = (mode === 'remaining' ? pool.resets : [])
     .filter((reset) => visible(reset.atMs) && reset.gainPoints > 0)
     .map((reset) => {
       const rx = projectX(reset.atMs);
       const text = `+${number(reset.gainPoints)}`;
       const halfW = text.length * 4.5 + 7;
-      // On either lane a label centres on its tick, kept inside the chart's edges.
       const labelX = Math.max(halfW + 4, Math.min(baseFrame.width - halfW - 4, rx));
       const left = labelX - halfW;
       const right = labelX + halfW;
@@ -225,7 +132,19 @@ function PoolChartView({
       const hitsUnit = left < axisUnitRight + 8;
       const nearTick = Math.abs(labelX - rx) <= 56;
       const crossesSnapshot = snapshotX !== null && rx > snapLeft - 4 && rx < snapRight + 4;
-      return { ...reset, rx, text, halfW, labelX, left, right, hitsSnapshot, hitsUnit, nearTick, crossesSnapshot };
+      return {
+        ...reset,
+        rx,
+        text,
+        halfW,
+        labelX,
+        left,
+        right,
+        hitsSnapshot,
+        hitsUnit,
+        nearTick,
+        crossesSnapshot,
+      };
     });
   let needsUpperRail = false;
   let probeRight = -Infinity;
@@ -236,13 +155,10 @@ function PoolChartView({
     }
     probeRight = reset.right;
   }
-  // Every scheduled reset keeps its tick (G10). Its label takes the chart's lane (the upper lane when
-  // any label would hit Snapshot), else the other lane, and is left off only when neither has room.
   const placedRight = [-Infinity, -Infinity];
   const resetMarkers = rawResets.map((reset) => {
     const base: 0 | 1 = needsUpperRail ? 1 : 0;
     for (const lane of [base, (1 - base) as 0 | 1]) {
-      // The upper lane sits above Snapshot, so only the chart's own lane checks for it.
       const clear = reset.nearTick && (lane === 1 || (!reset.hitsSnapshot && !reset.hitsUnit));
       if (clear && reset.left >= placedRight[lane] + 14) {
         placedRight[lane] = reset.right;
@@ -251,8 +167,6 @@ function PoolChartView({
     }
     return { ...reset, lane: -1 as const };
   });
-  // An upper label's leader runs down through the lower lane, so it is left off where it would cross
-  // Snapshot's label or another reset's text (halfW less the 7px it keeps around the text, plus 2px).
   const lowerLabels = resetMarkers.filter((reset) => reset.lane === 0);
   const crossesLowerLabel = (rx: number) =>
     lowerLabels.some((reset) => Math.abs(rx - reset.labelX) < reset.halfW - 5);
@@ -266,7 +180,7 @@ function PoolChartView({
         bottom: baseFrame.bottom + staggerPad,
       }
     : baseFrame;
-  const geometry = chartGeometry(axisSamples, mode, axisCapacity, fromMs, toMs, chartFrame);
+  const geometry = chartGeometry(samples, mode, pool.capacityPoints, fromMs, toMs, chartFrame);
   const { x, y, min, max, segments } = geometry;
   const latestRecorded = samples.reduce(
     (latest, { point, projected }, index) => (!projected && point.atMs <= nowMs ? index : latest),
@@ -276,26 +190,7 @@ function PoolChartView({
   const sample = samples[Math.min(selected, samples.length - 1)];
   const hasValues = samples.some(({ point }) => point[field] !== null);
   const hasProjection = samples.some(({ point, projected }) => projected && point[field] !== null);
-  // On a combined chart, state every provider's value at the selected moment, not one of them.
-  const readingAt = sample
-    ? comparison
-      ? samples
-          .filter(
-            (other) =>
-              other.point.atMs === sample.point.atMs && other.projected === sample.projected
-          )
-          .filter(
-            (other, index, all) =>
-              all.findIndex((first) => poolLabel(first.pool) === poolLabel(other.pool)) === index
-          )
-      : [sample]
-    : [];
-  // Values keep their unit on the same line (\u00a0) when the readout wraps.
-  const readingValue = (other: (typeof samples)[number]) =>
-    other.point[field] === null ? t('quota_pool.no_observation') : number(other.point[field]);
-  // A moment with no value is not a recording: say so once, without a Recorded/Projected tag.
-  const unobserved = readingAt.every((other) => other.point[field] === null);
-  // Where the chart does draw recorded readings, a moment without one is missing only the complete set.
+  const unobserved = sample ? sample.point[field] === null : true;
   const hasRecorded = samples.some(({ point, projected }) => !projected && point[field] !== null);
   const readingText = !sample
     ? ''
@@ -303,45 +198,32 @@ function PoolChartView({
       ? t(hasRecorded ? 'quota_pool.no_complete_reading_at' : 'quota_pool.no_reading_at', {
           date: date(sample.point.atMs),
         })
-      : readingAt.length > 1
-        ? `${readingAt.map((other) => `${poolLabel(other.pool)}: ${readingValue(other)}`).join(' · ')}${readingAt.some((other) => other.point[field] !== null) ? `\u00a0${unit}` : ''}`
-        : `${comparison ? `${poolLabel(sample.pool)} · ` : ''}${date(sample.point.atMs)} · ${sample.point[field] === null ? t('quota_pool.no_observation') : `${number(sample.point[field])}\u00a0${unit}`}`;
+      : `${date(sample.point.atMs)} · ${number(sample.point[field])}\u00a0${unit}`;
   const latestPrefix = selected === latestRecorded ? `${t('quota_pool.latest_reading')} · ` : '';
-  // When a single-provider chart's latest recorded value is the card's big number, the readout
-  // names only its moment; a withheld total or any other point shows values. A combined chart's
-  // latest reading names only its moment too: the provider cards show each value.
   const valueOnCard =
     selected === latestRecorded &&
     !sample?.projected &&
-    (comparison
-      ? !unobserved
-      : sample?.point[field] !== null && sample?.point[field] === sample?.pool[field]);
+    sample?.point[field] !== null &&
+    sample?.point[field] === pool[field];
   const description = !sample
     ? t('quota_pool.inspect_hint')
     : unobserved
       ? readingText
       : valueOnCard
         ? `${latestPrefix}${date(sample.point.atMs)}`
-        : `${latestPrefix}${readingAt.length > 1 ? `${date(sample.point.atMs)} · ` : ''}${readingText}${sample.projected ? ` · ${t('quota_pool.projected')}` : ''}`;
+        : `${latestPrefix}${readingText}${sample.projected ? ` · ${t('quota_pool.projected')}` : ''}`;
 
   const selectAtPointer = (event: PointerEvent<SVGSVGElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     const cursorX = ((event.clientX - bounds.left) / bounds.width) * chartFrame.width;
-    const cursorY = ((event.clientY - bounds.top) / bounds.height) * chartFrame.height;
-    const distance = (index: number) => {
-      const { point, position, base } = samples[index];
-      const dx = Math.abs(x(point.atMs) - cursorX);
-      // On an overlay, equal timestamps must still allow either provider to be inspected.
-      if (stackedTotal && position !== null) {
-        const top = Math.min(y(position), y(base));
-        const bottom = Math.max(y(position), y(base));
-        return Math.hypot(dx, Math.max(top - cursorY, 0, cursorY - bottom));
-      }
-      return comparison && position !== null ? Math.hypot(dx, y(position) - cursorY) : dx;
-    };
     let closest = 0;
     for (let index = 1; index < samples.length; index += 1) {
-      if (distance(index) <= distance(closest)) closest = index;
+      if (
+        Math.abs(x(samples[index].point.atMs) - cursorX) <=
+        Math.abs(x(samples[closest].point.atMs) - cursorX)
+      ) {
+        closest = index;
+      }
     }
     if (samples.length) setInspected(closest);
   };
@@ -375,23 +257,11 @@ function PoolChartView({
       >
         <title id={`${id}-title`}>
           {t('quota_pool.chart_title', {
-            provider: comparison
-              ? t('quota_pool.combined_usage')
-              : poolProviderLabel(t, pools[0].provider, pools[0].displayName),
+            provider: poolProviderLabel(t, pool.provider, pool.displayName),
             mode: t(`quota_pool.${mode}`),
           })}
         </title>
-        <desc id={`${id}-desc`}>
-          {t(
-            stackedTotal
-              ? mode === 'remaining'
-                ? 'quota_pool.stacked_description'
-                : 'quota_pool.stacked_rate_description'
-              : comparison
-                ? 'quota_pool.combined_description'
-                : 'quota_pool.chart_description'
-          )}
-        </desc>
+        <desc id={`${id}-desc`}>{t('quota_pool.chart_description')}</desc>
         <defs>
           <linearGradient id={`${id}-fill`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="var(--pool-accent)" stopOpacity=".19" />
@@ -414,8 +284,8 @@ function PoolChartView({
         >
           {unit}
         </text>
-        {(min === max ? [min] : [min, (min + max) / 2, max]).map((value, index) => (
-          <g key={index} className={styles.grid}>
+        {axisTicks(min, max).map((value, index) => (
+          <g key={index} className={value === 0 && min < 0 ? styles.zeroAxis : styles.grid}>
             <line x1={chartFrame.left} x2={chartFrame.right} y1={y(value)} y2={y(value)} />
             <text x={chartFrame.left - 10} y={y(value) + 4} textAnchor="end">
               {number(value)}
@@ -444,72 +314,46 @@ function PoolChartView({
           );
         })}
         <g clipPath={`url(#${id}-clip)`}>
-          {series.map(
-            (
-              { pool, samples: seriesSamples, plotSamples, band, sparseProjection },
-              seriesIndex
-            ) => (
-              <g
-                key={seriesIndex}
-                {...poolProviderStyle(pool.provider)}
-                data-series={pool.instanceId ?? pool.provider}
-              >
-                {band &&
-                  (pool.historyOnly ? [false] : [false, true]).flatMap((projected) =>
-                    bandSegments(band, projected, x, y).map((path, index) => (
+          <g {...poolProviderStyle(pool.provider)} data-series={pool.instanceId ?? pool.provider}>
+            {[false, true].map((projected) =>
+              segments(projected, samples).map((path, index) => {
+                const firstX = path.slice(1).split(',')[0];
+                const lastX = path.split(' L').slice(-1)[0]?.replace(/^M/, '').split(',')[0];
+                return (
+                  <g key={`${projected}-${index}`}>
+                    {mode === 'remaining' && (
                       <path
-                        key={`band-${projected}-${index}`}
-                        data-stack-band={projected ? 'projected' : 'recorded'}
-                        d={path}
-                        fill="var(--pool-accent)"
-                        // Rates don't accumulate, so their bands stay light and the lines lead.
-                        fillOpacity={
-                          mode === 'remaining' ? (projected ? 0.14 : 0.3) : projected ? 0.1 : 0.22
-                        }
+                        d={`${path} L${lastX},${y(0)} L${firstX},${y(0)} Z`}
+                        fill={`url(#${id}-fill)`}
                       />
-                    ))
-                  )}
-                {(pool.historyOnly ? [false] : [false, true]).map((projected) =>
-                  segments(projected, plotSamples).map((path, index) => {
-                    const firstX = path.slice(1).split(',')[0];
-                    const lastX = path.split(' L').slice(-1)[0]?.replace(/^M/, '').split(',')[0];
-                    return (
-                      <g key={`${projected}-${index}`}>
-                        {mode === 'remaining' && !comparison && (
-                          <path
-                            d={`${path} L${lastX},${y(0)} L${firstX},${y(0)} Z`}
-                            fill={`url(#${id}-fill)`}
-                          />
-                        )}
-                        <path
-                          d={path}
-                          fill="none"
-                          stroke="var(--pool-accent)"
-                          strokeWidth="2.4"
-                          strokeDasharray={projected ? '7 5' : undefined}
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </g>
-                    );
-                  })
-                )}
-                {seriesSamples.map(({ point, projected, position }, index) =>
-                  position === null ||
-                  (projected && (!sparseProjection || pool.historyOnly)) ? null : (
-                    <circle
-                      key={index}
-                      cx={x(point.atMs)}
-                      cy={y(position!)}
-                      r={seriesSamples.length < 3 ? 3 : 1.5}
-                      fill="var(--pool-accent)"
-                      opacity={projected ? 0.6 : 1}
+                    )}
+                    <path
+                      d={path}
+                      fill="none"
+                      stroke="var(--pool-accent)"
+                      strokeWidth="2.4"
+                      strokeDasharray={projected ? '7 5' : undefined}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                     />
-                  )
-                )}
-              </g>
-            )
-          )}
+                  </g>
+                );
+              })
+            )}
+            {samples.map(({ point, projected }, index) => {
+              const value = point[field];
+              return value === null || (projected && !sparseProjection) ? null : (
+                <circle
+                  key={index}
+                  cx={x(point.atMs)}
+                  cy={y(value)}
+                  r={samples.length < 3 ? 3 : 1.5}
+                  fill="var(--pool-accent)"
+                  opacity={projected ? 0.6 : 1}
+                />
+              );
+            })}
+          </g>
           {visible(nowMs) && (
             <line
               x1={x(nowMs)}
@@ -519,61 +363,45 @@ function PoolChartView({
               className={styles.nowLine}
             />
           )}
-          {sample && sample.position !== null && (
-            <g {...poolProviderStyle(sample.pool.provider)}>
+          {sample && sample.point[field] !== null && (
+            <g {...poolProviderStyle(pool.provider)}>
               <line
                 x1={x(sample.point.atMs)}
                 x2={x(sample.point.atMs)}
                 y1={chartFrame.top}
                 y2={chartFrame.bottom}
-                // On a combined chart the rule marks a moment, not a provider: keep it neutral.
-                stroke={comparison ? 'var(--text-tertiary)' : 'var(--pool-accent)'}
+                stroke="var(--pool-accent)"
                 opacity=".5"
               />
-              {/* A dot on every series the readout names, not only the one nearest the pointer. */}
-              {readingAt.map(
-                (other, index) =>
-                  other.position !== null && (
-                    <circle
-                      key={index}
-                      {...poolProviderStyle(other.pool.provider)}
-                      cx={x(other.point.atMs)}
-                      cy={y(other.position)}
-                      r="5"
-                      fill="var(--pool-accent)"
-                      stroke="#111"
-                      strokeWidth="2"
-                    />
-                  )
-              )}
+              <circle
+                cx={x(sample.point.atMs)}
+                cy={y(sample.point[field]!)}
+                r="5"
+                fill="var(--pool-accent)"
+                stroke="#111"
+                strokeWidth="2"
+              />
             </g>
           )}
-          {mode === 'remaining' &&
-            !stackedTotal &&
-            pools.map(
-              (pool, index) =>
-                visible(pool.poolEmptyAtMs) && (
-                  <circle
-                    key={index}
-                    {...poolProviderStyle(pool.provider)}
-                    cx={x(pool.poolEmptyAtMs)}
-                    cy={y(0)}
-                    r="5"
-                    fill="#111"
-                    stroke="var(--pool-accent)"
-                    strokeWidth="2"
-                  >
-                    <title>{`${t('quota_pool.pool_empty')}: ${date(pool.poolEmptyAtMs)}`}</title>
-                  </circle>
-                )
-            )}
+          {mode === 'remaining' && visible(pool.poolEmptyAtMs) && (
+            <circle
+              {...poolProviderStyle(pool.provider)}
+              cx={x(pool.poolEmptyAtMs)}
+              cy={y(0)}
+              r="5"
+              fill="#111"
+              stroke="var(--pool-accent)"
+              strokeWidth="2"
+            >
+              <title>{`${t('quota_pool.pool_empty')}: ${date(pool.poolEmptyAtMs)}`}</title>
+            </circle>
+          )}
         </g>
         {snapshotX !== null && (
           <text
             className={styles.nowLabel}
             x={snapshotAnchor === 'end' ? snapshotX - 4 : snapshotX}
             y={chartFrame.top - 10}
-            // Near an edge (rate views end at the snapshot) the label turns inward with a 4px inset.
             textAnchor={snapshotAnchor}
           >
             {snapshotText}
@@ -604,7 +432,9 @@ function PoolChartView({
                 <line
                   x1={rx}
                   x2={rx}
-                  y1={reset.lane === 1 && reset.crossesSnapshot ? chartFrame.top - 3 : chartFrame.top}
+                  y1={
+                    reset.lane === 1 && reset.crossesSnapshot ? chartFrame.top - 3 : chartFrame.top
+                  }
                   y2={chartFrame.top + 14}
                 />
                 {reset.lane >= 0 && (
@@ -626,12 +456,10 @@ function PoolChartView({
             {t('quota_pool.no_history')}
           </text>
         )}
-        {/* The card's status chip and strip already explain degraded forecasts, and the page note
-            explains rate views; only a ready pool with no projection needs saying here. */}
         {hasValues &&
           !hasProjection &&
           mode === 'remaining' &&
-          pools.every((pool) => pool.forecastState === 'ready') &&
+          pool.forecastState === 'ready' &&
           visible(nowMs) &&
           x(nowMs) < chartFrame.right - 130 && (
             <text
@@ -646,24 +474,7 @@ function PoolChartView({
       </svg>
       <div className={styles.chartFooter}>
         <div className={styles.legend}>
-          {comparison &&
-            pools.map((pool, index) => (
-              <span
-                key={index}
-                {...poolProviderStyle(pool.provider)}
-                data-stacked-swatch={stackedTotal ? '' : undefined}
-              >
-                <i />
-                {poolLabel(pool)}
-                {/* A retired layer is history by design, not a partial forecast. */}
-                {pool.historyOnly
-                  ? ` · ${t('quota_pool.history_only')}`
-                  : pool.forecastState !== 'ready' &&
-                    ` · ${t(`quota_pool.state.${pool.forecastState}`)}`}
-              </span>
-            ))}
-          {/* Line styles are a separate key from provider colours, so they read as styles. */}
-          <span data-style-key data-divider={comparison || undefined}>
+          <span data-style-key>
             <i />
             {t('quota_pool.recorded')}
           </span>
@@ -681,9 +492,6 @@ function PoolChartView({
           )}
         </div>
       </div>
-      {/* At rest on healthy multi-sample cards whose latest reading matches the page timestamp,
-          Data collection already states that time once; keep the readout in the DOM for assistive
-          tech and reveal it visually when inspecting a point, collecting, or missing a reading. */}
       <div
         className={styles.inspectionRow}
         data-redundant={
