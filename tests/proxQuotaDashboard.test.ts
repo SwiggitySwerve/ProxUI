@@ -21,6 +21,7 @@ import {
   nextResetStopIndex,
   placeLaneResets,
   placeTotalResetTicks,
+  resolveStopIndex,
   selectStopAtX,
 } from '../src/features/quotaPool/combinedLanesModel';
 import { createPoolResource } from '../src/features/quotaPool/poolResource';
@@ -1040,6 +1041,191 @@ describe('combined lanes chart model & rendering', () => {
     expect(markup).toContain('orbit-ai +80');
     expect(markup).toContain('data-total-reset-tick="orbit-ai"');
   });
+
+  test('healthy pool lanes fall back to their own traces when another provider clears combined layers', async () => {
+    await i18n.changeLanguage('en');
+    const claude: QuotaPool = {
+      ...pool,
+      provider: 'claude',
+      recorded: [point(100, 180), point(500, 140)],
+      projected: [point(500, 140), point(800, 110), point(800, 190), point(900, 175)],
+      resets: [{ atMs: 800, gainPoints: 80 }],
+    };
+    const staleCodex: QuotaPool = {
+      ...pool,
+      provider: 'codex',
+      forecastState: 'stale',
+      remainingPoints: null,
+      recorded: [point(100, 90)],
+      projected: [],
+      resets: [],
+    };
+    // Mirrors server/quota/combined.ts clearing every layer's projected (or recorded) array when
+    // one member is stale/partial or fails inventory.
+    const markup = renderToStaticMarkup(
+      createElement(CombinedPoolCard, {
+        pools: [claude, staleCodex],
+        dashboard: {
+          ...dashboard,
+          combined: {
+            all: {
+              unavailableReason: null,
+              series: {
+                ...pool,
+                forecastState: 'stale',
+                remainingPoints: null,
+                recorded: [],
+                projected: [],
+                resets: [],
+              },
+              layers: [
+                { ...claude, recorded: [], projected: [] },
+                { ...staleCodex, recorded: [], projected: [] },
+              ],
+            },
+          },
+        },
+        provider: 'all',
+        mode: 'remaining',
+        savedData: false,
+      })
+    );
+    const totalStart = markup.indexOf('data-series="total"');
+    const claudeStart = markup.indexOf('data-series="claude"');
+    const codexStart = markup.indexOf('data-series="codex"');
+    // Server Total remains empty/untouched, while Claude keeps its own recorded & forecast paths.
+    expect(markup.slice(totalStart, claudeStart)).not.toContain('<path ');
+    expect(markup.slice(claudeStart, codexStart)).toContain('stroke-dasharray="7 5"');
+    expect(markup.slice(claudeStart, codexStart)).toContain('data-reset-provider="claude"');
+  });
+
+  test('a single eligible provider with a server Total renders neutral Total + reset ticks in expanded and minimized views, but keeps its lane when Total is empty', async () => {
+    await i18n.changeLanguage('en');
+    const claude = {
+      ...pool,
+      provider: 'claude' as const,
+      recorded: [point(100, 150), point(500, 120)],
+      projected: [point(500, 120), point(800, 90), point(800, 190)],
+      resets: [{ atMs: 800, gainPoints: 100 }],
+    };
+    for (const minimized of [false, true]) {
+      const markup = renderToStaticMarkup(
+        createElement(CombinedLanesChart, {
+          lanes: [claude],
+          totalSeries: claude,
+          dashboard,
+          mode: 'remaining',
+          minimized,
+        })
+      );
+      expect(markup).toContain('data-series="total"');
+      expect(markup).toContain('data-total-reset-tick="claude"');
+      expect(markup).not.toContain('data-series="claude"');
+    }
+    // Failed inventory leaves Total empty while the sole provider still holds recorded history:
+    // the expanded chart must keep the sole provider's lane visible rather than hiding its history.
+    const emptyTotal = {
+      ...claude,
+      forecastState: 'partial' as const,
+      remainingPoints: null,
+      recorded: [],
+      projected: [],
+      resets: [],
+    };
+    const expandedWithEmptyTotal = renderToStaticMarkup(
+      createElement(CombinedLanesChart, {
+        lanes: [claude],
+        totalSeries: emptyTotal,
+        dashboard,
+        mode: 'remaining',
+        minimized: false,
+      })
+    );
+    expect(expandedWithEmptyTotal).toContain('data-series="total"');
+    expect(expandedWithEmptyTotal).toContain('data-series="claude"');
+    // When minimized hides provider lanes and Total itself has no trace, the chart shows
+    // "No observations in this range" and omits the Projected legend even though the hidden
+    // lane has recorded/projected data.
+    const minimizedWithEmptyTotal = renderToStaticMarkup(
+      createElement(CombinedLanesChart, {
+        lanes: [claude, { ...claude, provider: 'codex' }],
+        totalSeries: emptyTotal,
+        dashboard,
+        mode: 'remaining',
+        minimized: true,
+      })
+    );
+    expect(minimizedWithEmptyTotal).toContain('No observations in this range');
+    expect(minimizedWithEmptyTotal).not.toContain('>Projected<');
+  });
+
+  test('buildLaneStops excludes clipping boundary neighbors outside the visible range and resolveStopIndex survives refreshes and clears out-of-range pins', () => {
+    const claude = {
+      ...pool,
+      provider: 'claude' as const,
+      recorded: [point(50, 90), point(200, 80), point(500, 60)],
+      projected: [point(500, 60), point(900, 40), point(1200, 20)],
+      resets: [],
+    };
+    const stops = buildLaneStops({
+      totalSamples: inRange(chartSamples(claude.recorded, claude.projected, 'remaining'), 100, 1000),
+      laneSamples: [
+        inRange(chartSamples(claude.recorded, claude.projected, 'remaining'), 100, 1000),
+      ],
+      lanes: [claude],
+      mode: 'remaining',
+      fromMs: 100,
+      toMs: 1000,
+      labelOf: () => 'Claude',
+    });
+    expect(stops.map((s) => s.atMs)).toEqual([200, 500, 900]);
+    const pinnedKey = { atMs: 500, projected: false };
+    expect(resolveStopIndex(stops, pinnedKey, 100, 1000)).toBe(1);
+    // Simulate a 15-second poll inserting an earlier reading before index 1.
+    const refreshed = [{ ...stops[0], atMs: 150 }, ...stops];
+    expect(resolveStopIndex(refreshed, pinnedKey, 100, 1000)).toBe(2);
+    expect(refreshed[resolveStopIndex(refreshed, pinnedKey, 100, 1000)!].atMs).toBe(500);
+    // Once a pinned reading rolls outside the visible window (e.g. 5-hour view advances), clear it.
+    expect(resolveStopIndex(refreshed, { atMs: 150, projected: false }, 200, 1100)).toBeNull();
+  });
+
+  test('compact signed drain lanes preserve the zero baseline label and drop colliding bounds', async () => {
+    await i18n.changeLanguage('en');
+    const drainPt = (at: number, drain: number): PoolPoint => ({
+      atMs: at,
+      remainingPoints: 100,
+      burnPointsPerHour: 2,
+      drainPointsPerHour: drain,
+    });
+    const claude = {
+      ...pool,
+      provider: 'claude' as const,
+      recorded: [drainPt(100, -50), drainPt(500, 40)],
+      projected: [],
+      resets: [],
+    };
+    const codex = {
+      ...pool,
+      provider: 'codex' as const,
+      recorded: [drainPt(100, -20), drainPt(500, 6)],
+      projected: [],
+      resets: [],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(CombinedLanesChart, {
+        lanes: [claude, codex],
+        totalSeries: { ...pool, recorded: [drainPt(100, -60), drainPt(500, 50)], projected: [] },
+        dashboard,
+        mode: 'drain',
+      })
+    );
+    const codexHeaderStart = markup.indexOf('data-lane-header="codex"');
+    const codexHeaderEnd = markup.indexOf('</g><g clip-path=', codexHeaderStart);
+    const codexChrome = markup.slice(codexHeaderStart, codexHeaderEnd);
+    expect(codexChrome).toContain('>0</text>');
+    expect(codexChrome).toContain('>-20</text>');
+    expect(codexChrome).not.toContain('>6</text>');
+  });
   test('long rosters get search, sort and a low count; short ones stay plain', async () => {
     await i18n.changeLanguage('en');
     const account = pool.accounts[0];
@@ -1257,11 +1443,26 @@ describe('pool presentation', () => {
     expect(markup).not.toContain('stroke-dasharray');
     expect(markup).toContain('viewBox="0 0 1000 160"');
     expect(markup).toContain('points/h');
-    // Minimized hides lanes and restores provider keys in the legend.
+    // Minimized drain hides lanes and omits provider reset tick keys because drain has no resets.
     expect(markup).toContain('data-series="total"');
     expect(markup).not.toContain('data-series="claude"');
-    expect(markup).toContain('Claude');
-    expect(markup).toContain('Codex');
+    expect(markup).not.toContain('Scheduled reset:');
+    // Minimized remaining renders provider keys as vertical reset ticks alongside the Total plot.
+    const minimizedRemaining = renderToStaticMarkup(
+      createElement(CombinedLanesChart, {
+        lanes: [
+          { ...pool, provider: 'claude', resets: [{ atMs: 800, gainPoints: 80 }] },
+          { ...pool, provider: 'codex', resets: [{ atMs: 850, gainPoints: 40 }] },
+        ],
+        totalSeries: { ...pool, capacityPoints: 400 },
+        dashboard,
+        mode: 'remaining',
+        minimized: true,
+      })
+    );
+    expect(minimizedRemaining).toContain('Scheduled reset:');
+    expect(minimizedRemaining).toContain('Claude');
+    expect(minimizedRemaining).toContain('Codex');
   });
 
   test('dense forecast dots cannot fill the dashed line, while isolated forecasts remain visible', () => {

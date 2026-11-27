@@ -15,6 +15,7 @@ import {
   type ChartMode,
 } from './chartGeometry';
 import { formatPoolDate, formatPoolNumber, formatPoolTick } from './presentation';
+import { PoolTracePaths } from './PoolTracePaths';
 import { poolProviderLabel, poolProviderStyle } from './providerPresentation';
 import styles from './QuotaPoolPage.module.scss';
 
@@ -181,7 +182,7 @@ export function PoolChart({
       }
     : baseFrame;
   const geometry = chartGeometry(samples, mode, pool.capacityPoints, fromMs, toMs, chartFrame);
-  const { x, y, min, max, segments } = geometry;
+  const { x, y, min, max, segmentRuns } = geometry;
   const latestRecorded = samples.reduce(
     (latest, { point, projected }, index) => (!projected && point.atMs <= nowMs ? index : latest),
     0
@@ -315,44 +316,19 @@ export function PoolChart({
         })}
         <g clipPath={`url(#${id}-clip)`}>
           <g {...poolProviderStyle(pool.provider)} data-series={pool.instanceId ?? pool.provider}>
-            {[false, true].map((projected) =>
-              segments(projected, samples).map((path, index) => {
-                const firstX = path.slice(1).split(',')[0];
-                const lastX = path.split(' L').slice(-1)[0]?.replace(/^M/, '').split(',')[0];
-                return (
-                  <g key={`${projected}-${index}`}>
-                    {mode === 'remaining' && (
-                      <path
-                        d={`${path} L${lastX},${y(0)} L${firstX},${y(0)} Z`}
-                        fill={`url(#${id}-fill)`}
-                      />
-                    )}
-                    <path
-                      d={path}
-                      fill="none"
-                      stroke="var(--pool-accent)"
-                      strokeWidth="2.4"
-                      strokeDasharray={projected ? '7 5' : undefined}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </g>
-                );
-              })
-            )}
-            {samples.map(({ point, projected }, index) => {
-              const value = point[field];
-              return value === null || (projected && !sparseProjection) ? null : (
-                <circle
-                  key={index}
-                  cx={x(point.atMs)}
-                  cy={y(value)}
-                  r={samples.length < 3 ? 3 : 1.5}
-                  fill="var(--pool-accent)"
-                  opacity={projected ? 0.6 : 1}
-                />
-              );
-            })}
+            <PoolTracePaths
+              samples={samples}
+              mode={mode}
+              x={x}
+              y={y}
+              segmentRuns={segmentRuns}
+              stroke="var(--pool-accent)"
+              strokeWidth={2.4}
+              fillId={`${id}-fill`}
+              fillProjected
+              sparseProjection={sparseProjection}
+              keyPrefix="pool"
+            />
           </g>
           {visible(nowMs) && (
             <line

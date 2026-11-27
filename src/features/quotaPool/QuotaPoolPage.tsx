@@ -34,7 +34,11 @@ import {
   writeViewState,
   type QuotaViewState,
 } from './model/viewState';
-import { formatPoolDate, formatPoolNumber, providerAccountCount } from './presentation';
+import {
+  formatPoolDate,
+  formatPoolNumber,
+  providerAccountCount,
+} from './presentation';
 import { usePrivacyStore } from '@/stores/usePrivacyStore';
 import styles from './QuotaPoolPage.module.scss';
 
@@ -123,8 +127,7 @@ export function QuotaPoolPage() {
   // card has more than two limit columns; every card shares the width, so their columns line up (G11).
   const wideResets = shownPools.every(
     (pool) =>
-      new Set(pool.accounts.flatMap((account) => account.windows.map((limit) => limit.id))).size <=
-      2
+      new Set(pool.accounts.flatMap((account) => account.windows.map((limit) => limit.id))).size <= 2
   );
   const providerName = (id: string) =>
     poolProviderLabel(
@@ -614,12 +617,7 @@ export function QuotaPoolPage() {
                   </span>
                 </span>
                 <span className={styles.loadingCard}>
-                  <Skeleton
-                    className={styles.loadingCardTitle}
-                    width={64}
-                    height={12}
-                    rounded={4}
-                  />
+                  <Skeleton className={styles.loadingCardTitle} width={64} height={12} rounded={4} />
                   {[0, 1, 2].map((index) => (
                     <span key={index} className={styles.loadingFact}>
                       <Skeleton width={84} height={10} rounded={4} />

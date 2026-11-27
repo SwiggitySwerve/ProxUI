@@ -2724,7 +2724,7 @@
     "move_down": "Chuyển quy tắc regex dòng {{row}} xuống"
   },
   "quota_pool": {
-    "combined_lanes_description": "Một đường Tổng trung tính ở trên các làn nhà cung cấp đồng bộ, mỗi làn theo thang sức chứa riêng. Đợt đặt lại dự kiến chỉ hiện trong làn của nhà cung cấp đó và dưới dạng vạch màu trên đường Tổng.",
+    "combined_lanes_description": "Một đường Tổng trung tính ở trên các làn nhà cung cấp đồng bộ, mỗi làn theo thang sức chứa riêng. Đợt đặt lại dự kiến chỉ hiện trong làn của nhà cung cấp đó và dưới dạng vạch màu trên đường Tổng. Dùng phím mũi tên để xem từng mốc và Shift+Mũi tên để nhảy giữa các đợt đặt lại.",
     "combined_lanes_rate_description": "Một đường tốc độ Tổng trung tính ở trên các làn nhà cung cấp đồng bộ theo thang tốc độ riêng. Mức tiêu hao ròng âm nằm dưới mức 0.",
     "combined_lanes_about": "Biểu đồ sử dụng tổng hợp hiển thị một đường Tổng trung tính ở trên các làn nhà cung cấp riêng biệt dùng chung trục thời gian. Mỗi làn dùng thang sức chứa riêng và đợt đặt lại dự kiến chỉ làm thay đổi nhà cung cấp đó cùng đường Tổng.",
     "next_reset_summary": "Đặt lại tiếp theo: {{details}} · {{date}}",
@@ -2738,7 +2738,6 @@
     "total_ambiguous": "Các nguồn của cùng một nhà cung cấp có thể dùng chung tài khoản nên không được cộng tổng. Mỗi nguồn được hiển thị trên một đường riêng.",
     "total_unavailable": "Không có tổng — thiếu một số số dư.",
     "combined_usage": "Biểu đồ sử dụng tổng hợp",
-    "combined_description": "Các nhóm nhà cung cấp dùng chung trục thời gian, mỗi đường giữ số dư hạn mức riêng. Nét liền: đã ghi nhận. Nét đứt: dự báo.",
     "minimize_graph": "Thu nhỏ biểu đồ",
     "expand_graph": "Mở rộng biểu đồ",
     "minimize_graph_label": "Thu nhỏ biểu đồ ({{graph}})",

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { PoolDashboard, PoolTrace } from '@/domain/quotaPool/types';
 import {
@@ -10,7 +10,6 @@ import {
   hourTicks,
   inRange,
   metricField,
-  verticalResetSteps,
   viewRange,
   type ChartMode,
 } from './chartGeometry';
@@ -19,12 +18,13 @@ import {
   computeLanesLayout,
   findNextReset,
   latestRecordedStopIndex,
-  nextResetStopIndex,
   placeLaneResets,
   placeTotalResetTicks,
-  selectStopAtX,
+  sameVisibleTrace,
+  type LaneStop,
   type LaneTrace,
 } from './combinedLanesModel';
+import { PoolTracePaths } from './PoolTracePaths';
 import { formatPoolDate, formatPoolNumber, formatPoolTick } from './presentation';
 import {
   poolProviderLabel,
@@ -32,9 +32,11 @@ import {
   providerGlyphPath,
   providerMarkerShape,
 } from './providerPresentation';
+import { useChartScrub } from './useChartScrub';
 import styles from './QuotaPoolPage.module.scss';
 
 const DEFAULT_VISIBLE_LANES = 3;
+const MAX_INLINE_RESET_PILLS = 2;
 
 export function CombinedLanesChart({
   lanes,
@@ -55,10 +57,7 @@ export function CombinedLanesChart({
   const id = useId();
   const container = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(defaultChartFrame.width);
-  const [pinned, setPinned] = useState<number | null>(null);
-  const [hovered, setHovered] = useState<number | null>(null);
   const [showAllLanes, setShowAllLanes] = useState(false);
-  const dragOrigin = useRef<{ x: number; y: number; active: boolean } | null>(null);
 
   useEffect(() => {
     const element = container.current;
@@ -103,14 +102,21 @@ export function CombinedLanesChart({
     };
   });
 
-  const singlePlot = lanes.length === 1;
-  const hasTotal = Boolean(totalSeries && !singlePlot);
+  // Always render the neutral server Total when supplied. Suppress a sole lane below it only when
+  // Total actually draws the same visible trace (e.g. an empty failed-inventory Total still keeps
+  // the sole provider's recorded history visible in its lane).
+  const hasTotal = Boolean(totalSeries);
+  const skipDuplicateLane =
+    hasTotal &&
+    lanes.length === 1 &&
+    sameVisibleTrace(totalSamples, laneSampleSets[0].visibleSamples, mode);
+  const singleStandaloneLane = !hasTotal && lanes.length === 1;
   const collapsedCount =
-    !singlePlot && !minimized && !showAllLanes && lanes.length > DEFAULT_VISIBLE_LANES
+    !skipDuplicateLane && !minimized && !showAllLanes && lanes.length > DEFAULT_VISIBLE_LANES
       ? lanes.length - DEFAULT_VISIBLE_LANES
       : 0;
   const visibleLaneSets =
-    minimized && hasTotal
+    (minimized && hasTotal) || skipDuplicateLane
       ? []
       : collapsedCount > 0
         ? laneSampleSets.slice(0, DEFAULT_VISIBLE_LANES)
@@ -138,7 +144,6 @@ export function CombinedLanesChart({
     hasTotal,
     visibleLaneCount: visibleLaneSets.length,
     labelChars,
-    singlePlot,
   });
 
   const x = (atMs: number) =>
@@ -149,21 +154,33 @@ export function CombinedLanesChart({
     laneSamples: laneSampleSets.map((s) => s.samples),
     lanes,
     mode,
+    fromMs,
+    toMs,
     labelOf: laneLabel,
   });
   const latestIdx = latestRecordedStopIndex(stops, nowMs);
-  const activeIndex = Math.max(0, Math.min(hovered ?? pinned ?? latestIdx, stops.length - 1));
-  const committedIndex = Math.max(0, Math.min(pinned ?? latestIdx, stops.length - 1));
-  const activeStop = stops[activeIndex];
-  const committedStop = stops[committedIndex];
-  const isInspecting = (hovered ?? pinned) !== null && activeIndex !== latestIdx;
+  const scrub = useChartScrub({
+    stops,
+    latestIdx,
+    fromMs,
+    toMs,
+    layoutWidth: layout.width,
+    x,
+  });
+  const activeStop = stops[scrub.activeIndex];
+  const committedStop = stops[scrub.committedIndex];
+  const { isInspecting, showNowButton } = scrub;
 
   const hasValues =
-    totalSamples.some((s) => s.point[field] !== null) ||
-    laneSampleSets.some((set) => set.visibleSamples.some((s) => s.point[field] !== null));
+    Boolean(layout.totalBox && totalSamples.some((s) => s.point[field] !== null)) ||
+    visibleLaneSets.some((set) => set.visibleSamples.some((s) => s.point[field] !== null));
   const hasProjection =
-    (totalSeries && totalSamples.some((s) => s.projected && s.point[field] !== null)) ||
-    laneSampleSets.some((set) =>
+    Boolean(
+      layout.totalBox &&
+      totalSeries &&
+      totalSamples.some((s) => s.projected && s.point[field] !== null)
+    ) ||
+    visibleLaneSets.some((set) =>
       set.visibleSamples.some((s) => s.projected && s.point[field] !== null)
     );
 
@@ -194,6 +211,8 @@ export function CombinedLanesChart({
   );
   const hasAnyReset =
     totalTicks.length > 0 || laneResetSets.some((resetList) => resetList.length > 0);
+  const showTickLegend =
+    hasTotal && (minimized || skipDuplicateLane) && mode === 'remaining' && totalTicks.length > 0;
   const nextReset = mode === 'remaining' ? findNextReset(lanes, nowMs, toMs, laneLabel) : null;
 
   // All scheduled resets across all active lanes, for assistive tech.
@@ -231,7 +250,7 @@ export function CombinedLanesChart({
     layout.laneBoxes[layout.laneBoxes.length - 1]?.bottom ?? layout.totalBox?.bottom ?? 126;
 
   // Build assistive-tech summary for the committed stop (never floods aria-live on hover).
-  const describeStop = (stop: (typeof stops)[number] | undefined, isLatest: boolean): string => {
+  const describeStop = (stop: LaneStop | undefined, isLatest: boolean): string => {
     if (!stop) return t('quota_pool.inspect_hint');
     const parts: string[] = [];
     parts.push(
@@ -260,97 +279,25 @@ export function CombinedLanesChart({
     return parts.join(' · ');
   };
 
-  const stopIndexFromEvent = (event: PointerEvent<SVGSVGElement>): number | null => {
-    if (!stops.length) return null;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    if (bounds.width <= 0) return null;
-    const cursorX = ((event.clientX - bounds.left) / bounds.width) * layout.width;
-    return selectStopAtX(stops, cursorX, x, 12);
-  };
-
-  const handlePointerDown = (event: PointerEvent<SVGSVGElement>) => {
-    dragOrigin.current = { x: event.clientX, y: event.clientY, active: false };
-    const idx = stopIndexFromEvent(event);
-    if (idx !== null) {
-      setPinned(idx);
-      setHovered(null);
-    }
-  };
-
-  const handlePointerMove = (event: PointerEvent<SVGSVGElement>) => {
-    if (event.pointerType === 'mouse' && event.buttons === 0) {
-      const idx = stopIndexFromEvent(event);
-      if (idx !== null) setHovered(idx);
-      return;
-    }
-    const origin = dragOrigin.current;
-    if (!origin) return;
-    const dx = Math.abs(event.clientX - origin.x);
-    const dy = Math.abs(event.clientY - origin.y);
-    if (!origin.active && dx > 6 && dx > dy) {
-      origin.active = true;
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-      } catch {
-        // Synthetic or detached pointer events may not support capture.
-      }
-    }
-    if (origin.active || event.pointerType === 'mouse') {
-      const idx = stopIndexFromEvent(event);
-      if (idx !== null) setPinned(idx);
-    }
-  };
-
-  const handlePointerEnd = (event: PointerEvent<SVGSVGElement>) => {
-    if (dragOrigin.current?.active) {
-      try {
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        }
-      } catch {
-        // Ignore capture release errors.
-      }
-    }
-    dragOrigin.current = null;
-  };
-
-  const handleKeyDown = (event: KeyboardEvent<SVGSVGElement>) => {
-    if (event.key === 'Escape') {
-      if (pinned !== null || hovered !== null) {
-        event.preventDefault();
-        setPinned(null);
-        setHovered(null);
-      }
-      return;
-    }
-    const last = stops.length - 1;
-    if (last < 1) return;
-    let next: number | null = null;
-    if (event.key === 'ArrowLeft') {
-      next = event.shiftKey
-        ? nextResetStopIndex(stops, committedIndex, -1)
-        : Math.max(0, committedIndex - 1);
-    } else if (event.key === 'ArrowRight') {
-      next = event.shiftKey
-        ? nextResetStopIndex(stops, committedIndex, 1)
-        : Math.min(last, committedIndex + 1);
-    } else if (event.key === 'Home') {
-      next = 0;
-    } else if (event.key === 'End') {
-      next = last;
-    }
-    if (next === null) return;
-    event.preventDefault();
-    setPinned(next);
-    setHovered(null);
-  };
-
   const totalSparseProjection =
     totalSeries !== undefined && totalSamples.filter((s) => s.projected).length < 3;
+  const activeX = isInspecting && activeStop ? x(activeStop.atMs) : null;
+  const inlineResets =
+    isInspecting && activeStop ? activeStop.resets.slice(0, MAX_INLINE_RESET_PILLS) : [];
+  const hiddenResetCount =
+    isInspecting && activeStop ? Math.max(0, activeStop.resets.length - inlineResets.length) : 0;
+  const hiddenResetTitle =
+    hiddenResetCount > 0 && activeStop
+      ? activeStop.resets
+          .slice(MAX_INLINE_RESET_PILLS)
+          .map((reset) => `${reset.label} +${number(reset.gainPoints)}`)
+          .join(', ')
+      : undefined;
+  const tickProviders = new Set(totalTicks.map((tick) => tick.provider));
 
   return (
     <div className={styles.chart} ref={container}>
-      {/* Thumb-safe readout bar above the plot: shows next reset at rest, or Total + reset gain on scrub. */}
+      {/* Thumb-safe readout bar above the plot: fixed height so pinning never shifts the SVG. */}
       <div className={styles.lanesReadout}>
         <div className={styles.lanesReadoutMain}>
           {activeStop ? (
@@ -374,16 +321,24 @@ export function CombinedLanesChart({
                   </strong>
                 </span>
               )}
-              {isInspecting &&
-                activeStop.resets.map((reset) => (
-                  <span
-                    key={`${reset.laneIndex}-${reset.atMs}`}
-                    className={styles.lanesResetPill}
-                    {...poolProviderStyle(reset.provider)}
-                  >
-                    {reset.label} +{number(reset.gainPoints)}
-                  </span>
-                ))}
+              {inlineResets.length > 0 && (
+                <span className={styles.lanesResetPills}>
+                  {inlineResets.map((reset) => (
+                    <span
+                      key={`${reset.laneIndex}-${reset.atMs}`}
+                      className={styles.lanesResetPill}
+                      {...poolProviderStyle(reset.provider)}
+                    >
+                      {reset.label} +{number(reset.gainPoints)}
+                    </span>
+                  ))}
+                  {hiddenResetCount > 0 && (
+                    <span className={styles.lanesResetMore} title={hiddenResetTitle}>
+                      +{hiddenResetCount}
+                    </span>
+                  )}
+                </span>
+              )}
               {!isInspecting && nextReset && (
                 <span className={styles.lanesNextReset}>
                   {t('quota_pool.next_reset_summary', {
@@ -399,18 +354,19 @@ export function CombinedLanesChart({
             <span className={styles.lanesReadoutMeta}>{t('quota_pool.inspect_hint')}</span>
           )}
         </div>
-        {pinned !== null && (
-          <button
-            type="button"
-            className={styles.lanesNowButton}
-            onClick={() => {
-              setPinned(null);
-              setHovered(null);
-            }}
-          >
-            {t('quota_pool.reset_now')}
-          </button>
-        )}
+        <button
+          type="button"
+          className={
+            showNowButton
+              ? styles.lanesNowButton
+              : `${styles.lanesNowButton} ${styles.lanesNowHidden}`
+          }
+          aria-hidden={!showNowButton || undefined}
+          tabIndex={showNowButton ? 0 : -1}
+          onClick={scrub.clearSelection}
+        >
+          {t('quota_pool.reset_now')}
+        </button>
       </div>
 
       <svg
@@ -420,16 +376,11 @@ export function CombinedLanesChart({
         aria-labelledby={`${id}-title ${id}-desc`}
         aria-describedby={`${id}-readout`}
         tabIndex={stops.length > 1 ? 0 : undefined}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerEnd}
-        onPointerCancel={handlePointerEnd}
-        onPointerLeave={() => setHovered(null)}
-        onKeyDown={handleKeyDown}
+        {...scrub.svgHandlers}
       >
         <title id={`${id}-title`}>
           {t('quota_pool.chart_title', {
-            provider: singlePlot ? laneLabel(lanes[0]) : t('quota_pool.combined_usage'),
+            provider: singleStandaloneLane ? laneLabel(lanes[0]) : t('quota_pool.combined_usage'),
             mode: t(`quota_pool.${mode}`),
           })}
         </title>
@@ -525,7 +476,7 @@ export function CombinedLanesChart({
         {visibleLaneSets.map(({ lane }, index) => {
           const box = layout.laneBoxes[index];
           const geom = laneGeoms[index];
-          const laneTicks = singlePlot
+          const laneTicks = singleStandaloneLane
             ? axisTicks(geom.min, geom.max)
             : geom.min < 0 && geom.max > 0
               ? [geom.min, 0, geom.max]
@@ -535,6 +486,8 @@ export function CombinedLanesChart({
           const stopVal = activeStop?.lanes[index];
           const resetHere = activeStop?.resets.find((r) => r.laneIndex === index);
           const shape = providerMarkerShape(lane.provider);
+          const fullName = laneLabel(lane);
+          const shownName = narrow && fullName.length > 18 ? `${fullName.slice(0, 17)}…` : fullName;
           const statusTag = lane.historyOnly
             ? t('quota_pool.history_only')
             : lane.forecastState !== 'ready'
@@ -544,7 +497,9 @@ export function CombinedLanesChart({
             lane.historyOnly && activeStop?.projected
               ? '—'
               : resetHere && resetHere.before !== null && resetHere.after !== null
-                ? `${number(resetHere.before)} → ${number(resetHere.after)} (+${number(resetHere.gainPoints)})`
+                ? narrow
+                  ? `${number(resetHere.after)} (+${number(resetHere.gainPoints)})`
+                  : `${number(resetHere.before)} → ${number(resetHere.after)} (+${number(resetHere.gainPoints)})`
                 : stopVal && stopVal.present
                   ? stopVal.after === null
                     ? t('quota_pool.no_observation')
@@ -552,6 +507,7 @@ export function CombinedLanesChart({
                       ? `${number(stopVal.after)} / ${number(lane.capacityPoints)}`
                       : `${number(stopVal.after)}\u00a0${unit}`
                   : '';
+          const zeroY = geom.min < 0 && geom.max > 0 ? geom.y(0) : null;
 
           return (
             <g
@@ -559,14 +515,15 @@ export function CombinedLanesChart({
               data-lane-header={lane.instanceId ?? lane.provider}
               {...poolProviderStyle(lane.provider)}
             >
-              {!singlePlot && (
+              {!singleStandaloneLane && (
                 <>
                   <path
                     d={providerGlyphPath(shape, layout.left + 4.5, box.captionY - 3.5, 4)}
                     fill="var(--pool-accent)"
                   />
                   <text x={layout.left + 14} y={box.captionY} className={styles.laneName}>
-                    {laneLabel(lane)}
+                    <title>{fullName}</title>
+                    {shownName}
                     {statusTag && <tspan className={styles.laneStatus}>{` · ${statusTag}`}</tspan>}
                   </text>
                   {captionValue && (
@@ -583,27 +540,26 @@ export function CombinedLanesChart({
               )}
               {laneTicks.map((value, tickIdx) => {
                 const tickY = geom.y(value);
+                // In compact signed lanes, always keep the "0" baseline label and drop a cramped
+                // bound label if it would collide vertically with zero.
+                const hideCrampedBound =
+                  !singleStandaloneLane &&
+                  zeroY !== null &&
+                  ((value === geom.max && zeroY - tickY < 14) ||
+                    (value === geom.min && tickY - zeroY < 14));
                 const textY =
-                  !singlePlot && value === geom.max
+                  !singleStandaloneLane && value === geom.max
                     ? tickY + 8
-                    : !singlePlot && value === geom.min
+                    : !singleStandaloneLane && value === geom.min
                       ? tickY
-                      : tickY + 4;
-                // In compact lanes, keep the zero rule line but skip the "0" text if it would
-                // collide vertically with the top or bottom bound label (e.g. -20..6 drain).
-                const hideZeroLabel =
-                  !singlePlot &&
-                  value === 0 &&
-                  geom.min < 0 &&
-                  geom.max > 0 &&
-                  (tickY - geom.y(geom.max) < 14 || geom.y(geom.min) - tickY < 14);
+                      : Math.max(box.top + 8, Math.min(box.bottom, tickY + 4));
                 return (
                   <g
                     key={`lane-y-${index}-${tickIdx}`}
                     className={value === 0 && geom.min < 0 ? styles.zeroAxis : styles.grid}
                   >
                     <line x1={box.left} x2={box.right} y1={tickY} y2={tickY} />
-                    {!hideZeroLabel && (
+                    {!hideCrampedBound && (
                       <text x={box.left - 10} y={textY} textAnchor="end">
                         {number(value)}
                       </text>
@@ -619,61 +575,19 @@ export function CombinedLanesChart({
         <g clipPath={`url(#${id}-clip)`}>
           {totalSeries && totalGeom && layout.totalBox && (
             <g data-series="total">
-              {[false, true].map((projected) =>
-                totalGeom.segments(projected, totalSamples).map((path, segIdx) => {
-                  const firstX = path.slice(1).split(',')[0];
-                  const lastX = path.split(' L').slice(-1)[0]?.replace(/^M/, '').split(',')[0];
-                  return (
-                    <g key={`total-${projected}-${segIdx}`}>
-                      {mode === 'remaining' && !projected && (
-                        <path
-                          d={`${path} L${lastX},${totalGeom.y(0)} L${firstX},${totalGeom.y(0)} Z`}
-                          fill={`url(#${id}-total-fill)`}
-                        />
-                      )}
-                      <path
-                        d={path}
-                        fill="none"
-                        stroke="var(--text-primary)"
-                        strokeWidth="2.5"
-                        strokeDasharray={projected ? '7 5' : undefined}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </g>
-                  );
-                })
-              )}
-              {/* Solid vertical reset risers so dash gaps never hide a Total reset jump. */}
-              {mode === 'remaining' &&
-                verticalResetSteps(totalSamples, mode, totalGeom.x, totalGeom.y).map(
-                  (step, stepIdx) => (
-                    <line
-                      key={`total-step-${stepIdx}`}
-                      x1={step.x}
-                      x2={step.x}
-                      y1={step.y1}
-                      y2={step.y2}
-                      stroke="var(--text-primary)"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                    />
-                  )
-                )}
-              {totalSamples.map(({ point, projected }, sampleIdx) => {
-                const value = point[field];
-                if (value === null || (projected && !totalSparseProjection)) return null;
-                return (
-                  <circle
-                    key={`total-pt-${sampleIdx}`}
-                    cx={totalGeom.x(point.atMs)}
-                    cy={totalGeom.y(value)}
-                    r={totalSamples.length < 3 ? 3 : 1.5}
-                    fill="var(--text-primary)"
-                    opacity={projected ? 0.6 : 1}
-                  />
-                );
-              })}
+              <PoolTracePaths
+                samples={totalSamples}
+                mode={mode}
+                x={totalGeom.x}
+                y={totalGeom.y}
+                segmentRuns={totalGeom.segmentRuns}
+                stroke="var(--text-primary)"
+                strokeWidth={2.5}
+                fillId={`${id}-total-fill`}
+                showResetRisers
+                sparseProjection={totalSparseProjection}
+                keyPrefix="total"
+              />
               {mode === 'remaining' && visible(totalSeries.poolEmptyAtMs) && (
                 <circle
                   cx={totalGeom.x(totalSeries.poolEmptyAtMs)}
@@ -694,8 +608,16 @@ export function CombinedLanesChart({
             const box = layout.laneBoxes[index];
             const resets = laneResetSets[index];
             const shape = providerMarkerShape(lane.provider);
-            const resetByTime = new Map(
-              stops.filter((s) => s.projected).map((s) => [s.atMs, s.lanes[index]?.after ?? null])
+            const resetPointByTime = new Map(
+              stops
+                .filter((s) => s.projected)
+                .map((s) => [
+                  s.atMs,
+                  {
+                    before: s.lanes[index]?.before ?? null,
+                    after: s.lanes[index]?.after ?? null,
+                  },
+                ])
             );
 
             return (
@@ -705,64 +627,38 @@ export function CombinedLanesChart({
                 data-series={lane.instanceId ?? lane.provider}
                 data-lane-capacity={lane.capacityPoints}
               >
-                {(lane.historyOnly ? [false] : [false, true]).map((projected) =>
-                  geom.segments(projected, visibleSamples).map((path, segIdx) => {
-                    const firstX = path.slice(1).split(',')[0];
-                    const lastX = path.split(' L').slice(-1)[0]?.replace(/^M/, '').split(',')[0];
-                    return (
-                      <g key={`lane-${index}-${projected}-${segIdx}`}>
-                        {mode === 'remaining' && !projected && (
-                          <path
-                            d={`${path} L${lastX},${geom.y(0)} L${firstX},${geom.y(0)} Z`}
-                            fill={`url(#${id}-lane-fill-${index})`}
-                          />
-                        )}
-                        <path
-                          d={path}
-                          fill="none"
-                          stroke="var(--pool-accent)"
-                          strokeWidth={singlePlot ? '2.4' : '2'}
-                          strokeDasharray={projected ? '7 5' : undefined}
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </g>
-                    );
-                  })
-                )}
-                {mode === 'remaining' &&
-                  !lane.historyOnly &&
-                  verticalResetSteps(visibleSamples, mode, geom.x, geom.y).map((step, stepIdx) => (
-                    <line
-                      key={`lane-step-${index}-${stepIdx}`}
-                      x1={step.x}
-                      x2={step.x}
-                      y1={step.y1}
-                      y2={step.y2}
-                      stroke="var(--pool-accent)"
-                      strokeWidth={singlePlot ? '2.4' : '2'}
-                      strokeLinecap="round"
-                    />
-                  ))}
-                {visibleSamples.map(({ point, projected }, sampleIdx) => {
-                  const value = point[field];
-                  if (value === null || (projected && !sparseProjection)) return null;
-                  return (
-                    <circle
-                      key={`lane-pt-${index}-${sampleIdx}`}
-                      cx={geom.x(point.atMs)}
-                      cy={geom.y(value)}
-                      r={visibleSamples.length < 3 ? 3 : 1.5}
-                      fill="var(--pool-accent)"
-                      opacity={projected ? 0.6 : 1}
-                    />
-                  );
-                })}
+                <PoolTracePaths
+                  samples={visibleSamples}
+                  mode={mode}
+                  x={geom.x}
+                  y={geom.y}
+                  segmentRuns={geom.segmentRuns}
+                  stroke="var(--pool-accent)"
+                  strokeWidth={singleStandaloneLane ? 2.4 : 2}
+                  fillId={`${id}-lane-fill-${index}`}
+                  includeProjected={!lane.historyOnly}
+                  showResetRisers
+                  sparseProjection={sparseProjection}
+                  keyPrefix={`lane-${index}`}
+                />
                 {/* Per-lane scheduled reset guides, shape markers, and non-overlapping +gain labels. */}
                 {resets.map((reset, resetIdx) => {
-                  const afterVal = resetByTime.get(reset.atMs);
-                  const markerY =
-                    afterVal !== null && afterVal !== undefined ? geom.y(afterVal) : box.top + 8;
+                  const pt = resetPointByTime.get(reset.atMs);
+                  const hasAfter = pt?.after !== null && pt?.after !== undefined;
+                  const markerY = hasAfter ? geom.y(pt.after!) : box.top;
+                  const beforeY =
+                    pt?.before !== null && pt?.before !== undefined ? geom.y(pt.before) : markerY;
+                  const sideY = reset.anchor === 'end' ? beforeY : markerY;
+                  const topLabelY = box.top + 11;
+                  const bottomLabelY = box.bottom - 5;
+                  const labelY =
+                    Math.abs(sideY - topLabelY) >= Math.abs(sideY - bottomLabelY)
+                      ? topLabelY
+                      : bottomLabelY;
+                  const hitsCrosshair =
+                    activeX !== null &&
+                    (Math.abs(reset.rx - activeX) < 18 ||
+                      (activeX >= reset.labelLeft - 12 && activeX <= reset.labelRight + 12));
                   return (
                     <g
                       key={`lane-reset-${index}-${resetIdx}`}
@@ -776,20 +672,27 @@ export function CombinedLanesChart({
                         y1={box.top}
                         y2={box.bottom}
                       />
-                      <path
-                        d={providerGlyphPath(shape, reset.rx, markerY, 3.8)}
-                        fill="var(--pool-accent)"
-                        stroke="var(--bg-primary)"
-                        strokeWidth="1.2"
-                      />
-                      {reset.showLabel && (
+                      {hasAfter ? (
+                        <path
+                          d={providerGlyphPath(shape, reset.rx, markerY, 3.8)}
+                          fill="var(--pool-accent)"
+                          stroke="var(--bg-primary)"
+                          strokeWidth="1.2"
+                        />
+                      ) : (
+                        <line
+                          x1={reset.rx}
+                          x2={reset.rx}
+                          y1={box.top - 4}
+                          y2={box.top + 3}
+                          stroke="var(--pool-accent)"
+                          strokeWidth="2"
+                        />
+                      )}
+                      {reset.showLabel && !hitsCrosshair && (
                         <text
                           x={reset.labelX}
-                          y={
-                            markerY < box.top + 16
-                              ? Math.min(box.bottom - 4, markerY + 15)
-                              : box.top + 11
-                          }
+                          y={labelY}
                           textAnchor={reset.anchor}
                           className={styles.laneResetGain}
                         >
@@ -861,7 +764,7 @@ export function CombinedLanesChart({
                     {...poolProviderStyle(lane.provider)}
                     cx={x(activeStop.atMs)}
                     cy={laneGeoms[index].y(val.after)}
-                    r={singlePlot ? '5' : '4'}
+                    r={singleStandaloneLane ? '5' : '4'}
                     fill="var(--pool-accent)"
                     stroke="var(--bg-primary)"
                     strokeWidth="1.8"
@@ -929,7 +832,7 @@ export function CombinedLanesChart({
       </svg>
 
       {/* Expand/collapse button when 4+ providers are combined. */}
-      {!singlePlot && !minimized && lanes.length > DEFAULT_VISIBLE_LANES && (
+      {!skipDuplicateLane && !minimized && lanes.length > DEFAULT_VISIBLE_LANES && (
         <button
           type="button"
           className={styles.lanesShowAll}
@@ -944,20 +847,23 @@ export function CombinedLanesChart({
 
       <div className={styles.chartFooter}>
         <div className={styles.legend}>
-          {/* Only show provider swatches in the legend when minimized hides the labeled lanes. */}
-          {minimized &&
-            hasTotal &&
-            lanes.map((lane, index) => (
-              <span key={`min-key-${index}`} {...poolProviderStyle(lane.provider)}>
-                <i />
-                {laneLabel(lane)}
-                {lane.historyOnly
-                  ? ` · ${t('quota_pool.history_only')}`
-                  : lane.forecastState !== 'ready' &&
-                    ` · ${t(`quota_pool.state.${lane.forecastState}`)}`}
-              </span>
-            ))}
-          <span data-style-key data-divider={(minimized && hasTotal) || undefined}>
+          {/* When lanes are hidden, encode provider colors as vertical reset ticks (matching the plot). */}
+          {showTickLegend && (
+            <>
+              <span className={styles.legendGroupLabel}>{t('quota_pool.scheduled_reset')}:</span>
+              {lanes
+                .filter((lane) => !lane.historyOnly && tickProviders.has(lane.provider))
+                .map((lane, index) => (
+                  <span key={`min-key-${index}`} {...poolProviderStyle(lane.provider)}>
+                    <i className={styles.resetKey} />
+                    {laneLabel(lane)}
+                    {lane.forecastState !== 'ready' &&
+                      ` · ${t(`quota_pool.state.${lane.forecastState}`)}`}
+                  </span>
+                ))}
+            </>
+          )}
+          <span data-style-key data-divider={showTickLegend || undefined}>
             <i />
             {t('quota_pool.recorded')}
           </span>
@@ -967,7 +873,7 @@ export function CombinedLanesChart({
               {t('quota_pool.projected')}
             </span>
           )}
-          {mode === 'remaining' && hasAnyReset && (
+          {mode === 'remaining' && hasAnyReset && !showTickLegend && (
             <span data-style-key>
               <i className={styles.resetKey} />
               {t('quota_pool.scheduled_reset')}
@@ -978,7 +884,7 @@ export function CombinedLanesChart({
 
       {/* Polite screen-reader summary of the committed moment + full scheduled reset list. */}
       <div id={`${id}-readout`} className={styles.srOnly} aria-live="polite">
-        {describeStop(committedStop, pinned === null)}
+        {describeStop(committedStop, scrub.isAtLatestCommit)}
         {stops.length === 1 ? ` · ${t('quota_pool.single_sample')}` : ''}
       </div>
       {allScheduledResets.length > 0 && (

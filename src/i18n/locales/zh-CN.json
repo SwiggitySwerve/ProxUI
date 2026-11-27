@@ -2716,7 +2716,7 @@
     "move_down": "下移第 {{row}} 行正则规则"
   },
   "quota_pool": {
-    "combined_lanes_description": "上方为中性合计曲线，下方为同步的各提供商独立泳道，每条泳道按各自容量缩放。预计重置仅显示在对应提供商泳道中，并在合计曲线顶部以对应颜色刻度标出。",
+    "combined_lanes_description": "上方为中性合计曲线，下方为同步的各提供商独立泳道，每条泳道按各自容量缩放。预计重置仅显示在对应提供商泳道中，并在合计曲线顶部以对应颜色刻度标出。可使用方向键查看时间点，按 Shift+方向键在重置点间跳转。",
     "combined_lanes_rate_description": "上方为中性合计速率曲线，下方为同步的各提供商独立速率泳道。负净消耗位于零线下方。",
     "combined_lanes_about": "综合用量上方显示一条中性合计曲线，下方为共用同一时间轴的独立提供商泳道。各泳道按自身容量缩放，预计重置仅影响该提供商和合计曲线。",
     "next_reset_summary": "下次重置：{{details}} · {{date}}",
@@ -2730,7 +2730,6 @@
     "total_ambiguous": "同一提供商的多个来源可能共用账号，因此不予合计。每个来源单独显示一条曲线。",
     "total_unavailable": "总量不可用：部分余额缺失。",
     "combined_usage": "综合用量",
-    "combined_description": "各提供商池共用此时间轴，每条线保留独立配额余额。实线：已记录；虚线：预测。",
     "minimize_graph": "缩小图表",
     "expand_graph": "展开图表",
     "minimize_graph_label": "缩小图表 ({{graph}})",

@@ -32,7 +32,16 @@ export function CombinedPoolCard({
   const total = dashboard.combined?.[provider];
   const hasServerTotal = Boolean(total?.series);
   const orderedLayers = total?.layers?.length
-    ? pools.flatMap((pool) => total.layers!.filter((layer) => poolKey(layer) === poolKey(pool)))
+    ? pools.flatMap((pool) =>
+        total
+          .layers!.filter((layer) => poolKey(layer) === poolKey(pool))
+          .map((layer) => ({
+            ...layer,
+            recorded: layer.recorded.length > 0 ? layer.recorded : pool.recorded,
+            projected:
+              layer.historyOnly || layer.projected.length > 0 ? layer.projected : pool.projected,
+          }))
+      )
     : [];
   const lanes = orderedLayers.length > 0 ? orderedLayers : pools;
   const headline = total?.series ? total.series[metricField[mode]] : null;

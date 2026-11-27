@@ -2718,7 +2718,7 @@
     "move_down": "Move regex row {{row}} down"
   },
   "quota_pool": {
-    "combined_lanes_description": "One neutral Total line above synchronized provider lanes, each scaled to its own capacity. Scheduled resets appear only in the resetting provider’s lane and as colored ticks on Total.",
+    "combined_lanes_description": "One neutral Total line above synchronized provider lanes, each scaled to its own capacity. Scheduled resets appear only in the resetting provider’s lane and as colored ticks on Total. Use Arrow keys to inspect and Shift+Arrow to jump between resets.",
     "combined_lanes_rate_description": "One neutral Total rate line above synchronized provider lanes on their own rate scales. Negative net drain dips below zero.",
     "combined_lanes_about": "Combined usage shows one neutral Total line above separate provider lanes sharing the same timeline. Each provider lane uses its own capacity scale, and scheduled resets move only that provider and Total.",
     "next_reset_summary": "Next reset: {{details}} · {{date}}",
@@ -2732,7 +2732,6 @@
     "total_ambiguous": "Sources for the same provider may share accounts, so they aren't added up. Each source is shown on its own line.",
     "total_unavailable": "Total unavailable — some balances are missing.",
     "combined_usage": "Combined usage",
-    "combined_description": "Provider pools share this timeline; each line keeps its own quota balance.",
     "minimize_graph": "Minimize graph",
     "expand_graph": "Expand graph",
     "minimize_graph_label": "Minimize graph ({{graph}})",

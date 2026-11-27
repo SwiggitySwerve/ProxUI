@@ -2744,7 +2744,7 @@
     "move_down": "下移第 {{row}} 列正規規則"
   },
   "quota_pool": {
-    "combined_lanes_description": "上方為中性合計曲線，下方為同步的各供應商獨立泳道，每條泳道依各自容量縮放。排程重置僅顯示於對應供應商泳道中，並在合計曲線頂部以對應顏色刻度標示。",
+    "combined_lanes_description": "上方為中性合計曲線，下方為同步的各供應商獨立泳道，每條泳道依各自容量縮放。排程重置僅顯示於對應供應商泳道中，並在合計曲線頂部以對應顏色刻度標示。可使用方向鍵檢視時間點，按 Shift+方向鍵在重置點間跳轉。",
     "combined_lanes_rate_description": "上方為中性合計速率曲線，下方為同步的各供應商獨立速率泳道。負淨消耗位於零線下方。",
     "combined_lanes_about": "綜合用量上方顯示一條中性合計曲線，下方為共用同一時間軸的獨立供應商泳道。各泳道依自身容量縮放，排程重置僅影響該供應商與合計曲線。",
     "next_reset_summary": "下次重置：{{details}} · {{date}}",
@@ -2758,7 +2758,6 @@
     "total_ambiguous": "同一供應商的多個來源可能共用帳號，因此不予合計。每個來源單獨顯示一條曲線。",
     "total_unavailable": "總量無法使用：部分餘額缺失。",
     "combined_usage": "綜合用量",
-    "combined_description": "各供應商集區共用此時間軸，每條線保留獨立配額餘額。實線：已記錄；虛線：預測。",
     "minimize_graph": "縮小圖表",
     "expand_graph": "展開圖表",
     "minimize_graph_label": "縮小圖表 ({{graph}})",

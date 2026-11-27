@@ -164,6 +164,12 @@ function roundUp(value: number) {
   return ([1, 2, 3, 4, 5, 6, 8, 10].find((step) => step * scale >= value - 1e-9) ?? 10) * scale;
 }
 
+export interface SegmentRun {
+  path: string;
+  firstX: number;
+  lastX: number;
+}
+
 /** SVG coordinates only. Never infer quota or fill absent observations. */
 export function chartGeometry(
   samples: ChartSample[],
@@ -185,18 +191,21 @@ export function chartGeometry(
   const x = (at: number) =>
     frame.left + ((at - from) / (to - from || 1)) * (frame.right - frame.left);
   const y = (value: number) => frame.bottom - ((value - min) / span) * (frame.bottom - frame.top);
-  const segments = (projected: boolean, series: ChartSample[] = samples) => {
-    return knownRuns(
+  const segmentRuns = (projected: boolean, series: ChartSample[] = samples): SegmentRun[] =>
+    knownRuns(
       series.filter((item) => item.projected === projected),
       (sample) => sample.point[metricField[mode]] !== null
-    ).map((run) =>
-      run
+    ).map((run) => ({
+      path: run
         .map(
           (sample, index) =>
             `${index ? ' L' : 'M'}${x(sample.point.atMs)},${y(sample.point[metricField[mode]]!)}`
         )
-        .join('')
-    );
-  };
-  return { x, y, min, max, segments };
+        .join(''),
+      firstX: x(run[0].point.atMs),
+      lastX: x(run[run.length - 1].point.atMs),
+    }));
+  const segments = (projected: boolean, series: ChartSample[] = samples) =>
+    segmentRuns(projected, series).map((run) => run.path);
+  return { x, y, min, max, segments, segmentRuns };
 }

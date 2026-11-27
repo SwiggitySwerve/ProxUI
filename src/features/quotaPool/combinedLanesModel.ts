@@ -31,17 +31,30 @@ export interface LaneStop {
   resets: LaneStopReset[];
 }
 
+export interface StopKey {
+  atMs: number;
+  projected: boolean;
+}
+
 interface SeriesValue {
   before: number | null;
   after: number | null;
   present: boolean;
 }
 
-function indexSeries(samples: readonly ChartSample[], mode: ChartMode, skipProjected = false) {
+function indexSeries(
+  samples: readonly ChartSample[],
+  mode: ChartMode,
+  skipProjected = false,
+  fromMs?: number,
+  toMs?: number
+) {
   const field = metricField[mode];
   const map = new Map<string, { atMs: number; projected: boolean; value: SeriesValue }>();
   for (const sample of samples) {
     if (skipProjected && sample.projected) continue;
+    if (fromMs !== undefined && sample.point.atMs < fromMs) continue;
+    if (toMs !== undefined && sample.point.atMs > toMs) continue;
     const key = `${sample.point.atMs}:${sample.projected ? 1 : 0}`;
     const value = sample.point[field];
     const existing = map.get(key);
@@ -62,23 +75,28 @@ function indexSeries(samples: readonly ChartSample[], mode: ChartMode, skipProje
  * Distinct chronological inspection stops across Total and all provider lanes.
  * Collapses before/after duplicate timestamps from `alignProjections` into one stop carrying
  * both sides and exact server-supplied `gainPoints` so arrows never stall and resets read clearly.
+ * Restricts stops to `[fromMs, toMs]` when provided so clipping neighbors stay unselectable.
  */
 export function buildLaneStops({
   totalSamples,
   laneSamples,
   lanes,
   mode,
+  fromMs,
+  toMs,
   labelOf,
 }: {
   totalSamples: readonly ChartSample[];
   laneSamples: readonly (readonly ChartSample[])[];
   lanes: readonly LaneTrace[];
   mode: ChartMode;
+  fromMs?: number;
+  toMs?: number;
   labelOf: (lane: LaneTrace) => string;
 }): LaneStop[] {
-  const totalMap = indexSeries(totalSamples, mode, false);
+  const totalMap = indexSeries(totalSamples, mode, false, fromMs, toMs);
   const laneMaps = laneSamples.map((samples, index) =>
-    indexSeries(samples, mode, Boolean(lanes[index]?.historyOnly))
+    indexSeries(samples, mode, Boolean(lanes[index]?.historyOnly), fromMs, toMs)
   );
 
   const keys = new Map<string, { atMs: number; projected: boolean }>();
@@ -150,6 +168,53 @@ export function latestRecordedStopIndex(stops: readonly LaneStop[], nowMs: numbe
     if (!stops[i].projected && stops[i].atMs <= nowMs) latest = i;
   }
   return latest >= 0 ? latest : 0;
+}
+
+/** True when two visible sample sequences draw the exact same known points for `mode`. */
+export function sameVisibleTrace(
+  a: readonly ChartSample[],
+  b: readonly ChartSample[],
+  mode: ChartMode
+): boolean {
+  const field = metricField[mode];
+  const knownA = a.filter((sample) => sample.point[field] !== null);
+  const knownB = b.filter((sample) => sample.point[field] !== null);
+  if (knownA.length !== knownB.length) return false;
+  return knownA.every(
+    (sample, index) =>
+      sample.projected === knownB[index].projected &&
+      sample.point.atMs === knownB[index].point.atMs &&
+      sample.point[field] === knownB[index].point[field]
+  );
+}
+
+/** Resolve a pinned or hovered stop identity across polling refreshes without index drift. */
+export function resolveStopIndex(
+  stops: readonly LaneStop[],
+  key: StopKey | null,
+  fromMs?: number,
+  toMs?: number
+): number | null {
+  if (!key || !stops.length) return null;
+  if ((fromMs !== undefined && key.atMs < fromMs) || (toMs !== undefined && key.atMs > toMs)) {
+    return null;
+  }
+  const exact = stops.findIndex(
+    (stop) => stop.atMs === key.atMs && stop.projected === key.projected
+  );
+  if (exact >= 0) return exact;
+  const sameTime = stops.findIndex((stop) => stop.atMs === key.atMs);
+  if (sameTime >= 0) return sameTime;
+  let closest = 0;
+  let closestDist = Math.abs(stops[0].atMs - key.atMs);
+  for (let i = 1; i < stops.length; i += 1) {
+    const dist = Math.abs(stops[i].atMs - key.atMs);
+    if (dist < closestDist) {
+      closest = i;
+      closestDist = dist;
+    }
+  }
+  return closest;
 }
 
 /** 1D horizontal scrub selection with magnetic snap to scheduled resets within `snapPx`. */
@@ -225,7 +290,7 @@ export function findNextReset(
 }
 
 export function formatGainLabel(gainPoints: number, locale: string, compact: boolean): string {
-  if (compact && gainPoints >= 1000) {
+  if (compact && gainPoints >= 10_000) {
     const compactNum = new Intl.NumberFormat(locale, {
       notation: 'compact',
       maximumFractionDigits: 1,
@@ -241,6 +306,8 @@ export interface PlacedLaneReset {
   rx: number;
   text: string;
   labelX: number;
+  labelLeft: number;
+  labelRight: number;
   anchor: 'start' | 'end';
   showLabel: boolean;
 }
@@ -269,14 +336,17 @@ export function placeLaneResets(
     const flipLeft = rx + 5 + estWidth > right;
     const labelX = flipLeft ? rx - 5 : rx + 5;
     const labelLeft = flipLeft ? labelX - estWidth : labelX;
+    const labelRight = labelLeft + estWidth;
     const showLabel = labelLeft >= lastLabelRight + 8;
-    if (showLabel) lastLabelRight = labelLeft + estWidth;
+    if (showLabel) lastLabelRight = labelRight;
     return {
       atMs,
       gainPoints,
       rx,
       text,
       labelX,
+      labelLeft,
+      labelRight,
       anchor: flipLeft ? 'end' : 'start',
       showLabel,
     };
@@ -367,14 +437,12 @@ export function computeLanesLayout({
   hasTotal,
   visibleLaneCount,
   labelChars,
-  singlePlot,
 }: {
   width: number;
   minimized: boolean;
   hasTotal: boolean;
   visibleLaneCount: number;
   labelChars: number;
-  singlePlot: boolean;
 }): LanesLayout {
   const narrow = width < 600;
   const left = Math.max(narrow ? 44 : 56, Math.ceil(labelChars * 8.4) + 16);
@@ -382,8 +450,8 @@ export function computeLanesLayout({
   const topPad = 36;
   const bottomPad = 34;
 
-  // Minimized with Total (or single-provider plot): compact 160px single plot.
-  if (minimized && (hasTotal || singlePlot)) {
+  // Minimized with Total (or a single standalone lane without Total): compact 160px single plot.
+  if (minimized && (hasTotal || visibleLaneCount === 1)) {
     const height = 160;
     const box: PlotBox = {
       width,
@@ -398,25 +466,26 @@ export function computeLanesLayout({
       height,
       left,
       right,
-      totalBox: hasTotal && !singlePlot ? box : null,
-      laneBoxes: singlePlot ? [{ ...box, captionY: 16 }] : [],
+      totalBox: hasTotal ? box : null,
+      laneBoxes: !hasTotal && visibleLaneCount === 1 ? [{ ...box, captionY: 16 }] : [],
       axisY: box.bottom + 24,
     };
   }
 
-  // Single-provider full-height plot (avoids duplicating Total and an identical single lane).
-  if (singlePlot) {
+  // Single full-height plot: either Total-only (one provider, no duplicate lane) or one lane without Total.
+  if ((hasTotal && visibleLaneCount === 0) || (!hasTotal && visibleLaneCount === 1)) {
     const plotHeight = narrow ? 164 : 204;
     const top = topPad;
     const bottom = top + plotHeight;
     const height = bottom + bottomPad;
+    const box: PlotBox = { width, height, left, right, top, bottom };
     return {
       width,
       height,
       left,
       right,
-      totalBox: null,
-      laneBoxes: [{ width, height, left, right, top, bottom, captionY: top - 16 }],
+      totalBox: hasTotal ? box : null,
+      laneBoxes: hasTotal ? [] : [{ ...box, captionY: top - 16 }],
       axisY: bottom + 24,
     };
   }

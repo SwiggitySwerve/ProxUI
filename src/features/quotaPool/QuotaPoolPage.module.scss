@@ -1638,11 +1638,6 @@ $table-tiers: (
   --pool-accent: var(--text-secondary);
   margin-bottom: 20px;
 }
-.comparisonNote {
-  margin: 0 0 8px;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
 .graphHeader {
   display: flex;
   flex-wrap: wrap;
@@ -1654,9 +1649,6 @@ $table-tiers: (
   h2 {
     font-size: 16px;
   }
-}
-.total {
-  --pool-accent: var(--text-primary);
 }
 
 .page .expandAccounts {
@@ -1805,7 +1797,7 @@ $table-tiers: (
       // source) has no tracks: React drops the empty property, so the empty fallback keeps the row valid.
       grid-template-columns:
         20px var(--name-track) var(--plan-track)
-        var(--limit-tracks,)
+        var(--limit-tracks, )
         128px;
       justify-content: start;
       column-gap: var(--col-gap);
@@ -1938,7 +1930,7 @@ $table-tiers: (
       .accountHead,
       .account > summary {
         // As above: the limits share the rest of the row.
-        grid-template-columns: 20px var(--name-track) var(--plan-track) var(--limit-tracks,);
+        grid-template-columns: 20px var(--name-track) var(--plan-track) var(--limit-tracks, );
       }
       // Here the last header is a limit's, not the balance's: it wraps inside its track like the others.
       .accountHead span:last-child {
@@ -2755,7 +2747,6 @@ $table-tiers: (
     .loadingAction,
     .loadingOptions,
     .loadingToggle,
-    .loadingSelect,
     .loadingCount,
     .loadingChip,
     .loadingPills {
@@ -2815,12 +2806,6 @@ $table-tiers: (
       grid-column: 2;
       grid-row: 1;
       width: 150px;
-      height: 44px;
-    }
-    .loadingSelect {
-      grid-column: 1 / -1;
-      grid-row: 2;
-      width: 190px;
       height: 44px;
     }
     .loadingHead > .loadingStatus {
@@ -4127,11 +4112,7 @@ $table-tiers: (
 // Phone missing active-window reason ("No 5-hour limit") keeps the muted tone of wide tables
 // while preserving the active-window weight invariant.
 @include block-rows {
-  .account[data-phone-blocks]
-    > summary
-    > .limits
-    > li[data-missing='true'][data-counted='true']
-    > em {
+  .account[data-phone-blocks] > summary > .limits > li[data-missing='true'][data-counted='true'] > em {
     font-size: 13px;
     color: var(--text-tertiary);
   }
@@ -4339,13 +4320,6 @@ $table-tiers: (
         width: 126px;
         height: 36px;
         order: 3;
-      }
-      .loadingSelect {
-        display: block;
-        width: 148px;
-        height: 36px;
-        margin-left: auto;
-        order: 2;
       }
     }
     .loadingIdentity {
@@ -5366,7 +5340,7 @@ $table-tiers: (
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 32px;
+  height: 44px;
   margin: 6px 0 8px;
   padding: 6px 10px;
   border-radius: 8px;
@@ -5375,26 +5349,45 @@ $table-tiers: (
   font-size: 12px;
   line-height: 1.35;
   font-variant-numeric: tabular-nums;
+  overflow: hidden;
 }
 .lanesReadoutMain {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px 10px;
   min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 .lanesReadoutTime {
   color: var(--text-primary);
   font-weight: 500;
+  white-space: nowrap;
 }
 .lanesReadoutMeta {
   color: var(--text-secondary);
+  white-space: nowrap;
 }
 .lanesReadoutTotal {
   color: var(--text-secondary);
+  white-space: nowrap;
   strong {
     color: var(--text-primary);
     font-weight: 600;
+  }
+}
+.lanesResetPills {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
   }
 }
 .lanesResetPill {
@@ -5407,9 +5400,25 @@ $table-tiers: (
   color: var(--pool-accent);
   font-weight: 600;
   white-space: nowrap;
+  flex: none;
+}
+.lanesResetMore {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+  flex: none;
 }
 .lanesNextReset {
   color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .lanesNowButton {
   flex: none;
@@ -5431,7 +5440,28 @@ $table-tiers: (
     outline-offset: 2px;
   }
 }
+.lanesNowHidden {
+  visibility: hidden;
+  pointer-events: none;
+}
 @media (pointer: coarse), (max-width: 640px) {
+  .lanesReadout {
+    height: 86px;
+  }
+  .lanesReadoutMain {
+    flex-wrap: wrap;
+    align-content: center;
+    max-height: 72px;
+  }
+  .lanesNextReset {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .lanesResetPills {
+    flex-basis: 100%;
+  }
   .lanesNowButton {
     min-height: 36px;
     min-width: 44px;
@@ -5449,9 +5479,15 @@ $table-tiers: (
   }
   &:focus-visible {
     outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
+    outline-offset: -2px;
     border-radius: 6px;
   }
+}
+.lanesChart + .chartFooter {
+  margin-top: 6px;
+}
+.legendGroupLabel {
+  color: var(--text-tertiary);
 }
 .zeroAxis {
   line {
