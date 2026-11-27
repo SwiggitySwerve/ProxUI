@@ -651,7 +651,7 @@ $pool-error: #ff5252;
   gap: 4px 16px;
   margin-bottom: 4px;
 }
-.chart svg {
+.chart > svg {
   display: block;
   width: 100%;
   overflow: visible;
@@ -1797,7 +1797,7 @@ $table-tiers: (
       // source) has no tracks: React drops the empty property, so the empty fallback keeps the row valid.
       grid-template-columns:
         20px var(--name-track) var(--plan-track)
-        var(--limit-tracks, )
+        var(--limit-tracks,)
         128px;
       justify-content: start;
       column-gap: var(--col-gap);
@@ -1930,7 +1930,7 @@ $table-tiers: (
       .accountHead,
       .account > summary {
         // As above: the limits share the rest of the row.
-        grid-template-columns: 20px var(--name-track) var(--plan-track) var(--limit-tracks, );
+        grid-template-columns: 20px var(--name-track) var(--plan-track) var(--limit-tracks,);
       }
       // Here the last header is a limit's, not the balance's: it wraps inside its track like the others.
       .accountHead span:last-child {
@@ -4112,7 +4112,11 @@ $table-tiers: (
 // Phone missing active-window reason ("No 5-hour limit") keeps the muted tone of wide tables
 // while preserving the active-window weight invariant.
 @include block-rows {
-  .account[data-phone-blocks] > summary > .limits > li[data-missing='true'][data-counted='true'] > em {
+  .account[data-phone-blocks]
+    > summary
+    > .limits
+    > li[data-missing='true'][data-counted='true']
+    > em {
     font-size: 13px;
     color: var(--text-tertiary);
   }
@@ -5483,11 +5487,40 @@ $table-tiers: (
     border-radius: 6px;
   }
 }
-.lanesChart + .chartFooter {
-  margin-top: 6px;
+.lanesChart + .chartFooter,
+.providerBarsSection + .chartFooter {
+  margin-top: 8px;
 }
 .legendGroupLabel {
   color: var(--text-tertiary);
+}
+.axisUnitRight {
+  fill: var(--text-tertiary);
+  font-size: 11px;
+}
+.axisRightTick {
+  fill: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.spreadBandFill {
+  fill: var(--text-primary);
+  fill-opacity: 0.08;
+}
+.spreadBandEdge {
+  fill: none;
+  stroke: var(--text-primary);
+  stroke-opacity: 0.18;
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+.legend i.spreadKey {
+  width: 14px;
+  height: 8px;
+  border-top: 0;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 28%, transparent);
 }
 .zeroAxis {
   line {
@@ -5500,53 +5533,34 @@ $table-tiers: (
     font-weight: 500;
   }
 }
-.laneName {
-  fill: var(--text-primary);
+.providerBarsSection {
+  margin-top: 10px;
+}
+.providerBarsHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  margin-bottom: 8px;
   font-size: 12px;
-  font-weight: 600;
+  color: var(--text-secondary);
 }
-.laneStatus {
-  fill: var(--text-secondary);
-  font-weight: 400;
+.providerBarsMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
-.laneValue {
-  fill: var(--text-secondary);
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-}
-.laneValueReset {
-  fill: var(--pool-accent);
-  font-size: 11.5px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.laneResetGuide {
-  stroke: var(--pool-accent);
-  stroke-width: 1;
-  stroke-dasharray: 2 3;
-  opacity: 0.38;
-}
-.laneResetGain {
-  fill: var(--pool-accent);
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  paint-order: stroke;
-  stroke: var(--bg-primary);
-  stroke-width: 4px;
-  stroke-linejoin: round;
-}
-.lanesShowAll {
-  margin-top: 8px;
-  min-height: 36px;
-  padding: 6px 14px;
-  border-radius: 999px;
+.providerBarsClear {
   border: 1px solid var(--action-border);
-  background: var(--bg-tertiary);
+  background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: 13px;
+  font-size: 11.5px;
   font-weight: 500;
+  padding: 2px 9px;
+  border-radius: 999px;
   cursor: pointer;
   &:hover {
     background: var(--bg-hover);
@@ -5556,8 +5570,168 @@ $table-tiers: (
     outline-offset: 2px;
   }
 }
-@media (pointer: coarse), (max-width: 640px) {
-  .lanesShowAll {
-    min-height: 44px;
+.bgModeSwitch {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  gap: 2px;
+  button {
+    border: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 999px;
+    cursor: pointer;
+    white-space: nowrap;
+    &[aria-pressed='true'] {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+    &:hover:not([aria-pressed='true']) {
+      color: var(--text-primary);
+    }
+    &:focus-visible {
+      outline: 2px solid var(--focus-ring);
+      outline-offset: 2px;
+    }
+  }
+}
+.providerBarsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.providerBarsGrid .providerBarCard {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-subtle);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  transition:
+    border-color var(--dur-hover, 120ms) var(--ease-out-strong, ease),
+    background var(--dur-hover, 120ms) var(--ease-out-strong, ease),
+    opacity var(--dur-hover, 120ms) var(--ease-out-strong, ease);
+  &:hover {
+    border-color: color-mix(in srgb, var(--pool-accent) 55%, transparent);
+    background: color-mix(in srgb, var(--pool-accent) 8%, var(--bg-subtle));
+  }
+  &:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+.providerBarsGrid .providerBarCard.providerBarPinned {
+  border-color: var(--pool-accent);
+  background: color-mix(in srgb, var(--pool-accent) 14%, var(--bg-subtle));
+}
+.providerBarsGrid .providerBarCard.providerBarDim {
+  opacity: 0.44;
+}
+.providerBarTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12px;
+}
+.providerBarName {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+  > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+.providerBarGlyph {
+  display: block;
+  width: 9px;
+  height: 9px;
+  flex: none;
+}
+.providerBarPct {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.providerBarEmpty {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--danger-color, #f87171);
+  white-space: nowrap;
+}
+.providerBarTrack {
+  display: block;
+  width: 100%;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--border-color);
+  overflow: hidden;
+}
+.providerBarFill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--pool-accent);
+}
+.providerBarSub {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  > span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+.providerBarGain {
+  flex: none;
+  color: var(--pool-accent);
+  font-weight: 600;
+}
+.providerBarStatus {
+  flex: none;
+  color: var(--text-tertiary);
+}
+@media (max-width: 640px) {
+  .providerBarsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .bgModeSwitch button {
+    min-height: 32px;
+    padding: 4px 10px;
+  }
+  .providerBarsClear {
+    min-height: 32px;
+    padding: 4px 10px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .providerBarCard {
+    transition: none;
   }
 }

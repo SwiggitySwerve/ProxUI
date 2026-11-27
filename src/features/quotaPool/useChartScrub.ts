@@ -31,6 +31,7 @@ export function useChartScrub({
   toMs,
   layoutWidth,
   x,
+  onEscapeAtRest,
 }: {
   stops: readonly LaneStop[];
   latestIdx: number;
@@ -38,6 +39,7 @@ export function useChartScrub({
   toMs: number;
   layoutWidth: number;
   x: (atMs: number) => number;
+  onEscapeAtRest?: () => void;
 }) {
   const [pinned, setPinned] = useState<StopKey | null>(null);
   const [hovered, setHovered] = useState<StopKey | null>(null);
@@ -159,6 +161,9 @@ export function useChartScrub({
         event.preventDefault();
         setPinned(null);
         setHovered(null);
+      } else if (onEscapeAtRest) {
+        event.preventDefault();
+        onEscapeAtRest();
       }
       return;
     }

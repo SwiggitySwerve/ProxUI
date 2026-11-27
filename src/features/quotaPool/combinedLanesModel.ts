@@ -1,6 +1,5 @@
-import type { PoolProviderId, PoolReset, PoolTrace } from '@/domain/quotaPool/types';
+import type { PoolProviderId, PoolTrace } from '@/domain/quotaPool/types';
 import { metricField, type ChartMode, type ChartSample } from './chartGeometry';
-import { formatPoolNumber } from './presentation';
 
 export type LaneTrace = PoolTrace & {
   provider: PoolProviderId;
@@ -10,6 +9,39 @@ export type LaneTrace = PoolTrace & {
   /** Retired/disabled provider: history only; projected zeros align totals and are never drawn. */
   historyOnly?: true;
 };
+
+export type CombinedBackgroundMode = 'smart' | 'ghost';
+
+export const COMBINED_BACKGROUND_STORAGE_KEY = 'quotaPool.combinedBackgroundMode';
+export const SMART_BAND_THRESHOLD = 5;
+
+export function parseCombinedBackgroundMode(raw: string | null): CombinedBackgroundMode {
+  return raw === 'ghost' ? 'ghost' : 'smart';
+}
+
+export function readCombinedBackgroundMode(): CombinedBackgroundMode {
+  try {
+    if (typeof window === 'undefined') return 'smart';
+    return parseCombinedBackgroundMode(
+      window.localStorage.getItem(COMBINED_BACKGROUND_STORAGE_KEY)
+    );
+  } catch {
+    return 'smart';
+  }
+}
+
+export function writeCombinedBackgroundMode(mode: CombinedBackgroundMode): void {
+  try {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(COMBINED_BACKGROUND_STORAGE_KEY, mode);
+  } catch {
+    // Storage can be blocked or full; the page still works, it just forgets.
+  }
+}
+
+export function laneIdentity(lane: Pick<LaneTrace, 'provider' | 'instanceId'>): string {
+  return lane.instanceId ?? lane.provider;
+}
 
 export interface LaneStopReset {
   laneIndex: number;
@@ -289,79 +321,94 @@ export function findNextReset(
   return items.length ? { atMs: earliestAt, items } : null;
 }
 
-export function formatGainLabel(gainPoints: number, locale: string, compact: boolean): string {
-  if (compact && gainPoints >= 10_000) {
-    const compactNum = new Intl.NumberFormat(locale, {
-      notation: 'compact',
-      maximumFractionDigits: 1,
-    }).format(gainPoints);
-    return `+${compactNum}`;
-  }
-  return `+${formatPoolNumber(gainPoints, locale)}`;
+/** Convert remaining-quota samples to % of `capacityPoints`, preserving nulls and zero-division safety. */
+export function normalizeSamplesToPercent(
+  samples: readonly ChartSample[],
+  capacityPoints: number
+): ChartSample[] {
+  if (!(capacityPoints > 0)) return [];
+  return samples.map((sample) => ({
+    projected: sample.projected,
+    point: {
+      ...sample.point,
+      remainingPoints:
+        sample.point.remainingPoints === null
+          ? null
+          : (sample.point.remainingPoints / capacityPoints) * 100,
+    },
+  }));
 }
 
-export interface PlacedLaneReset {
+export interface SpreadPoint {
   atMs: number;
-  gainPoints: number;
-  rx: number;
-  text: string;
-  labelX: number;
-  labelLeft: number;
-  labelRight: number;
-  anchor: 'start' | 'end';
-  showLabel: boolean;
+  minPct: number;
+  maxPct: number;
 }
 
-/** Place per-lane reset ticks and non-overlapping gain labels (flipping left near right edge). */
-export function placeLaneResets(
-  resets: readonly PoolReset[],
-  fromMs: number,
-  toMs: number,
-  x: (atMs: number) => number,
-  right: number,
-  locale: string,
-  compact: boolean
-): PlacedLaneReset[] {
-  const byTime = new Map<number, number>();
-  for (const reset of resets) {
-    if (reset.atMs < fromMs || reset.atMs > toMs || reset.gainPoints <= 0) continue;
-    byTime.set(reset.atMs, (byTime.get(reset.atMs) ?? 0) + reset.gainPoints);
-  }
-  const sorted = [...byTime.entries()].sort(([a], [b]) => a - b);
-  let lastLabelRight = -Infinity;
-  return sorted.map(([atMs, gainPoints]) => {
-    const rx = x(atMs);
-    const text = formatGainLabel(gainPoints, locale, compact);
-    const estWidth = text.length * 6.2;
-    const flipLeft = rx + 5 + estWidth > right;
-    const labelX = flipLeft ? rx - 5 : rx + 5;
-    const labelLeft = flipLeft ? labelX - estWidth : labelX;
-    const labelRight = labelLeft + estWidth;
-    const showLabel = labelLeft >= lastLabelRight + 8;
-    if (showLabel) lastLabelRight = labelRight;
-    return {
-      atMs,
-      gainPoints,
-      rx,
-      text,
-      labelX,
-      labelLeft,
-      labelRight,
-      anchor: flipLeft ? 'end' : 'start',
-      showLabel,
-    };
+/**
+ * Continuous min–max % spread runs across active provider traces.
+ * Evaluates only at timestamps where >= 2 eligible providers report numeric values (never
+ * fabricates across gaps) and excludes `historyOnly` providers from projected spread.
+ */
+export function computeSpreadBand(
+  normalizedLanes: readonly (readonly ChartSample[])[],
+  lanes: readonly Pick<LaneTrace, 'historyOnly'>[]
+): SpreadPoint[][] {
+  const byEvent = new Map<
+    string,
+    { atMs: number; projected: boolean; side: number; values: number[] }
+  >();
+  normalizedLanes.forEach((samples, laneIdx) => {
+    const historyOnly = Boolean(lanes[laneIdx]?.historyOnly);
+    const seenAt = new Map<string, number>();
+    for (const sample of samples) {
+      if (historyOnly && sample.projected) continue;
+      const baseKey = `${sample.point.atMs}:${sample.projected ? 1 : 0}`;
+      const side = seenAt.get(baseKey) ?? 0;
+      seenAt.set(baseKey, side + 1);
+      const val = sample.point.remainingPoints;
+      const eventKey = `${baseKey}:${side}`;
+      let bucket = byEvent.get(eventKey);
+      if (!bucket) {
+        bucket = { atMs: sample.point.atMs, projected: sample.projected, side, values: [] };
+        byEvent.set(eventKey, bucket);
+      }
+      if (val !== null) bucket.values.push(val);
+    }
   });
+
+  const ordered = [...byEvent.values()].sort(
+    (a, b) => a.atMs - b.atMs || Number(a.projected) - Number(b.projected) || a.side - b.side
+  );
+
+  const runs: SpreadPoint[][] = [];
+  let current: SpreadPoint[] = [];
+  for (const entry of ordered) {
+    if (entry.values.length >= 2) {
+      current.push({
+        atMs: entry.atMs,
+        minPct: Math.min(...entry.values),
+        maxPct: Math.max(...entry.values),
+      });
+    } else {
+      if (current.length >= 2) runs.push(current);
+      current = [];
+    }
+  }
+  if (current.length >= 2) runs.push(current);
+  return runs;
 }
 
 export interface PlacedTotalTick {
   atMs: number;
   provider: PoolProviderId;
+  laneKey: string;
   label: string;
   gainPoints: number;
   x: number;
 }
 
-/** Top-edge provider-colored reset ticks on the Total plot; offsets simultaneous resets slightly. */
+/** Top-edge provider-colored reset ticks; offsets simultaneous resets slightly. */
 export function placeTotalResetTicks(
   lanes: readonly LaneTrace[],
   fromMs: number,
@@ -372,6 +419,7 @@ export function placeTotalResetTicks(
   const raw: {
     atMs: number;
     provider: PoolProviderId;
+    laneKey: string;
     label: string;
     gainPoints: number;
     baseX: number;
@@ -383,8 +431,16 @@ export function placeTotalResetTicks(
       if (reset.atMs < fromMs || reset.atMs > toMs || reset.gainPoints <= 0) continue;
       byTime.set(reset.atMs, (byTime.get(reset.atMs) ?? 0) + reset.gainPoints);
     }
+    const key = laneIdentity(lane);
     for (const [atMs, gainPoints] of byTime) {
-      raw.push({ atMs, provider: lane.provider, label: labelOf(lane), gainPoints, baseX: x(atMs) });
+      raw.push({
+        atMs,
+        provider: lane.provider,
+        laneKey: key,
+        label: labelOf(lane),
+        gainPoints,
+        baseX: x(atMs),
+      });
     }
   }
   raw.sort((a, b) => a.baseX - b.baseX);
@@ -402,6 +458,7 @@ export function placeTotalResetTicks(
       placed.push({
         atMs: item.atMs,
         provider: item.provider,
+        laneKey: item.laneKey,
         label: item.label,
         gainPoints: item.gainPoints,
         x: item.baseX + offsetStart + index * spread,
@@ -418,115 +475,35 @@ export interface PlotBox {
   right: number;
   top: number;
   bottom: number;
-}
-
-export interface LanesLayout {
-  width: number;
-  height: number;
-  left: number;
-  right: number;
-  totalBox: PlotBox | null;
-  laneBoxes: (PlotBox & { captionY: number })[];
   axisY: number;
 }
 
-/** Vertical stacking of the Total plot and synchronized provider lanes inside one SVG. */
-export function computeLanesLayout({
+/** Constant-height single plot frame that scales cleanly to any provider count. */
+export function computeHybridFrame({
   width,
   minimized,
-  hasTotal,
-  visibleLaneCount,
-  labelChars,
+  leftChars,
+  rightChars = 0,
 }: {
   width: number;
   minimized: boolean;
-  hasTotal: boolean;
-  visibleLaneCount: number;
-  labelChars: number;
-}): LanesLayout {
+  leftChars: number;
+  rightChars?: number;
+}): PlotBox {
   const narrow = width < 600;
-  const left = Math.max(narrow ? 44 : 56, Math.ceil(labelChars * 8.4) + 16);
-  const right = Math.max(left + 80, width - 12);
-  const topPad = 36;
-  const bottomPad = 34;
-
-  // Minimized with Total (or a single standalone lane without Total): compact 160px single plot.
-  if (minimized && (hasTotal || visibleLaneCount === 1)) {
-    const height = 160;
-    const box: PlotBox = {
-      width,
-      height,
-      left,
-      right,
-      top: topPad,
-      bottom: height - bottomPad,
-    };
-    return {
-      width,
-      height,
-      left,
-      right,
-      totalBox: hasTotal ? box : null,
-      laneBoxes: !hasTotal && visibleLaneCount === 1 ? [{ ...box, captionY: 16 }] : [],
-      axisY: box.bottom + 24,
-    };
-  }
-
-  // Single full-height plot: either Total-only (one provider, no duplicate lane) or one lane without Total.
-  if ((hasTotal && visibleLaneCount === 0) || (!hasTotal && visibleLaneCount === 1)) {
-    const plotHeight = narrow ? 164 : 204;
-    const top = topPad;
-    const bottom = top + plotHeight;
-    const height = bottom + bottomPad;
-    const box: PlotBox = { width, height, left, right, top, bottom };
-    return {
-      width,
-      height,
-      left,
-      right,
-      totalBox: hasTotal ? box : null,
-      laneBoxes: hasTotal ? [] : [{ ...box, captionY: top - 16 }],
-      axisY: bottom + 24,
-    };
-  }
-
-  let cursorY = topPad;
-  let totalBox: PlotBox | null = null;
-  if (hasTotal) {
-    const totalPlotH = narrow ? 104 : 156;
-    totalBox = {
-      width,
-      height: 0,
-      left,
-      right,
-      top: cursorY,
-      bottom: cursorY + totalPlotH,
-    };
-    cursorY = totalBox.bottom + (narrow ? 12 : 16);
-  }
-
-  const captionH = 20;
-  const lanePlotH = minimized ? 28 : visibleLaneCount >= 5 ? 30 : narrow ? 38 : 48;
-  const laneGap = narrow ? 10 : 12;
-  const laneBoxes: (PlotBox & { captionY: number })[] = [];
-  for (let i = 0; i < visibleLaneCount; i += 1) {
-    const captionY = cursorY + 13;
-    const top = cursorY + captionH;
-    const bottom = top + lanePlotH;
-    laneBoxes.push({ width, height: 0, left, right, top, bottom, captionY });
-    cursorY = bottom + (i < visibleLaneCount - 1 ? laneGap : 0);
-  }
-
-  const height = cursorY + bottomPad;
-  if (totalBox) totalBox.height = height;
-  for (const laneBox of laneBoxes) laneBox.height = height;
+  const height = minimized ? 160 : narrow ? 216 : 244;
+  const left = Math.max(narrow ? 42 : 48, Math.ceil(leftChars * 8.2) + 14);
+  const rightMargin = rightChars > 0 ? Math.max(46, Math.ceil(rightChars * 7.6) + 14) : 12;
+  const right = Math.max(left + 80, width - rightMargin);
+  const top = 34;
+  const bottom = height - 32;
   return {
     width,
     height,
     left,
     right,
-    totalBox,
-    laneBoxes,
-    axisY: cursorY + 24,
+    top,
+    bottom,
+    axisY: bottom + 22,
   };
 }
