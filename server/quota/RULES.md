@@ -177,21 +177,29 @@ store and HTTP tests; `tests/proxQuotaSources.test.ts` covers source isolation a
 transactional migration with synthetic data. Samples are private local data;
 never log credentials, upstream bodies or account identifiers.
 
-The combined chart shows one constant-height plot with a neutral combined Total line on a shared
+The combined chart shows one constant-height plot with a neutral combined Total line on a fixed
 0–100% capacity scale (paired with exact Total points on desktop) alongside a synchronized grid of
-live provider capacity cards underneath. In Smart background mode, up to 4 providers also render as
-quiet normalized background curves while 5+ providers condense into a translucent min–max spread
-envelope; Ghost lines mode keeps quiet background lines at any provider count (persisted per
-browser). Hovering or pinning any provider card spotlights its independent trace and reset ticks on
-the shared scale without moving unrelated providers. Total recorded values reuse the account
-history, plan weighting, expiry and gap rules above on a shared observation timeline. Forecast
-totals add the independent piecewise-linear provider projections at every event, preserving both
-sides of reset jumps. They never transfer demand between providers or extrapolate beyond a
-provider's trace. Missing constituent values break only the Total line; healthy provider traces keep
-drawing. A provider with no limit in the selected window (weekly-only Codex in the 5-hour view) adds
-nothing and is left out of the total. Multiple eligible sources for the same provider still withhold
-the total until allowance identity is proven and render independent source-qualified cards and
-traces; disabled, retired and unresolved accounts add no capacity.
+live provider capacity cards underneath. Balances above current capacity clamp to 100% on the plot
+and bars with an explicit overflow indicator (`>100%`) while preserving exact points readouts; when
+an all-dormant Total or spotlighted zero-capacity pool has recorded history without a valid
+capacity denominator, the plot falls back to a clearly labeled points axis. In Smart background
+mode, up to 4 providers render as quiet normalized background curves while 5+ providers condense
+into a translucent min–max spread envelope built strictly from continuous overlapping provider
+segments within each phase, falling back to quiet lines whenever a spread cannot represent the
+plotted data (including Burn and Drain rate views); Ghost lines mode keeps quiet background lines
+at any provider count (persisted per browser, with the switch shown whenever a spread band is
+available). Hovering or pinning any provider card spotlights its independent trace and reset ticks
+on the shared scale without moving unrelated providers or rescaling rate axes. Minimizing shrinks
+the plot and hides the card grid, retaining compact provider traces whenever the server withholds
+Total. Total recorded values reuse the account history, plan weighting, expiry and gap rules above
+on a shared observation timeline. Forecast totals add the independent piecewise-linear provider
+projections at every event, preserving both sides of reset jumps. They never transfer demand
+between providers or extrapolate beyond a provider's trace. Missing constituent values break only
+the Total line; healthy provider traces keep drawing. A provider with no limit in the selected
+window (weekly-only Codex in the 5-hour view) adds nothing and is left out of the total. Multiple
+eligible sources for the same provider still withhold the total until allowance identity is proven
+and render independent source-qualified cards and traces; disabled, retired and unresolved accounts
+add no capacity.
 
 The server also exposes each provider's contribution and scheduled resets on the total's
 exact history and forecast event timeline. Those layer traces contain no account metadata.

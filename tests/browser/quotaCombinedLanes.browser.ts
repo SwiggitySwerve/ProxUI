@@ -442,30 +442,46 @@ async function saveEvidence(locator: ReturnType<Page['locator']>, name: string) 
   await locator.screenshot({ path: join(dir, `${name}.png`) });
 }
 
+async function dismissToasts(page: Page) {
+  const buttons = page.locator('section[aria-label="Notifications"] button:not(:disabled)');
+  for (let i = 0; i < 5 && (await buttons.count()) > 0; i += 1) {
+    // Dispatching a synthetic click (detail === 0) invokes skipAnimation so fixed clocks never stall exit.
+    await buttons.first().dispatchEvent('click');
+  }
+  await expect(page.locator('section[aria-label="Notifications"] [role="status"]')).toHaveCount(0);
+}
+
 test('Combined usage renders normalized 0–100% Total + live capacity cards with multi-pin spotlight, scrubbing, and no overflow at 1440px and 390px', async ({
   page,
 }) => {
   const dashboard = buildFixtureDashboard(false);
   await page.setViewportSize({ width: 1440, height: 1000 });
   const combined = await openQuota(page, dashboard);
+  await dismissToasts(page);
 
   // Dropdown is gone; constant-height single plot renders Total + 3 quiet 0–100% curves + 3 live cards.
+  // Below 5 providers there is no spread band, so the Smart/Ghost switch is not shown as a dead control.
   await expect(combined.locator('select')).toHaveCount(0);
+  await expect(combined.getByRole('button', { name: 'Smart', exact: true })).toHaveCount(0);
   await expect(combined.locator('svg [data-series="total"]')).toHaveCount(1);
   await expect(
-    combined.locator('svg [data-series="claude-primary"][data-emphasis="quiet"]')
+    combined.locator('svg [data-series="claude-primary:claude"][data-emphasis="quiet"]')
   ).toHaveCount(1);
   await expect(
-    combined.locator('svg [data-series="codex-primary"][data-emphasis="quiet"]')
+    combined.locator('svg [data-series="codex-primary:codex"][data-emphasis="quiet"]')
   ).toHaveCount(1);
   await expect(
-    combined.locator('svg [data-series="gemini-primary"][data-emphasis="quiet"]')
+    combined.locator('svg [data-series="gemini-primary:antigravity"][data-emphasis="quiet"]')
   ).toHaveCount(1);
-  await expect(combined.locator('[data-provider-card="claude-primary"]')).toBeVisible();
-  await expect(combined.locator('[data-provider-card="codex-primary"]')).toBeVisible();
-  await expect(combined.locator('[data-provider-card="gemini-primary"]')).toBeVisible();
+  await expect(combined.locator('[data-provider-card="claude-primary:claude"]')).toBeVisible();
+  await expect(combined.locator('[data-provider-card="codex-primary:codex"]')).toBeVisible();
+  await expect(combined.locator('[data-provider-card="gemini-primary:antigravity"]')).toBeVisible();
   // Provider labels must render with visible non-zero width beside their shape glyphs.
-  for (const key of ['claude-primary', 'codex-primary', 'gemini-primary']) {
+  for (const key of [
+    'claude-primary:claude',
+    'codex-primary:codex',
+    'gemini-primary:antigravity',
+  ]) {
     const labelBox = await combined
       .locator(`[data-provider-card="${key}"] [data-provider-label="true"]`)
       .boundingBox();
@@ -478,23 +494,25 @@ test('Combined usage renders normalized 0–100% Total + live capacity cards wit
   await expect(combined.locator('svg [data-empty-marker="antigravity"]')).toHaveCount(1);
   await expect(combined).toContainText('100%');
   await expect(combined).toContainText('Total pts');
-  await expect(combined).toContainText('Next reset: Claude +1,840, Codex +590');
+  await expect(combined).toContainText('Next reset: Claude\u00a0+1,840, Codex\u00a0+590');
   await saveEvidence(combined, 'combined-hybrid-3p-1440-rest');
 
-  // Hovering a provider card previews it; clicking pins multiple providers head-to-head on 0–100%.
-  await combined.locator('[data-provider-card="codex-primary"]').click();
-  await combined.locator('[data-provider-card="gemini-primary"]').click();
+  // Clicking pins multiple providers head-to-head on 0–100%; Escape from a focused card clears pins.
+  await combined.locator('[data-provider-card="codex-primary:codex"]').click();
+  await combined.locator('[data-provider-card="gemini-primary:antigravity"]').click();
   await expect(combined).toContainText('Comparing 2 pinned');
   await expect(
-    combined.locator('svg [data-series="codex-primary"][data-emphasis="focused"]')
+    combined.locator('svg [data-series="codex-primary:codex"][data-emphasis="focused"]')
   ).toHaveCount(1);
   await expect(
-    combined.locator('svg [data-series="gemini-primary"][data-emphasis="focused"]')
+    combined.locator('svg [data-series="gemini-primary:antigravity"][data-emphasis="focused"]')
   ).toHaveCount(1);
   await expect(combined.locator('svg [data-total-reset-tick="claude"]')).toHaveCount(0);
   await expect(combined.locator('svg [data-total-reset-tick="codex"]')).toHaveCount(2);
   await saveEvidence(combined, 'combined-hybrid-3p-1440-pinned');
-  await combined.getByRole('button', { name: 'Clear', exact: true }).click();
+  await page.keyboard.press('Escape');
+  // Move cursor clear of cards so subsequent reset/empty captures have no leftover pointer hover style.
+  await page.mouse.move(0, 0);
   await expect(combined.locator('svg [data-total-reset-tick="claude"]')).toHaveCount(3);
 
   // Keyboard Shift+ArrowRight hops directly to the first reset stop without shifting the SVG vertically.
@@ -508,13 +526,24 @@ test('Combined usage renders normalized 0–100% Total + live capacity cards wit
   const restOffset1440 = await svgOffsetY();
   await svg.focus();
   await page.keyboard.press('Shift+ArrowRight');
-  await expect(combined).toContainText('Claude +1,840');
-  await expect(combined).toContainText('Codex +590');
-  await expect(combined.locator('[data-provider-card="claude-primary"]')).toContainText('+1,840');
-  await expect(combined.locator('[data-provider-card="codex-primary"]')).toContainText('+590');
+  await expect(combined).toContainText('Claude\u00a0+1,840');
+  await expect(combined).toContainText('Codex\u00a0+590');
+  await expect(combined.locator('[data-provider-card="claude-primary:claude"]')).toContainText(
+    '+1,840'
+  );
+  await expect(combined.locator('[data-provider-card="codex-primary:codex"]')).toContainText(
+    '+590'
+  );
   await expect(combined.getByRole('button', { name: 'Now', exact: true })).toBeVisible();
   expect(Math.abs((await svgOffsetY()) - restOffset1440)).toBeLessThanOrEqual(1);
   await saveEvidence(combined, 'combined-hybrid-3p-1440-reset');
+
+  // Step to Dec 1 where Gemini hits 0% and verify the red "Empty" card state.
+  await page.keyboard.press('Shift+ArrowRight');
+  await expect(combined.locator('[data-provider-card="gemini-primary:antigravity"]')).toContainText(
+    'Empty'
+  );
+  await saveEvidence(combined, 'combined-hybrid-3p-1440-empty');
 
   // Escape returns cleanly to the latest reading.
   await page.keyboard.press('Escape');
@@ -544,7 +573,9 @@ test('Combined usage renders normalized 0–100% Total + live capacity cards wit
   await page.getByRole('button', { name: 'Drain rate', exact: true }).click();
   await expect(combined.locator('svg [data-total-reset-tick]')).toHaveCount(0);
   await expect(svg).toContainText('points/h');
-  await expect(combined.locator('[data-provider-card="codex-primary"]')).toContainText('points/h');
+  await expect(combined.locator('[data-provider-card="codex-primary:codex"]')).toContainText(
+    'points/h'
+  );
   await saveEvidence(combined, 'combined-hybrid-3p-1440-drain');
   await page.getByRole('button', { name: 'Remaining', exact: true }).click();
 
@@ -557,6 +588,24 @@ test('Combined usage renders normalized 0–100% Total + live capacity cards wit
   expect(overflow).toBe(false);
   const restOffset390 = await svgOffsetY();
   await saveEvidence(combined, 'combined-hybrid-3p-390-rest');
+
+  // Pinning a provider card on phone must not shift the card grid vertically under the user's finger.
+  const firstCard390 = combined.locator('[data-provider-card="claude-primary:claude"]');
+  const cardOffsetY = async () => {
+    const [cardBox, itemBox] = await Promise.all([
+      combined.boundingBox(),
+      firstCard390.boundingBox(),
+    ]);
+    expect(cardBox).not.toBeNull();
+    expect(itemBox).not.toBeNull();
+    return itemBox!.y - cardBox!.y;
+  };
+  const restGridOffset390 = await cardOffsetY();
+  await firstCard390.click();
+  await expect(combined).toContainText('Comparing 1 pinned');
+  expect(Math.abs((await cardOffsetY()) - restGridOffset390)).toBeLessThanOrEqual(1);
+  await combined.getByRole('button', { name: 'Clear', exact: true }).click();
+  expect(Math.abs((await cardOffsetY()) - restGridOffset390)).toBeLessThanOrEqual(1);
 
   // Vertical touch swipe ending in pointercancel must leave the chart at rest (no accidental pin).
   await svg.evaluate((el) => {
@@ -592,7 +641,7 @@ test('Combined usage renders normalized 0–100% Total + live capacity cards wit
     );
   });
   await expect(combined.getByRole('button', { name: 'Now', exact: true })).toHaveCount(0);
-  await expect(combined).toContainText('Next reset: Claude +1,840, Codex +590');
+  await expect(combined).toContainText('Next reset: Claude\u00a0+1,840, Codex\u00a0+590');
 
   // A clean touch tap (no vertical scroll) commits the pin, and Now clears it.
   await svg.evaluate((el) => {
@@ -654,7 +703,7 @@ test('Combined usage renders normalized 0–100% Total + live capacity cards wit
     touchPoints: [{ x: endX, y: startY, id: 1 }],
   });
   await expect(combined).toContainText('Dec 5');
-  await expect(combined).toContainText('Codex +480');
+  await expect(combined).toContainText('Codex\u00a0+480');
   await cdp.send('Input.dispatchTouchEvent', {
     type: 'touchEnd',
     touchPoints: [],
@@ -669,11 +718,13 @@ test('Combined usage renders normalized 0–100% Total + live capacity cards wit
   await page.keyboard.press('Shift+ArrowRight');
   await page.keyboard.press('Shift+ArrowRight');
   await page.keyboard.press('Shift+ArrowRight'); // Claude solo reset at Dec 4
-  await expect(combined.locator('[data-provider-card="claude-primary"]')).toContainText('+1,960');
-  await expect(combined.locator('[data-provider-card="codex-primary"]')).toContainText(
+  await expect(combined.locator('[data-provider-card="claude-primary:claude"]')).toContainText(
+    '+1,960'
+  );
+  await expect(combined.locator('[data-provider-card="codex-primary:codex"]')).toContainText(
     '613.7 / 1,000'
   );
-  await expect(combined.locator('[data-provider-card="gemini-primary"]')).toContainText(
+  await expect(combined.locator('[data-provider-card="gemini-primary:antigravity"]')).toContainText(
     '1,818.1 / 2,000'
   );
   expect(Math.abs((await svgOffsetY()) - restOffset390)).toBeLessThanOrEqual(1);
@@ -682,12 +733,13 @@ test('Combined usage renders normalized 0–100% Total + live capacity cards wit
   await expect(combined.getByRole('button', { name: 'Now', exact: true })).toHaveCount(0);
 });
 
-test('Combined usage scales to 6 providers in constant plot height and persists Smart vs Ghost lines per browser', async ({
+test('Combined usage scales to 6 providers in constant plot height, persists Smart vs Ghost lines per browser, and keeps Drain rate axes fixed', async ({
   page,
 }) => {
   const dashboard = buildFixtureDashboard(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
   const combined = await openQuota(page, dashboard);
+  await dismissToasts(page);
 
   // Default Smart mode with 6 providers renders the min–max spread band instead of 6 tangled lines.
   const smartBtn = combined.getByRole('button', { name: 'Smart', exact: true });
@@ -700,6 +752,26 @@ test('Combined usage scales to 6 providers in constant plot height and persists 
   const svg = combined.locator('svg[role="img"]');
   await expect(svg).toHaveAttribute('viewBox', / 244$/);
   await saveEvidence(combined, 'combined-hybrid-6p-1440-smart');
+
+  // Switching to Drain rate in Smart mode falls back to 6 quiet provider rate curves and keeps
+  // the Y-axis ticks & gutters fixed when pinning a card.
+  await page.getByRole('button', { name: 'Drain rate', exact: true }).click();
+  await expect(combined.locator('svg [data-spread-band="true"]')).toHaveCount(0);
+  await expect(combined.locator('svg [data-emphasis="quiet"]')).toHaveCount(6);
+  await expect(combined.getByRole('button', { name: 'Smart', exact: true })).toHaveCount(0);
+  const rateTotalPathBefore = await combined
+    .locator('svg [data-series="total"] path')
+    .first()
+    .getAttribute('d');
+  await combined.locator('[data-provider-card="claude-primary:claude"]').click();
+  const rateTotalPathAfter = await combined
+    .locator('svg [data-series="total"] path')
+    .first()
+    .getAttribute('d');
+  expect(rateTotalPathAfter).toBe(rateTotalPathBefore);
+  await combined.getByRole('button', { name: 'Clear', exact: true }).click();
+  await saveEvidence(combined, 'combined-hybrid-6p-1440-drain');
+  await page.getByRole('button', { name: 'Remaining', exact: true }).click();
 
   // Switching to Ghost lines persists in localStorage and survives a full page reload.
   await ghostBtn.click();
@@ -720,25 +792,170 @@ test('Combined usage scales to 6 providers in constant plot height and persists 
   await link.waitFor({ state: 'attached' });
   await link.click();
   await expect(combined.locator('svg[role="img"]')).toBeVisible();
+  await dismissToasts(page);
   await expect(combined.getByRole('button', { name: 'Ghost lines', exact: true })).toHaveAttribute(
     'aria-pressed',
     'true'
   );
   await expect(combined.locator('svg [data-emphasis="quiet"]')).toHaveCount(6);
 
-  // Switch back to Smart, pin two providers, and verify clean 390px mobile layout with zero overflow.
+  // Switch back to Smart and verify zero grid jump across 390px, 412px, and 430px phones.
   await combined.getByRole('button', { name: 'Smart', exact: true }).click();
   await expect(combined.locator('svg [data-spread-band="true"]')).toHaveCount(1);
-  await combined.locator('[data-provider-card="codex-primary"]').click();
-  await combined.locator('[data-provider-card="gemini-primary"]').click();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(svg).toHaveAttribute('viewBox', / 216$/);
-  const overflow = await page.evaluate(
-    () => document.documentElement.scrollWidth > document.documentElement.clientWidth
-  );
-  expect(overflow).toBe(false);
-  // Dismiss login toast if still visible so evidence screenshot stays unobstructed.
-  const closeToast = page.locator('[role="status"] button, [role="alert"] button').first();
-  if (await closeToast.isVisible().catch(() => false)) await closeToast.click();
+  const firstCard6p = combined.locator('[data-provider-card="claude-primary:claude"]');
+  for (const width of [412, 430, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(svg).toHaveAttribute('viewBox', / 216$/);
+    const gridOffsetBefore =
+      (await firstCard6p.boundingBox())!.y - (await combined.boundingBox())!.y;
+    await combined.locator('[data-provider-card="codex-primary:codex"]').click();
+    await combined.locator('[data-provider-card="gemini-primary:antigravity"]').click();
+    const gridOffsetAfter =
+      (await firstCard6p.boundingBox())!.y - (await combined.boundingBox())!.y;
+    expect(Math.abs(gridOffsetAfter - gridOffsetBefore)).toBeLessThanOrEqual(1);
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth
+    );
+    expect(overflow).toBe(false);
+    if (width !== 390) {
+      await combined.getByRole('button', { name: 'Clear', exact: true }).click();
+    }
+  }
+  await dismissToasts(page);
   await saveEvidence(combined, 'combined-hybrid-6p-390-smart-pinned');
+});
+
+test('Shared-hub providers stay independently pinnable and spotlighting a zero-capacity history-only pool keeps grid position stable at 1440px and 390px', async ({
+  page,
+}) => {
+  const base = buildFixtureDashboard(true);
+  const sharedPools = base.pools.map((p, idx) =>
+    idx < 2
+      ? { ...p, instanceId: 'shared-hub' }
+      : idx === 2
+        ? {
+            ...p,
+            instanceId: 'shared-hub',
+            capacityPoints: 0,
+            remainingPoints: 1581.1,
+            projected: p.projected.map((sample) => ({ ...sample, remainingPoints: 0 })),
+            resets: [],
+            poolEmptyAtMs: null,
+          }
+        : p
+  );
+  const sharedLayers = sharedPools.map((p, idx) => ({
+    provider: p.provider,
+    ...(p.displayName ? { displayName: p.displayName } : {}),
+    instanceId: p.instanceId,
+    capacityPoints: p.capacityPoints,
+    remainingPoints: p.remainingPoints,
+    burnPointsPerHour: p.burnPointsPerHour,
+    drainPointsPerHour: p.drainPointsPerHour,
+    forecastState: p.forecastState,
+    recorded: p.recorded,
+    projected: p.projected,
+    resets: p.resets,
+    poolEmptyAtMs: p.poolEmptyAtMs,
+    ...(idx === 2 ? { historyOnly: true as const } : {}),
+  }));
+  const dashboard: PoolDashboard = {
+    ...base,
+    pools: sharedPools,
+    combined: {
+      ...base.combined,
+      all: {
+        ...base.combined!.all,
+        layers: sharedLayers,
+      },
+    },
+  };
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const combined = await openQuota(page, dashboard);
+  await dismissToasts(page);
+
+  // Two providers sharing instanceId "shared-hub" select independently across cards, traces, and ticks.
+  await combined.locator('[data-provider-card="shared-hub:claude"]').click();
+  await expect(
+    combined.locator('svg [data-series="shared-hub:claude"][data-emphasis="focused"]')
+  ).toHaveCount(1);
+  await expect(
+    combined.locator('svg [data-series="shared-hub:codex"][data-emphasis="focused"]')
+  ).toHaveCount(0);
+  await expect(combined.locator('svg [data-total-reset-lane="shared-hub:claude"]')).toHaveCount(3);
+  await expect(combined.locator('svg [data-total-reset-lane="shared-hub:codex"]')).toHaveCount(0);
+  await combined.getByRole('button', { name: 'Clear', exact: true }).click();
+  // Activating Clear returns focus cleanly inside the provider grid (never drops to body).
+  expect(
+    await page.evaluate(() => document.activeElement?.getAttribute('data-provider-card'))
+  ).toBe('shared-hub:claude');
+
+  // Pressing Escape while Clear has focus also restores focus into the grid; Escape on a card keeps focus there.
+  await combined.locator('[data-provider-card="shared-hub:codex"]').click();
+  await combined.getByRole('button', { name: 'Clear', exact: true }).focus();
+  await page.keyboard.press('Escape');
+  expect(
+    await page.evaluate(() => document.activeElement?.getAttribute('data-provider-card'))
+  ).toBe('shared-hub:claude');
+  await combined.locator('[data-provider-card="shared-hub:codex"]').click();
+  await page.keyboard.press('Escape');
+  expect(
+    await page.evaluate(() => document.activeElement?.getAttribute('data-provider-card'))
+  ).toBe('shared-hub:codex');
+
+  // Spotlighting the zero-capacity history-only pool falls back to points without shifting the grid at 1440px or phone widths.
+  const svg = combined.locator('svg[role="img"]');
+  const firstCard = combined.locator('[data-provider-card="shared-hub:claude"]');
+  const dormantCard = combined.locator('[data-provider-card="shared-hub:antigravity"]');
+  const gridOffset = async () => {
+    const [cardBox, itemBox] = await Promise.all([combined.boundingBox(), firstCard.boundingBox()]);
+    expect(cardBox).not.toBeNull();
+    expect(itemBox).not.toBeNull();
+    return itemBox!.y - cardBox!.y;
+  };
+  await expect(svg).toHaveAttribute('data-scale', 'percent');
+  const offset1440Before = await gridOffset();
+  await dormantCard.click();
+  await expect(svg).toHaveAttribute('data-scale', 'points');
+  await expect(svg).toContainText('points');
+  expect(Math.abs((await gridOffset()) - offset1440Before)).toBeLessThanOrEqual(1);
+  const dormantTrace = combined.locator(
+    'svg [data-series="shared-hub:antigravity"][data-emphasis="focused"] path'
+  );
+  expect(await dormantTrace.count()).toBeGreaterThan(0);
+  await combined.getByRole('button', { name: 'Clear', exact: true }).click();
+
+  // Hovering a zero-capacity card while the Smart button holds keyboard focus must keep focus on
+  // Smart rather than dropping it to body.
+  const smartBtn = combined.getByRole('button', { name: 'Smart', exact: true });
+  await smartBtn.focus();
+  await dormantCard.hover();
+  await expect(svg).toHaveAttribute('data-scale', 'points');
+  expect(await page.evaluate(() => document.activeElement?.textContent?.trim())).toBe('Smart');
+  await page.mouse.move(0, 0);
+  await expect(svg).toHaveAttribute('data-scale', 'percent');
+
+  // At 412px, 430px, 344px, and 390px phone widths, pinning keeps 0px grid shift and never clips name or balance outside the card.
+  for (const width of [412, 430, 344, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const offsetBefore = await gridOffset();
+    await dormantCard.click();
+    await expect(svg).toHaveAttribute('data-scale', 'points');
+    expect(Math.abs((await gridOffset()) - offsetBefore)).toBeLessThanOrEqual(1);
+    const geminiLabelBox = await dormantCard.locator('[data-provider-label="true"]').boundingBox();
+    expect(geminiLabelBox).not.toBeNull();
+    expect(geminiLabelBox!.width).toBeGreaterThan(36);
+    const [cardBox, subBox] = await Promise.all([
+      dormantCard.boundingBox(),
+      dormantCard.locator('[data-provider-submetric="true"]').boundingBox(),
+    ]);
+    expect(cardBox).not.toBeNull();
+    expect(subBox).not.toBeNull();
+    expect(subBox!.x + subBox!.width).toBeLessThanOrEqual(cardBox!.x + cardBox!.width - 4);
+    if (width !== 390) {
+      await combined.getByRole('button', { name: 'Clear', exact: true }).click();
+    }
+  }
+  await saveEvidence(combined, 'combined-hybrid-6p-dormant-390-pinned');
 });

@@ -1797,7 +1797,7 @@ $table-tiers: (
       // source) has no tracks: React drops the empty property, so the empty fallback keeps the row valid.
       grid-template-columns:
         20px var(--name-track) var(--plan-track)
-        var(--limit-tracks,)
+        var(--limit-tracks, )
         128px;
       justify-content: start;
       column-gap: var(--col-gap);
@@ -1930,7 +1930,7 @@ $table-tiers: (
       .accountHead,
       .account > summary {
         // As above: the limits share the rest of the row.
-        grid-template-columns: 20px var(--name-track) var(--plan-track) var(--limit-tracks,);
+        grid-template-columns: 20px var(--name-track) var(--plan-track) var(--limit-tracks, );
       }
       // Here the last header is a limit's, not the balance's: it wraps inside its track like the others.
       .accountHead span:last-child {
@@ -4112,11 +4112,7 @@ $table-tiers: (
 // Phone missing active-window reason ("No 5-hour limit") keeps the muted tone of wide tables
 // while preserving the active-window weight invariant.
 @include block-rows {
-  .account[data-phone-blocks]
-    > summary
-    > .limits
-    > li[data-missing='true'][data-counted='true']
-    > em {
+  .account[data-phone-blocks] > summary > .limits > li[data-missing='true'][data-counted='true'] > em {
     font-size: 13px;
     color: var(--text-tertiary);
   }
@@ -5495,11 +5491,12 @@ $table-tiers: (
   color: var(--text-tertiary);
 }
 .axisUnitRight {
-  fill: var(--text-tertiary);
+  fill: var(--text-secondary);
   font-size: 11px;
+  font-weight: 500;
 }
 .axisRightTick {
-  fill: var(--text-tertiary);
+  fill: var(--text-secondary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
@@ -5521,6 +5518,11 @@ $table-tiers: (
   border-radius: 2px;
   background: color-mix(in srgb, var(--text-primary) 16%, transparent);
   border: 1px solid color-mix(in srgb, var(--text-primary) 28%, transparent);
+}
+.legend i.providerKey {
+  width: 14px;
+  height: 0;
+  border-top: 2px solid var(--pool-accent);
 }
 .zeroAxis {
   line {
@@ -5551,8 +5553,10 @@ $table-tiers: (
   align-items: center;
   gap: 8px;
   min-width: 0;
+  min-height: 24px;
 }
-.providerBarsClear {
+.providerBarsMeta .providerBarsClear {
+  flex: none;
   border: 1px solid var(--action-border);
   background: transparent;
   color: var(--text-primary);
@@ -5560,8 +5564,10 @@ $table-tiers: (
   font-size: 11.5px;
   font-weight: 500;
   padding: 2px 9px;
+  min-height: 24px;
   border-radius: 999px;
   cursor: pointer;
+  white-space: nowrap;
   &:hover {
     background: var(--bg-hover);
   }
@@ -5569,6 +5575,14 @@ $table-tiers: (
     outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
   }
+}
+.providerBarsMeta .providerBarsClearHidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+.bgModeSwitchHidden:not(:focus-within) {
+  visibility: hidden;
+  pointer-events: none;
 }
 .bgModeSwitch {
   display: inline-flex;
@@ -5625,13 +5639,15 @@ $table-tiers: (
     border-color var(--dur-hover, 120ms) var(--ease-out-strong, ease),
     background var(--dur-hover, 120ms) var(--ease-out-strong, ease),
     opacity var(--dur-hover, 120ms) var(--ease-out-strong, ease);
-  &:hover {
-    border-color: color-mix(in srgb, var(--pool-accent) 55%, transparent);
-    background: color-mix(in srgb, var(--pool-accent) 8%, var(--bg-subtle));
-  }
   &:focus-visible {
     outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
+  }
+}
+@media (hover: hover) and (pointer: fine) {
+  .providerBarsGrid .providerBarCard:hover {
+    border-color: color-mix(in srgb, var(--pool-accent) 55%, transparent);
+    background: color-mix(in srgb, var(--pool-accent) 8%, var(--bg-subtle));
   }
 }
 .providerBarsGrid .providerBarCard.providerBarPinned {
@@ -5639,7 +5655,7 @@ $table-tiers: (
   background: color-mix(in srgb, var(--pool-accent) 14%, var(--bg-subtle));
 }
 .providerBarsGrid .providerBarCard.providerBarDim {
-  opacity: 0.44;
+  opacity: 0.7;
 }
 .providerBarTop {
   display: flex;
@@ -5673,6 +5689,9 @@ $table-tiers: (
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
+  &[data-overflow='true'] {
+    color: var(--pool-accent);
+  }
 }
 .providerBarEmpty {
   flex: none;
@@ -5694,6 +5713,9 @@ $table-tiers: (
   height: 100%;
   border-radius: 999px;
   background: var(--pool-accent);
+  &[data-overflow='true'] {
+    box-shadow: inset -2px 0 0 var(--text-primary);
+  }
 }
 .providerBarSub {
   display: flex;
@@ -5707,6 +5729,10 @@ $table-tiers: (
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  &[data-has-status='true'] > span:first-child {
+    flex: none;
+    overflow: visible;
+  }
 }
 .providerBarGain {
   flex: none;
@@ -5714,10 +5740,16 @@ $table-tiers: (
   font-weight: 600;
 }
 .providerBarStatus {
-  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text-tertiary);
 }
 @media (max-width: 640px) {
+  .providerBarsMeta {
+    flex: 1 0 100%;
+    min-height: 32px;
+  }
   .providerBarsGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -5725,13 +5757,13 @@ $table-tiers: (
     min-height: 32px;
     padding: 4px 10px;
   }
-  .providerBarsClear {
+  .providerBarsMeta .providerBarsClear {
     min-height: 32px;
     padding: 4px 10px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .providerBarCard {
+  .providerBarsGrid .providerBarCard {
     transition: none;
   }
 }

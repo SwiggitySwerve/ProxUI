@@ -77,9 +77,10 @@ export function PoolTracePaths({
             strokeLinecap="round"
           />
         ))}
-      {samples.map(({ point, projected }, sampleIdx) => {
+      {samples.map(({ point, projected, synthetic }, sampleIdx) => {
         const value = point[field];
-        if (value === null || (projected && (!includeProjected || !sparseProjection))) return null;
+        if (value === null || synthetic || (projected && (!includeProjected || !sparseProjection)))
+          return null;
         return (
           <circle
             key={`${keyPrefix}-pt-${sampleIdx}`}

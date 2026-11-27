@@ -1,5 +1,6 @@
 import type { PoolProviderId, PoolTrace } from '@/domain/quotaPool/types';
 import { metricField, type ChartMode, type ChartSample } from './chartGeometry';
+import { poolKey } from './poolOrder';
 
 export type LaneTrace = PoolTrace & {
   provider: PoolProviderId;
@@ -37,10 +38,6 @@ export function writeCombinedBackgroundMode(mode: CombinedBackgroundMode): void 
   } catch {
     // Storage can be blocked or full; the page still works, it just forgets.
   }
-}
-
-export function laneIdentity(lane: Pick<LaneTrace, 'provider' | 'instanceId'>): string {
-  return lane.instanceId ?? lane.provider;
 }
 
 export interface LaneStopReset {
@@ -321,83 +318,250 @@ export function findNextReset(
   return items.length ? { atMs: earliestAt, items } : null;
 }
 
-/** Convert remaining-quota samples to % of `capacityPoints`, preserving nulls and zero-division safety. */
+export function collectScheduledResets(
+  lanes: readonly LaneTrace[],
+  fromMs: number,
+  toMs: number,
+  labelOf: (lane: LaneTrace) => string
+) {
+  return lanes
+    .flatMap((lane) =>
+      lane.historyOnly
+        ? []
+        : lane.resets
+            .filter((r) => r.atMs >= fromMs && r.atMs <= toMs && r.gainPoints > 0)
+            .map((r) => ({
+              atMs: r.atMs,
+              gainPoints: r.gainPoints,
+              provider: lane.provider,
+              label: labelOf(lane),
+            }))
+    )
+    .sort((a, b) => a.atMs - b.atMs);
+}
+
+export function describeCombinedStop({
+  stop,
+  isLatest,
+  hasTotal,
+  lanes,
+  unit,
+  laneLabel,
+  date,
+  number,
+  labels,
+}: {
+  stop: LaneStop | undefined;
+  isLatest: boolean;
+  hasTotal: boolean;
+  lanes: readonly LaneTrace[];
+  unit: string;
+  laneLabel: (lane: LaneTrace) => string;
+  date: (ms: number) => string;
+  number: (value: number | null) => string;
+  labels: {
+    inspectHint: string;
+    latestReading: string;
+    projected: string;
+    total: string;
+    noObservation: string;
+  };
+}): string {
+  if (!stop) return labels.inspectHint;
+  const head =
+    isLatest && !stop.projected
+      ? `${labels.latestReading} · ${date(stop.atMs)}`
+      : `${date(stop.atMs)}${stop.projected ? ` · ${labels.projected}` : ''}`;
+  const parts = [head];
+  if (hasTotal && stop.totalAfter !== null) {
+    parts.push(`${labels.total}: ${number(stop.totalAfter)}\u00a0${unit}`);
+  }
+  lanes.forEach((lane, index) => {
+    if (lane.historyOnly && stop.projected) return;
+    const val = stop.lanes[index];
+    if (!val?.present) return;
+    const reset = stop.resets.find((r) => r.laneIndex === index);
+    const reading = val.after === null ? labels.noObservation : `${number(val.after)}\u00a0${unit}`;
+    parts.push(`${laneLabel(lane)}: ${reading}${reset ? ` (+${number(reset.gainPoints)})` : ''}`);
+  });
+  return parts.join(' · ');
+}
+
+export interface NormalizedPercent {
+  rawPct: number;
+  /** Clamped to [0, 100] so curves, scrub dots, and cards share one fixed 0–100% scale. */
+  plotPct: number;
+  overflow: boolean;
+}
+
+const OVERFLOW_EPSILON = 1e-6;
+
+/** Single display rule for normalized remaining quota across curves, scrub dots, cards, and readouts. */
+export function normalizePercentValue(
+  value: number | null,
+  capacityPoints: number
+): NormalizedPercent | null {
+  if (value === null || !(capacityPoints > 0)) return null;
+  const rawPct = (value / capacityPoints) * 100;
+  const overflow = rawPct > 100 + OVERFLOW_EPSILON;
+  return {
+    rawPct,
+    plotPct: Math.max(0, Math.min(100, rawPct)),
+    overflow,
+  };
+}
+
+export function formatNormalizedPercentLabel(norm: NormalizedPercent): string {
+  return norm.overflow ? '>100%' : `${Math.round(norm.plotPct)}%`;
+}
+
+export function sampleHasOverflow(
+  samples: readonly ChartSample[],
+  capacityPoints: number,
+  fromMs: number,
+  toMs: number
+): boolean {
+  if (!(capacityPoints > 0)) return false;
+  return samples.some(
+    (sample) =>
+      sample.point.atMs >= fromMs &&
+      sample.point.atMs <= toMs &&
+      normalizePercentValue(sample.point.remainingPoints, capacityPoints)?.overflow === true
+  );
+}
+
+export function overflowMarkerXs(
+  samples: readonly ChartSample[],
+  capacityPoints: number,
+  fromMs: number,
+  toMs: number,
+  x: (atMs: number) => number,
+  minSpacingPx = 10
+): number[] {
+  if (!(capacityPoints > 0)) return [];
+  const xs: number[] = [];
+  for (const sample of samples) {
+    if (sample.point.atMs < fromMs || sample.point.atMs > toMs) continue;
+    const norm = normalizePercentValue(sample.point.remainingPoints, capacityPoints);
+    if (!norm?.overflow) continue;
+    const cx = x(sample.point.atMs);
+    if (!xs.length || Math.abs(cx - xs[xs.length - 1]) >= minSpacingPx) xs.push(cx);
+  }
+  return xs;
+}
+
+/**
+ * Use fixed 0–100% when plotted remaining traces have valid capacity denominators; fall back to a
+ * clearly labeled points axis for all-dormant Totals or spotlighted zero-capacity pools.
+ */
+export function shouldUsePercentScale({
+  isRemaining,
+  totalSeries,
+  totalSamples,
+  laneSets,
+  focusKeys,
+  hasFocus,
+  requireAllLanesPlotted = false,
+}: {
+  isRemaining: boolean;
+  totalSeries: Pick<PoolTrace, 'capacityPoints'> | undefined;
+  totalSamples: readonly ChartSample[];
+  laneSets: readonly {
+    key: string;
+    lane: Pick<LaneTrace, 'capacityPoints'>;
+    visibleSamples: readonly ChartSample[];
+  }[];
+  focusKeys: ReadonlySet<string>;
+  hasFocus: boolean;
+  /** True when minimized without Total so every listed provider trace must render on one scale. */
+  requireAllLanesPlotted?: boolean;
+}): boolean {
+  if (!isRemaining) return false;
+  const hasRemaining = (samples: readonly ChartSample[]) =>
+    samples.some((sample) => sample.point.remainingPoints !== null);
+  const totalHasValues = Boolean(totalSeries && hasRemaining(totalSamples));
+  const totalMissingCap = totalHasValues && !(totalSeries!.capacityPoints > 0);
+  if (totalMissingCap) return false;
+  const focusedMissingCap =
+    hasFocus &&
+    laneSets.some(
+      (set) =>
+        focusKeys.has(set.key) && !(set.lane.capacityPoints > 0) && hasRemaining(set.visibleSamples)
+    );
+  if (focusedMissingCap) return false;
+  const anyValuedMissingCap = laneSets.some(
+    (set) => !(set.lane.capacityPoints > 0) && hasRemaining(set.visibleSamples)
+  );
+  if (requireAllLanesPlotted && anyValuedMissingCap) return false;
+  const anyValuedHasCap =
+    (totalHasValues && totalSeries!.capacityPoints > 0) ||
+    laneSets.some((set) => set.lane.capacityPoints > 0 && hasRemaining(set.visibleSamples));
+  return anyValuedHasCap || !anyValuedMissingCap;
+}
+
+/**
+ * Convert remaining-quota samples to clamped 0–100% of `capacityPoints`, preserving nulls.
+ * Inserts exact synthetic boundary crossings before clamping so segments descending from >100%
+ * (or rising past 100%) preserve exact linear geometry below 100%.
+ */
 export function normalizeSamplesToPercent(
   samples: readonly ChartSample[],
   capacityPoints: number
 ): ChartSample[] {
   if (!(capacityPoints > 0)) return [];
-  return samples.map((sample) => ({
-    projected: sample.projected,
-    point: {
-      ...sample.point,
-      remainingPoints:
-        sample.point.remainingPoints === null
-          ? null
-          : (sample.point.remainingPoints / capacityPoints) * 100,
-    },
-  }));
-}
-
-export interface SpreadPoint {
-  atMs: number;
-  minPct: number;
-  maxPct: number;
-}
-
-/**
- * Continuous min–max % spread runs across active provider traces.
- * Evaluates only at timestamps where >= 2 eligible providers report numeric values (never
- * fabricates across gaps) and excludes `historyOnly` providers from projected spread.
- */
-export function computeSpreadBand(
-  normalizedLanes: readonly (readonly ChartSample[])[],
-  lanes: readonly Pick<LaneTrace, 'historyOnly'>[]
-): SpreadPoint[][] {
-  const byEvent = new Map<
-    string,
-    { atMs: number; projected: boolean; side: number; values: number[] }
-  >();
-  normalizedLanes.forEach((samples, laneIdx) => {
-    const historyOnly = Boolean(lanes[laneIdx]?.historyOnly);
-    const seenAt = new Map<string, number>();
-    for (const sample of samples) {
-      if (historyOnly && sample.projected) continue;
-      const baseKey = `${sample.point.atMs}:${sample.projected ? 1 : 0}`;
-      const side = seenAt.get(baseKey) ?? 0;
-      seenAt.set(baseKey, side + 1);
-      const val = sample.point.remainingPoints;
-      const eventKey = `${baseKey}:${side}`;
-      let bucket = byEvent.get(eventKey);
-      if (!bucket) {
-        bucket = { atMs: sample.point.atMs, projected: sample.projected, side, values: [] };
-        byEvent.set(eventKey, bucket);
-      }
-      if (val !== null) bucket.values.push(val);
-    }
-  });
-
-  const ordered = [...byEvent.values()].sort(
-    (a, b) => a.atMs - b.atMs || Number(a.projected) - Number(b.projected) || a.side - b.side
-  );
-
-  const runs: SpreadPoint[][] = [];
-  let current: SpreadPoint[] = [];
-  for (const entry of ordered) {
-    if (entry.values.length >= 2) {
-      current.push({
-        atMs: entry.atMs,
-        minPct: Math.min(...entry.values),
-        maxPct: Math.max(...entry.values),
+  const out: ChartSample[] = [];
+  let prev: { atMs: number; projected: boolean; rawPct: number } | null = null;
+  for (const sample of samples) {
+    const norm = normalizePercentValue(sample.point.remainingPoints, capacityPoints);
+    if (!norm) {
+      out.push({
+        projected: sample.projected,
+        point: { ...sample.point, remainingPoints: null },
       });
-    } else {
-      if (current.length >= 2) runs.push(current);
-      current = [];
+      prev = null;
+      continue;
     }
+    if (prev && prev.projected === sample.projected && sample.point.atMs > prev.atMs) {
+      const crossings: number[] = [];
+      for (const bound of [0, 100]) {
+        if (
+          (prev.rawPct < bound && norm.rawPct > bound) ||
+          (prev.rawPct > bound && norm.rawPct < bound)
+        ) {
+          crossings.push(bound);
+        }
+      }
+      // Order crossings along the direction of travel from prev.rawPct toward norm.rawPct.
+      if (crossings.length === 2 && prev.rawPct > norm.rawPct) crossings.reverse();
+      for (const bound of crossings) {
+        const tCross =
+          prev.atMs +
+          ((bound - prev.rawPct) / (norm.rawPct - prev.rawPct)) * (sample.point.atMs - prev.atMs);
+        out.push({
+          projected: sample.projected,
+          synthetic: true,
+          point: { ...sample.point, atMs: tCross, remainingPoints: bound },
+        });
+      }
+    }
+    out.push({
+      projected: sample.projected,
+      ...(sample.synthetic ? { synthetic: true as const } : {}),
+      point: { ...sample.point, remainingPoints: norm.plotPct },
+    });
+    prev = { atMs: sample.point.atMs, projected: sample.projected, rawPct: norm.rawPct };
   }
-  if (current.length >= 2) runs.push(current);
-  return runs;
+  return out;
 }
+
+export {
+  buildSpreadPaths,
+  computeSpreadBand,
+  type SpreadBandResult,
+  type SpreadPoint,
+  type SpreadRun,
+  type SpreadSvgPaths,
+} from './combinedSpreadBand';
 
 export interface PlacedTotalTick {
   atMs: number;
@@ -431,7 +595,7 @@ export function placeTotalResetTicks(
       if (reset.atMs < fromMs || reset.atMs > toMs || reset.gainPoints <= 0) continue;
       byTime.set(reset.atMs, (byTime.get(reset.atMs) ?? 0) + reset.gainPoints);
     }
-    const key = laneIdentity(lane);
+    const key = poolKey(lane);
     for (const [atMs, gainPoints] of byTime) {
       raw.push({
         atMs,
