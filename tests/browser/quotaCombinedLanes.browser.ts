@@ -36,7 +36,7 @@ const pt = (atMs: number, remaining: number | null, drain = 12, burn = 14): Pool
   drainPointsPerHour: remaining === null ? null : drain,
 });
 
-function buildFixtureDashboard(): PoolDashboard {
+function buildFixtureDashboard(includeExtraProviders = false): PoolDashboard {
   const recTimes = [0, 1, 2, 3, 4, 5].map((d) => FROM + d * DAY);
   const tReset1 = NOW + 2.5 * DAY; // Claude +1,840 & Codex +590 simultaneous
   const tEmpty = NOW + 4.2 * DAY; // Gemini empty, Claude +1,960
@@ -112,19 +112,19 @@ function buildFixtureDashboard(): PoolDashboard {
     pt(TO, 1020),
   ];
 
-  const sumPoints = (a: PoolPoint[], b: PoolPoint[], c: PoolPoint[]) =>
-    a.map((p, i) => ({
+  const sumSeries = (seriesList: PoolPoint[][]): PoolPoint[] =>
+    seriesList[0].map((p, i) => ({
       atMs: p.atMs,
       remainingPoints: Number(
-        (p.remainingPoints! + b[i].remainingPoints! + c[i].remainingPoints!).toFixed(1)
+        seriesList.reduce((acc, s) => acc + s[i].remainingPoints!, 0).toFixed(1)
       ),
       burnPointsPerHour:
         p.burnPointsPerHour !== null
-          ? p.burnPointsPerHour + b[i].burnPointsPerHour! + c[i].burnPointsPerHour!
+          ? seriesList.reduce((acc, s) => acc + s[i].burnPointsPerHour!, 0)
           : null,
       drainPointsPerHour:
         p.drainPointsPerHour !== null
-          ? p.drainPointsPerHour + b[i].drainPointsPerHour! + c[i].drainPointsPerHour!
+          ? seriesList.reduce((acc, s) => acc + s[i].drainPointsPerHour!, 0)
           : null,
     }));
 
@@ -222,26 +222,135 @@ function buildFixtureDashboard(): PoolDashboard {
     accounts: [makeAccount('gemini-1', 'Gemini 1', 2000, 79.1, tGemini)],
   };
 
+  const extraPools: QuotaPool[] = includeExtraProviders
+    ? [
+        {
+          provider: 'kimi',
+          displayName: 'Kimi',
+          instanceId: 'kimi-primary',
+          accountCount: 1,
+          eligibleCount: 1,
+          loadedCount: 1,
+          capacityPoints: 3000,
+          remainingPoints: 1890,
+          burnPointsPerHour: 11,
+          drainPointsPerHour: 11,
+          forecastState: 'ready',
+          firstEmptyAtMs: null,
+          poolEmptyAtMs: null,
+          nextResetAtMs: tGemini,
+          nextResetGainPoints: 1200,
+          recorded: recTimes.map((t, i) => pt(t, 2400 - i * 102, 11, 11)),
+          projected: [
+            pt(NOW, 1890),
+            pt(tReset1, 1520),
+            pt(tReset1, 1520),
+            pt(tEmpty, 1210),
+            pt(tEmpty, 1210),
+            pt(tGemini, 760),
+            pt(tGemini, 1960),
+            pt(tClaude, 1880),
+            pt(tClaude, 1880),
+            pt(tCodex, 1610),
+            pt(tCodex, 1610),
+            pt(TO, 1420),
+          ],
+          resets: [{ atMs: tGemini, gainPoints: 1200 }],
+          accounts: [makeAccount('kimi-1', 'Kimi 1', 3000, 63, tGemini)],
+        },
+        {
+          provider: 'xai',
+          displayName: 'Grok',
+          instanceId: 'xai-primary',
+          accountCount: 1,
+          eligibleCount: 1,
+          loadedCount: 1,
+          capacityPoints: 1500,
+          remainingPoints: 620,
+          burnPointsPerHour: 9,
+          drainPointsPerHour: 9,
+          forecastState: 'ready',
+          firstEmptyAtMs: null,
+          poolEmptyAtMs: null,
+          nextResetAtMs: tClaude,
+          nextResetGainPoints: 900,
+          recorded: recTimes.map((t, i) => pt(t, 1120 - i * 100, 9, 9)),
+          projected: [
+            pt(NOW, 620),
+            pt(tReset1, 410),
+            pt(tReset1, 410),
+            pt(tEmpty, 280),
+            pt(tEmpty, 280),
+            pt(tGemini, 110),
+            pt(tGemini, 110),
+            pt(tClaude, 80),
+            pt(tClaude, 980),
+            pt(tCodex, 840),
+            pt(tCodex, 840),
+            pt(TO, 710),
+          ],
+          resets: [{ atMs: tClaude, gainPoints: 900 }],
+          accounts: [makeAccount('xai-1', 'Grok 1', 1500, 41.3, tClaude)],
+        },
+        {
+          provider: 'minimax',
+          displayName: 'MiniMax',
+          instanceId: 'minimax-primary',
+          accountCount: 1,
+          eligibleCount: 1,
+          loadedCount: 1,
+          capacityPoints: 4000,
+          remainingPoints: 2680,
+          burnPointsPerHour: 15,
+          drainPointsPerHour: 15,
+          forecastState: 'ready',
+          firstEmptyAtMs: null,
+          poolEmptyAtMs: null,
+          nextResetAtMs: tCodex,
+          nextResetGainPoints: 1600,
+          recorded: recTimes.map((t, i) => pt(t, 3400 - i * 144, 15, 15)),
+          projected: [
+            pt(NOW, 2680),
+            pt(tReset1, 2240),
+            pt(tReset1, 2240),
+            pt(tEmpty, 1910),
+            pt(tEmpty, 1910),
+            pt(tGemini, 1480),
+            pt(tGemini, 1480),
+            pt(tClaude, 1390),
+            pt(tClaude, 1390),
+            pt(tCodex, 1120),
+            pt(tCodex, 2720),
+            pt(TO, 2490),
+          ],
+          resets: [{ atMs: tCodex, gainPoints: 1600 }],
+          accounts: [makeAccount('minimax-1', 'MiniMax 1', 4000, 67, tCodex)],
+        },
+      ]
+    : [];
+
+  const pools = [claudePool, codexPool, geminiPool, ...extraPools];
+  const resetMap = new Map<number, number>();
+  for (const p of pools) {
+    for (const r of p.resets) resetMap.set(r.atMs, (resetMap.get(r.atMs) ?? 0) + r.gainPoints);
+  }
   const totalSeries = {
-    capacityPoints: 11000,
-    remainingPoints: 4381.1,
-    burnPointsPerHour: 26,
-    drainPointsPerHour: 26,
+    capacityPoints: pools.reduce((acc, p) => acc + p.capacityPoints, 0),
+    remainingPoints: Number(pools.reduce((acc, p) => acc + p.remainingPoints!, 0).toFixed(1)),
+    burnPointsPerHour: pools.reduce((acc, p) => acc + p.burnPointsPerHour!, 0),
+    drainPointsPerHour: pools.reduce((acc, p) => acc + p.drainPointsPerHour!, 0),
     forecastState: 'ready' as const,
-    recorded: sumPoints(claudeRec, codexRec, geminiRec),
-    projected: sumPoints(claudeProj, codexProj, geminiProj),
-    resets: [
-      { atMs: tReset1, gainPoints: 2430 },
-      { atMs: tEmpty, gainPoints: 1960 },
-      { atMs: tGemini, gainPoints: 1940 },
-      { atMs: tClaude, gainPoints: 1960 },
-      { atMs: tCodex, gainPoints: 480 },
-    ],
+    recorded: sumSeries(pools.map((p) => p.recorded)),
+    projected: sumSeries(pools.map((p) => p.projected)),
+    resets: [...resetMap.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([atMs, gainPoints]) => ({ atMs, gainPoints })),
     poolEmptyAtMs: null,
   };
 
   const toLayer = (p: QuotaPool) => ({
     provider: p.provider,
+    ...(p.displayName ? { displayName: p.displayName } : {}),
     instanceId: p.instanceId,
     capacityPoints: p.capacityPoints,
     remainingPoints: p.remainingPoints,
@@ -266,24 +375,19 @@ function buildFixtureDashboard(): PoolDashboard {
     nextRefreshAtMs: NOW + 5 * 60_000,
     refreshing: false,
     issues: [],
-    pools: [claudePool, codexPool, geminiPool],
+    pools,
     combined: {
       all: {
         series: totalSeries,
-        layers: [toLayer(claudePool), toLayer(codexPool), toLayer(geminiPool)],
+        layers: pools.map(toLayer),
         unavailableReason: null,
       },
-      claude: {
-        series: toLayer(claudePool),
-        layers: [toLayer(claudePool)],
-        unavailableReason: null,
-      },
-      codex: { series: toLayer(codexPool), layers: [toLayer(codexPool)], unavailableReason: null },
-      antigravity: {
-        series: toLayer(geminiPool),
-        layers: [toLayer(geminiPool)],
-        unavailableReason: null,
-      },
+      ...Object.fromEntries(
+        pools.map((p) => [
+          p.provider,
+          { series: toLayer(p), layers: [toLayer(p)], unavailableReason: null },
+        ])
+      ),
     },
   };
 }
@@ -338,28 +442,80 @@ async function saveEvidence(locator: ReturnType<Page['locator']>, name: string) 
   await locator.screenshot({ path: join(dir, `${name}.png`) });
 }
 
-test('Combined usage renders Total + own-scale provider lanes with reset attribution, keyboard stepping, and no overflow at 1440px and 390px', async ({
+async function dismissToasts(page: Page) {
+  const buttons = page.locator('section[aria-label="Notifications"] button:not(:disabled)');
+  for (let i = 0; i < 5 && (await buttons.count()) > 0; i += 1) {
+    // Dispatching a synthetic click (detail === 0) invokes skipAnimation so fixed clocks never stall exit.
+    await buttons.first().dispatchEvent('click');
+  }
+  await expect(page.locator('section[aria-label="Notifications"] [role="status"]')).toHaveCount(0);
+}
+
+test('Combined usage renders normalized 0–100% Total + live capacity cards with multi-pin spotlight, scrubbing, and no overflow at 1440px and 390px', async ({
   page,
 }) => {
-  const dashboard = buildFixtureDashboard();
+  const dashboard = buildFixtureDashboard(false);
   await page.setViewportSize({ width: 1440, height: 1000 });
   const combined = await openQuota(page, dashboard);
+  await dismissToasts(page);
 
-  // Dropdown is gone; Total + 3 own-scale provider lanes render cleanly.
+  // Dropdown is gone; constant-height single plot renders Total + 3 quiet 0–100% curves + 3 live cards.
+  // Below 5 providers there is no spread band, so the Smart/Ghost switch is not shown as a dead control.
   await expect(combined.locator('select')).toHaveCount(0);
+  await expect(combined.getByRole('button', { name: 'Smart', exact: true })).toHaveCount(0);
   await expect(combined.locator('svg [data-series="total"]')).toHaveCount(1);
-  await expect(combined.locator('svg [data-series="claude-primary"]')).toHaveCount(1);
-  await expect(combined.locator('svg [data-series="codex-primary"]')).toHaveCount(1);
-  await expect(combined.locator('svg [data-series="gemini-primary"]')).toHaveCount(1);
-  await expect(combined.locator('svg [data-reset-provider="claude"]')).toHaveCount(3);
-  await expect(combined.locator('svg [data-reset-provider="codex"]')).toHaveCount(2);
-  await expect(combined.locator('svg [data-reset-provider="antigravity"]')).toHaveCount(1);
+  await expect(
+    combined.locator('svg [data-series="claude-primary:claude"][data-emphasis="quiet"]')
+  ).toHaveCount(1);
+  await expect(
+    combined.locator('svg [data-series="codex-primary:codex"][data-emphasis="quiet"]')
+  ).toHaveCount(1);
+  await expect(
+    combined.locator('svg [data-series="gemini-primary:antigravity"][data-emphasis="quiet"]')
+  ).toHaveCount(1);
+  await expect(combined.locator('[data-provider-card="claude-primary:claude"]')).toBeVisible();
+  await expect(combined.locator('[data-provider-card="codex-primary:codex"]')).toBeVisible();
+  await expect(combined.locator('[data-provider-card="gemini-primary:antigravity"]')).toBeVisible();
+  // Provider labels must render with visible non-zero width beside their shape glyphs.
+  for (const key of [
+    'claude-primary:claude',
+    'codex-primary:codex',
+    'gemini-primary:antigravity',
+  ]) {
+    const labelBox = await combined
+      .locator(`[data-provider-card="${key}"] [data-provider-label="true"]`)
+      .boundingBox();
+    expect(labelBox).not.toBeNull();
+    expect(labelBox!.width).toBeGreaterThan(24);
+  }
+  await expect(combined.locator('svg [data-total-reset-tick="claude"]')).toHaveCount(3);
+  await expect(combined.locator('svg [data-total-reset-tick="codex"]')).toHaveCount(2);
+  await expect(combined.locator('svg [data-total-reset-tick="antigravity"]')).toHaveCount(1);
   await expect(combined.locator('svg [data-empty-marker="antigravity"]')).toHaveCount(1);
-  await expect(combined).toContainText('Next reset: Claude +1,840, Codex +590');
-  await saveEvidence(combined, 'combined-lanes-1440-rest');
+  await expect(combined).toContainText('100%');
+  await expect(combined).toContainText('Total pts');
+  await expect(combined).toContainText('Next reset: Claude\u00a0+1,840, Codex\u00a0+590');
+  await saveEvidence(combined, 'combined-hybrid-3p-1440-rest');
 
-  // Keyboard Shift+ArrowRight hops directly to the first reset stop (simultaneous Claude + Codex),
-  // showing Total, both reset pills, and before -> after gains in each lane caption without shifting the SVG.
+  // Clicking pins multiple providers head-to-head on 0–100%; Escape from a focused card clears pins.
+  await combined.locator('[data-provider-card="codex-primary:codex"]').click();
+  await combined.locator('[data-provider-card="gemini-primary:antigravity"]').click();
+  await expect(combined).toContainText('Comparing 2 pinned');
+  await expect(
+    combined.locator('svg [data-series="codex-primary:codex"][data-emphasis="focused"]')
+  ).toHaveCount(1);
+  await expect(
+    combined.locator('svg [data-series="gemini-primary:antigravity"][data-emphasis="focused"]')
+  ).toHaveCount(1);
+  await expect(combined.locator('svg [data-total-reset-tick="claude"]')).toHaveCount(0);
+  await expect(combined.locator('svg [data-total-reset-tick="codex"]')).toHaveCount(2);
+  await saveEvidence(combined, 'combined-hybrid-3p-1440-pinned');
+  await page.keyboard.press('Escape');
+  // Move cursor clear of cards so subsequent reset/empty captures have no leftover pointer hover style.
+  await page.mouse.move(0, 0);
+  await expect(combined.locator('svg [data-total-reset-tick="claude"]')).toHaveCount(3);
+
+  // Keyboard Shift+ArrowRight hops directly to the first reset stop without shifting the SVG vertically.
   const svg = combined.locator('svg[role="img"]');
   const svgOffsetY = async () => {
     const [cardBox, chartBox] = await Promise.all([combined.boundingBox(), svg.boundingBox()]);
@@ -370,13 +526,24 @@ test('Combined usage renders Total + own-scale provider lanes with reset attribu
   const restOffset1440 = await svgOffsetY();
   await svg.focus();
   await page.keyboard.press('Shift+ArrowRight');
-  await expect(combined).toContainText('Claude +1,840');
-  await expect(combined).toContainText('Codex +590');
-  await expect(combined).toContainText('1,510 → 3,350 (+1,840)');
-  await expect(combined).toContainText('160 → 750 (+590)');
+  await expect(combined).toContainText('Claude\u00a0+1,840');
+  await expect(combined).toContainText('Codex\u00a0+590');
+  await expect(combined.locator('[data-provider-card="claude-primary:claude"]')).toContainText(
+    '+1,840'
+  );
+  await expect(combined.locator('[data-provider-card="codex-primary:codex"]')).toContainText(
+    '+590'
+  );
   await expect(combined.getByRole('button', { name: 'Now', exact: true })).toBeVisible();
   expect(Math.abs((await svgOffsetY()) - restOffset1440)).toBeLessThanOrEqual(1);
-  await saveEvidence(combined, 'combined-lanes-1440-reset');
+  await saveEvidence(combined, 'combined-hybrid-3p-1440-reset');
+
+  // Step to Dec 1 where Gemini hits 0% and verify the red "Empty" card state.
+  await page.keyboard.press('Shift+ArrowRight');
+  await expect(combined.locator('[data-provider-card="gemini-primary:antigravity"]')).toContainText(
+    'Empty'
+  );
+  await saveEvidence(combined, 'combined-hybrid-3p-1440-empty');
 
   // Escape returns cleanly to the latest reading.
   await page.keyboard.press('Escape');
@@ -396,20 +563,20 @@ test('Combined usage renders Total + own-scale provider lanes with reset attribu
   // Minimize collapses to the 160px Total plot keeping top-edge colored reset ticks & legend keys.
   await combined.getByRole('button', { name: /Minimize graph/ }).click();
   await expect(combined.locator('svg [data-series="total"]')).toHaveCount(1);
-  await expect(combined.locator('svg [data-series="claude-primary"]')).toHaveCount(0);
+  await expect(combined.locator('[data-provider-card]')).toHaveCount(0);
   await expect(combined.locator('svg [data-total-reset-tick="codex"]')).toHaveCount(2);
   await expect(combined).toContainText('Scheduled reset:');
-  await saveEvidence(combined, 'combined-lanes-1440-minimized');
+  await saveEvidence(combined, 'combined-hybrid-3p-1440-minimized');
   await combined.getByRole('button', { name: /Expand graph/ }).click();
 
-  // Signed drain mode renders zero baseline (never hiding 0 in Codex's compact lane) and omits resets.
+  // Signed drain mode renders zero baseline in points/h and compact rate cards (no resets).
   await page.getByRole('button', { name: 'Drain rate', exact: true }).click();
-  await expect(combined.locator('svg [data-reset-provider]')).toHaveCount(0);
+  await expect(combined.locator('svg [data-total-reset-tick]')).toHaveCount(0);
   await expect(svg).toContainText('points/h');
-  const codexDrainChrome = combined.locator('svg [data-lane-header="codex-primary"]');
-  await expect(codexDrainChrome).toContainText('0');
-  await expect(codexDrainChrome).toContainText('-20');
-  await saveEvidence(combined, 'combined-lanes-1440-drain');
+  await expect(combined.locator('[data-provider-card="codex-primary:codex"]')).toContainText(
+    'points/h'
+  );
+  await saveEvidence(combined, 'combined-hybrid-3p-1440-drain');
   await page.getByRole('button', { name: 'Remaining', exact: true }).click();
 
   // Phone 390x844: touch-action: pan-y, zero horizontal overflow, vertical scroll never pins.
@@ -420,7 +587,25 @@ test('Combined usage renders Total + own-scale provider lanes with reset attribu
   );
   expect(overflow).toBe(false);
   const restOffset390 = await svgOffsetY();
-  await saveEvidence(combined, 'combined-lanes-390-rest');
+  await saveEvidence(combined, 'combined-hybrid-3p-390-rest');
+
+  // Pinning a provider card on phone must not shift the card grid vertically under the user's finger.
+  const firstCard390 = combined.locator('[data-provider-card="claude-primary:claude"]');
+  const cardOffsetY = async () => {
+    const [cardBox, itemBox] = await Promise.all([
+      combined.boundingBox(),
+      firstCard390.boundingBox(),
+    ]);
+    expect(cardBox).not.toBeNull();
+    expect(itemBox).not.toBeNull();
+    return itemBox!.y - cardBox!.y;
+  };
+  const restGridOffset390 = await cardOffsetY();
+  await firstCard390.click();
+  await expect(combined).toContainText('Comparing 1 pinned');
+  expect(Math.abs((await cardOffsetY()) - restGridOffset390)).toBeLessThanOrEqual(1);
+  await combined.getByRole('button', { name: 'Clear', exact: true }).click();
+  expect(Math.abs((await cardOffsetY()) - restGridOffset390)).toBeLessThanOrEqual(1);
 
   // Vertical touch swipe ending in pointercancel must leave the chart at rest (no accidental pin).
   await svg.evaluate((el) => {
@@ -456,7 +641,7 @@ test('Combined usage renders Total + own-scale provider lanes with reset attribu
     );
   });
   await expect(combined.getByRole('button', { name: 'Now', exact: true })).toHaveCount(0);
-  await expect(combined).toContainText('Next reset: Claude +1,840, Codex +590');
+  await expect(combined).toContainText('Next reset: Claude\u00a0+1,840, Codex\u00a0+590');
 
   // A clean touch tap (no vertical scroll) commits the pin, and Now clears it.
   await svg.evaluate((el) => {
@@ -518,7 +703,7 @@ test('Combined usage renders Total + own-scale provider lanes with reset attribu
     touchPoints: [{ x: endX, y: startY, id: 1 }],
   });
   await expect(combined).toContainText('Dec 5');
-  await expect(combined).toContainText('Codex +480');
+  await expect(combined).toContainText('Codex\u00a0+480');
   await cdp.send('Input.dispatchTouchEvent', {
     type: 'touchEnd',
     touchPoints: [],
@@ -533,19 +718,244 @@ test('Combined usage renders Total + own-scale provider lanes with reset attribu
   await page.keyboard.press('Shift+ArrowRight');
   await page.keyboard.press('Shift+ArrowRight');
   await page.keyboard.press('Shift+ArrowRight'); // Claude solo reset at Dec 4
-  await expect(combined).toContainText('7,852.5 (+1,960)');
-  await expect(combined).toContainText('613.7 / 1,000');
-  await expect(combined).toContainText('1,818.1 / 2,000');
-  // Plot does not jump vertically when the readout enters inspection state on mobile.
+  await expect(combined.locator('[data-provider-card="claude-primary:claude"]')).toContainText(
+    '+1,960'
+  );
+  await expect(combined.locator('[data-provider-card="codex-primary:codex"]')).toContainText(
+    '613.7 / 1,000'
+  );
+  await expect(combined.locator('[data-provider-card="gemini-primary:antigravity"]')).toContainText(
+    '1,818.1 / 2,000'
+  );
   expect(Math.abs((await svgOffsetY()) - restOffset390)).toBeLessThanOrEqual(1);
-  // Active crosshair hides colliding Codex +480 text so the dot never overlaps digits.
-  await expect(
-    combined.locator('svg [data-series="codex-primary"] text', { hasText: '+480' })
-  ).toHaveCount(0);
-  await saveEvidence(combined, 'combined-lanes-390-reset');
+  await saveEvidence(combined, 'combined-hybrid-3p-390-reset');
   await combined.getByRole('button', { name: 'Now', exact: true }).click();
   await expect(combined.getByRole('button', { name: 'Now', exact: true })).toHaveCount(0);
+});
+
+test('Combined usage scales to 6 providers in constant plot height, persists Smart vs Ghost lines per browser, and keeps Drain rate axes fixed', async ({
+  page,
+}) => {
+  const dashboard = buildFixtureDashboard(true);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const combined = await openQuota(page, dashboard);
+  await dismissToasts(page);
+
+  // Default Smart mode with 6 providers renders the min–max spread band instead of 6 tangled lines.
+  const smartBtn = combined.getByRole('button', { name: 'Smart', exact: true });
+  const ghostBtn = combined.getByRole('button', { name: 'Ghost lines', exact: true });
+  await expect(smartBtn).toHaveAttribute('aria-pressed', 'true');
+  await expect(ghostBtn).toHaveAttribute('aria-pressed', 'false');
+  await expect(combined.locator('svg [data-spread-band="true"]')).toHaveCount(1);
+  await expect(combined.locator('svg [data-emphasis="quiet"]')).toHaveCount(0);
+  await expect(combined.locator('[data-provider-card]')).toHaveCount(6);
+  const svg = combined.locator('svg[role="img"]');
+  await expect(svg).toHaveAttribute('viewBox', / 244$/);
+  await saveEvidence(combined, 'combined-hybrid-6p-1440-smart');
+
+  // Switching to Drain rate in Smart mode falls back to 6 quiet provider rate curves and keeps
+  // the Y-axis ticks & gutters fixed when pinning a card.
+  await page.getByRole('button', { name: 'Drain rate', exact: true }).click();
+  await expect(combined.locator('svg [data-spread-band="true"]')).toHaveCount(0);
+  await expect(combined.locator('svg [data-emphasis="quiet"]')).toHaveCount(6);
+  await expect(combined.getByRole('button', { name: 'Smart', exact: true })).toHaveCount(0);
+  const rateTotalPathBefore = await combined
+    .locator('svg [data-series="total"] path')
+    .first()
+    .getAttribute('d');
+  await combined.locator('[data-provider-card="claude-primary:claude"]').click();
+  const rateTotalPathAfter = await combined
+    .locator('svg [data-series="total"] path')
+    .first()
+    .getAttribute('d');
+  expect(rateTotalPathAfter).toBe(rateTotalPathBefore);
+  await combined.getByRole('button', { name: 'Clear', exact: true }).click();
+  await saveEvidence(combined, 'combined-hybrid-6p-1440-drain');
+  await page.getByRole('button', { name: 'Remaining', exact: true }).click();
+
+  // Switching to Ghost lines persists in localStorage and survives a full page reload.
+  await ghostBtn.click();
+  await expect(ghostBtn).toHaveAttribute('aria-pressed', 'true');
+  await expect(combined.locator('svg [data-spread-band="true"]')).toHaveCount(0);
+  await expect(combined.locator('svg [data-emphasis="quiet"]')).toHaveCount(6);
+  const stored = await page.evaluate(() =>
+    window.localStorage.getItem('quotaPool.combinedBackgroundMode')
+  );
+  expect(stored).toBe('ghost');
+  await saveEvidence(combined, 'combined-hybrid-6p-1440-ghost');
+
+  // Reload page and confirm Ghost lines preference is restored automatically.
+  await page.reload();
+  await page.locator('input[type=password]').fill('synthetic-management-key');
+  await page.getByRole('button', { name: 'Login', exact: true }).click();
+  const link = page.getByRole('link', { name: 'Quota Management', exact: true });
+  await link.waitFor({ state: 'attached' });
+  await link.click();
+  await expect(combined.locator('svg[role="img"]')).toBeVisible();
+  await dismissToasts(page);
+  await expect(combined.getByRole('button', { name: 'Ghost lines', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  );
+  await expect(combined.locator('svg [data-emphasis="quiet"]')).toHaveCount(6);
+
+  // Switch back to Smart and verify zero grid jump across 390px, 412px, and 430px phones.
+  await combined.getByRole('button', { name: 'Smart', exact: true }).click();
+  await expect(combined.locator('svg [data-spread-band="true"]')).toHaveCount(1);
+  const firstCard6p = combined.locator('[data-provider-card="claude-primary:claude"]');
+  for (const width of [412, 430, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(svg).toHaveAttribute('viewBox', / 216$/);
+    const gridOffsetBefore =
+      (await firstCard6p.boundingBox())!.y - (await combined.boundingBox())!.y;
+    await combined.locator('[data-provider-card="codex-primary:codex"]').click();
+    await combined.locator('[data-provider-card="gemini-primary:antigravity"]').click();
+    const gridOffsetAfter =
+      (await firstCard6p.boundingBox())!.y - (await combined.boundingBox())!.y;
+    expect(Math.abs(gridOffsetAfter - gridOffsetBefore)).toBeLessThanOrEqual(1);
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth
+    );
+    expect(overflow).toBe(false);
+    if (width !== 390) {
+      await combined.getByRole('button', { name: 'Clear', exact: true }).click();
+    }
+  }
+  await dismissToasts(page);
+  await saveEvidence(combined, 'combined-hybrid-6p-390-smart-pinned');
+});
+
+test('Shared-hub providers stay independently pinnable and spotlighting a zero-capacity history-only pool keeps grid position stable at 1440px and 390px', async ({
+  page,
+}) => {
+  const base = buildFixtureDashboard(true);
+  const sharedPools = base.pools.map((p, idx) =>
+    idx < 2
+      ? { ...p, instanceId: 'shared-hub' }
+      : idx === 2
+        ? {
+            ...p,
+            instanceId: 'shared-hub',
+            capacityPoints: 0,
+            remainingPoints: 1581.1,
+            projected: p.projected.map((sample) => ({ ...sample, remainingPoints: 0 })),
+            resets: [],
+            poolEmptyAtMs: null,
+          }
+        : p
+  );
+  const sharedLayers = sharedPools.map((p, idx) => ({
+    provider: p.provider,
+    ...(p.displayName ? { displayName: p.displayName } : {}),
+    instanceId: p.instanceId,
+    capacityPoints: p.capacityPoints,
+    remainingPoints: p.remainingPoints,
+    burnPointsPerHour: p.burnPointsPerHour,
+    drainPointsPerHour: p.drainPointsPerHour,
+    forecastState: p.forecastState,
+    recorded: p.recorded,
+    projected: p.projected,
+    resets: p.resets,
+    poolEmptyAtMs: p.poolEmptyAtMs,
+    ...(idx === 2 ? { historyOnly: true as const } : {}),
+  }));
+  const dashboard: PoolDashboard = {
+    ...base,
+    pools: sharedPools,
+    combined: {
+      ...base.combined,
+      all: {
+        ...base.combined!.all,
+        layers: sharedLayers,
+      },
+    },
+  };
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const combined = await openQuota(page, dashboard);
+  await dismissToasts(page);
+
+  // Two providers sharing instanceId "shared-hub" select independently across cards, traces, and ticks.
+  await combined.locator('[data-provider-card="shared-hub:claude"]').click();
   await expect(
-    combined.locator('svg [data-series="codex-primary"] text', { hasText: '+480' })
+    combined.locator('svg [data-series="shared-hub:claude"][data-emphasis="focused"]')
   ).toHaveCount(1);
+  await expect(
+    combined.locator('svg [data-series="shared-hub:codex"][data-emphasis="focused"]')
+  ).toHaveCount(0);
+  await expect(combined.locator('svg [data-total-reset-lane="shared-hub:claude"]')).toHaveCount(3);
+  await expect(combined.locator('svg [data-total-reset-lane="shared-hub:codex"]')).toHaveCount(0);
+  await combined.getByRole('button', { name: 'Clear', exact: true }).click();
+  // Activating Clear returns focus cleanly inside the provider grid (never drops to body).
+  expect(
+    await page.evaluate(() => document.activeElement?.getAttribute('data-provider-card'))
+  ).toBe('shared-hub:claude');
+
+  // Pressing Escape while Clear has focus also restores focus into the grid; Escape on a card keeps focus there.
+  await combined.locator('[data-provider-card="shared-hub:codex"]').click();
+  await combined.getByRole('button', { name: 'Clear', exact: true }).focus();
+  await page.keyboard.press('Escape');
+  expect(
+    await page.evaluate(() => document.activeElement?.getAttribute('data-provider-card'))
+  ).toBe('shared-hub:claude');
+  await combined.locator('[data-provider-card="shared-hub:codex"]').click();
+  await page.keyboard.press('Escape');
+  expect(
+    await page.evaluate(() => document.activeElement?.getAttribute('data-provider-card'))
+  ).toBe('shared-hub:codex');
+
+  // Spotlighting the zero-capacity history-only pool falls back to points without shifting the grid at 1440px or phone widths.
+  const svg = combined.locator('svg[role="img"]');
+  const firstCard = combined.locator('[data-provider-card="shared-hub:claude"]');
+  const dormantCard = combined.locator('[data-provider-card="shared-hub:antigravity"]');
+  const gridOffset = async () => {
+    const [cardBox, itemBox] = await Promise.all([combined.boundingBox(), firstCard.boundingBox()]);
+    expect(cardBox).not.toBeNull();
+    expect(itemBox).not.toBeNull();
+    return itemBox!.y - cardBox!.y;
+  };
+  await expect(svg).toHaveAttribute('data-scale', 'percent');
+  const offset1440Before = await gridOffset();
+  await dormantCard.click();
+  await expect(svg).toHaveAttribute('data-scale', 'points');
+  await expect(svg).toContainText('points');
+  expect(Math.abs((await gridOffset()) - offset1440Before)).toBeLessThanOrEqual(1);
+  const dormantTrace = combined.locator(
+    'svg [data-series="shared-hub:antigravity"][data-emphasis="focused"] path'
+  );
+  expect(await dormantTrace.count()).toBeGreaterThan(0);
+  await combined.getByRole('button', { name: 'Clear', exact: true }).click();
+
+  // Hovering a zero-capacity card while the Smart button holds keyboard focus must keep focus on
+  // Smart rather than dropping it to body.
+  const smartBtn = combined.getByRole('button', { name: 'Smart', exact: true });
+  await smartBtn.focus();
+  await dormantCard.hover();
+  await expect(svg).toHaveAttribute('data-scale', 'points');
+  expect(await page.evaluate(() => document.activeElement?.textContent?.trim())).toBe('Smart');
+  await page.mouse.move(0, 0);
+  await expect(svg).toHaveAttribute('data-scale', 'percent');
+
+  // At 412px, 430px, 344px, and 390px phone widths, pinning keeps 0px grid shift and never clips name or balance outside the card.
+  for (const width of [412, 430, 344, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const offsetBefore = await gridOffset();
+    await dormantCard.click();
+    await expect(svg).toHaveAttribute('data-scale', 'points');
+    expect(Math.abs((await gridOffset()) - offsetBefore)).toBeLessThanOrEqual(1);
+    const geminiLabelBox = await dormantCard.locator('[data-provider-label="true"]').boundingBox();
+    expect(geminiLabelBox).not.toBeNull();
+    expect(geminiLabelBox!.width).toBeGreaterThan(36);
+    const [cardBox, subBox] = await Promise.all([
+      dormantCard.boundingBox(),
+      dormantCard.locator('[data-provider-submetric="true"]').boundingBox(),
+    ]);
+    expect(cardBox).not.toBeNull();
+    expect(subBox).not.toBeNull();
+    expect(subBox!.x + subBox!.width).toBeLessThanOrEqual(cardBox!.x + cardBox!.width - 4);
+    if (width !== 390) {
+      await combined.getByRole('button', { name: 'Clear', exact: true }).click();
+    }
+  }
+  await saveEvidence(combined, 'combined-hybrid-6p-dormant-390-pinned');
 });

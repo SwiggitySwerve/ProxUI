@@ -17,9 +17,14 @@ import {
 } from '../src/features/quotaPool/chartGeometry';
 import {
   buildLaneStops,
+  COMBINED_BACKGROUND_STORAGE_KEY,
+  computeSpreadBand,
   findNextReset,
+  formatNormalizedPercentLabel,
   nextResetStopIndex,
-  placeLaneResets,
+  normalizePercentValue,
+  normalizeSamplesToPercent,
+  parseCombinedBackgroundMode,
   placeTotalResetTicks,
   resolveStopIndex,
   selectStopAtX,
@@ -666,7 +671,7 @@ describe('combined lanes chart model & rendering', () => {
     projected,
   });
 
-  test('adding a reset to Claude leaves Codex lane geometry byte-for-byte unchanged', async () => {
+  test('adding a reset to Claude leaves Codex normalized curve byte-for-byte unchanged', async () => {
     await i18n.changeLanguage('en');
     const codex = {
       ...pool,
@@ -702,8 +707,8 @@ describe('combined lanes chart model & rendering', () => {
       resets: c.resets,
     });
     const sliceCodex = (html: string) => {
-      const start = html.indexOf('data-series="codex"');
-      return html.slice(start, html.indexOf('</g><line', start));
+      const start = html.indexOf('data-series="legacy:codex"');
+      return html.slice(start, html.indexOf('data-series="total"', start));
     };
     const before = renderToStaticMarkup(
       createElement(CombinedLanesChart, {
@@ -722,16 +727,18 @@ describe('combined lanes chart model & rendering', () => {
       })
     );
     expect(sliceCodex(after)).toBe(sliceCodex(before));
-    // Claude's reset draws one tick in Claude's lane and one top-edge tick on Total, none in Codex.
-    expect(after.match(/data-reset-provider="claude"/g)).toHaveLength(1);
-    expect(after.match(/data-reset-provider="codex"/g)).toBeNull();
+    // Claude's reset draws one top-edge tick attributed to Claude, none for Codex.
     expect(after.match(/data-total-reset-tick="claude"/g)).toHaveLength(1);
     expect(after.match(/data-total-reset-tick="codex"/g)).toBeNull();
-    // Codex uses its own capacity (1,000), while Total uses 9,000.
-    expect(after).toContain('data-lane-capacity="1000"');
-    expect(after).toContain('>1,000</text>');
+    // Shared 0–100% left axis + 1:1 Total points right axis + live capacity cards below.
+    expect(after).toContain('>100%</text>');
     expect(after).toContain('>9,000</text>');
+    expect(after).toContain('data-provider-card="legacy:codex"');
+    expect(after).toContain('data-lane-capacity="1000"');
+    expect(after).toContain('600 / 1,000');
     expect(after).not.toContain('data-stack-band');
+    // Below 5 providers there is no spread band to toggle, so the Smart/Ghost control stays hidden.
+    expect(after).not.toContain('Background style');
   });
 
   test('buildLaneStops collapses pre/post reset timestamps, preserves both sides, and steps 1 stop per timestamp', () => {
@@ -837,16 +844,17 @@ describe('combined lanes chart model & rendering', () => {
         mode: 'remaining',
       })
     );
+    const claudeStart = markup.indexOf('data-series="legacy:claude"');
+    const codexStart = markup.indexOf('data-series="legacy:codex"');
     const totalStart = markup.indexOf('data-series="total"');
-    const claudeStart = markup.indexOf('data-series="claude"');
-    const totalSvg = markup.slice(totalStart, claudeStart);
-    const claudeSvg = markup.slice(claudeStart, markup.indexOf('data-series="codex"'));
+    const claudeSvg = markup.slice(claudeStart, codexStart);
+    const totalSvg = markup.slice(totalStart, markup.indexOf('data-crosshair=', totalStart));
     // Total splits into 2 runs around the null at 300; Claude stays one continuous polyline.
     expect(totalSvg.match(/stroke="var\(--text-primary\)"/g)).toHaveLength(2);
     expect(claudeSvg.match(/stroke="var\(--pool-accent\)"/g)).toHaveLength(1);
   });
 
-  test('signed drain always includes a zero axis tick and renders Total and lanes across zero', async () => {
+  test('signed drain always includes a zero axis tick and renders compact rate cards without capacity bars', async () => {
     await i18n.changeLanguage('en');
     expect(axisTicks(-8, 12)).toEqual([-8, 0, 12]);
     expect(axisTicks(0, 10)).toEqual([0, 5, 10]);
@@ -887,10 +895,13 @@ describe('combined lanes chart model & rendering', () => {
     );
     expect(markup).not.toContain('stroke-dasharray');
     expect(markup).toContain('>0</text>');
-    expect(markup).not.toContain('data-reset-provider');
+    expect(markup).not.toContain('data-total-reset-tick');
+    expect(markup).toContain('6\u00a0points/h');
+    expect(markup).toContain('2\u00a0points/h');
+    expect(markup).not.toContain('data-spread-band');
   });
 
-  test('simultaneous resets offset on Total and right-edge labels flip left without clipping', () => {
+  test('simultaneous resets offset on Total, next reset merges co-occurring providers, and spread band handles gaps & historyOnly', () => {
     const a = {
       ...pool,
       provider: 'claude' as const,
@@ -910,17 +921,6 @@ describe('combined lanes chart model & rendering', () => {
     );
     expect(ticks).toHaveLength(2);
     expect(ticks[0].x).not.toBe(ticks[1].x);
-    const placed = placeLaneResets(
-      [{ atMs: 990, gainPoints: 480 }],
-      0,
-      1000,
-      (t) => t,
-      1000,
-      'en',
-      true
-    );
-    expect(placed[0].anchor).toBe('end');
-    expect(placed[0].labelX).toBeLessThan(990);
     const next = findNextReset([a, b], 500, 1000, (l) =>
       l.provider === 'claude' ? 'Claude' : 'Codex'
     );
@@ -931,6 +931,193 @@ describe('combined lanes chart model & rendering', () => {
         { provider: 'codex', label: 'Codex', gainPoints: 500 },
       ],
     });
+    // Normalization clamps to 0–100%, inserts exact 100% crossings before clamping, preserves nulls,
+    // and returns empty for 0 capacity.
+    expect(
+      normalizeSamplesToPercent([sample(100, 50), sample(200, null), sample(300, 250)], 200).map(
+        (s) => s.point.remainingPoints
+      )
+    ).toEqual([25, null, 100]);
+    const descent = normalizeSamplesToPercent([sample(100, 250), sample(200, 100)], 200);
+    // 125% -> 50% crosses 100% at t = 100 + (25/75)*100 = 133.333..., so midpoint t=150 stays 87.5%.
+    expect(descent).toHaveLength(3);
+    expect(descent[1].synthetic).toBe(true);
+    expect(descent[1].point.atMs).toBeCloseTo(100 + 100 / 3, 6);
+    expect(descent[1].point.remainingPoints).toBe(100);
+    const midY =
+      descent[1].point.remainingPoints! +
+      ((150 - descent[1].point.atMs) / (200 - descent[1].point.atMs)) *
+        (descent[2].point.remainingPoints! - descent[1].point.remainingPoints!);
+    expect(midY).toBeCloseTo(87.5, 6);
+    expect(normalizeSamplesToPercent([sample(100, 50)], 0)).toEqual([]);
+    const overflowNorm = normalizePercentValue(250, 200);
+    expect(overflowNorm).toEqual({ rawPct: 125, plotPct: 100, overflow: true });
+    expect(formatNormalizedPercentLabel(overflowNorm!)).toBe('>100%');
+    // Spread band computes min/max across continuous overlapping segments within each phase,
+    // splits across missing gaps, ignores historyOnly alignment zeros during projection, and
+    // flags uncovered tails/isolated readings via `fullyCovered`.
+    const spreadRes = computeSpreadBand(
+      [
+        [
+          sample(100, 80),
+          sample(200, 70),
+          sample(300, null),
+          sample(400, 60, true),
+          sample(500, 50, true),
+        ],
+        [
+          sample(100, 20),
+          sample(200, 30),
+          sample(300, 40),
+          sample(400, 40, true),
+          sample(500, 35, true),
+        ],
+        [
+          sample(100, 10),
+          sample(200, 5),
+          sample(300, null),
+          sample(400, 0, true),
+          sample(500, 0, true),
+        ],
+      ],
+      [{}, {}, { historyOnly: true }]
+    );
+    expect(spreadRes.runs).toEqual([
+      {
+        projected: false,
+        points: [
+          { atMs: 100, minPct: 10, maxPct: 80 },
+          { atMs: 200, minPct: 5, maxPct: 70 },
+        ],
+      },
+      // At t=400..500 (projected), historyOnly 0% is ignored so minPct stays 40 and 35.
+      {
+        projected: true,
+        points: [
+          { atMs: 400, minPct: 40, maxPct: 60 },
+          { atMs: 500, minPct: 35, maxPct: 50 },
+        ],
+      },
+    ]);
+    // Lane 2 had an uncovered solo segment on [200, 300], so fullyCovered is false.
+    expect(spreadRes.fullyCovered).toBe(false);
+    // Disjoint provider pairs never bridge across their handoff timestamp, and recorded-to-forecast
+    // transitions never bridge across a gap.
+    const disjointRes = computeSpreadBand(
+      [
+        [sample(100, 80), sample(200, 70)],
+        [sample(100, 40), sample(200, 30)],
+        [sample(200, 90), sample(300, 80)],
+        [sample(200, 50), sample(300, 40)],
+      ],
+      [{}, {}, {}, {}]
+    );
+    expect(disjointRes.runs).toHaveLength(2);
+    expect(disjointRes.fullyCovered).toBe(true);
+    expect(disjointRes.runs[0].points.map((p) => p.atMs)).toEqual([100, 200]);
+    expect(disjointRes.runs[1].points.map((p) => p.atMs)).toEqual([200, 300]);
+    // Staggered unaligned timestamps + single-lane vertical reset stay continuous and pinch on crossings.
+    const staggeredRes = computeSpreadBand(
+      [
+        [
+          sample(100, 80, true),
+          sample(200, 20, true),
+          sample(200, 90, true),
+          sample(300, 70, true),
+        ],
+        [sample(100, 20, true), sample(300, 80, true)],
+      ],
+      [{}, {}]
+    );
+    expect(staggeredRes.runs).toHaveLength(1);
+    expect(staggeredRes.fullyCovered).toBe(true);
+    expect(staggeredRes.runs[0].projected).toBe(true);
+    // Crossing between t=100 (80 vs 20) and t=200 (20 vs 50): 80-0.6dt = 20+0.3dt => dt=66.67 => t=166.67, val=40.
+    expect(
+      staggeredRes.runs[0].points.some(
+        (p) =>
+          Math.abs(p.atMs - (100 + 200 / 3)) < 1e-4 &&
+          Math.abs(p.minPct - 40) < 1e-4 &&
+          Math.abs(p.maxPct - 40) < 1e-4
+      )
+    ).toBe(true);
+    // Single-lane reset steps vertically at t=200 without cutting the spread run.
+    expect(staggeredRes.runs[0].points.filter((p) => p.atMs === 200)).toEqual([
+      { atMs: 200, minPct: 20, maxPct: 50 },
+      { atMs: 200, minPct: 50, maxPct: 90 },
+    ]);
+    // An isolated observation outside any overlapping run sets fullyCovered=false so Smart keeps lines.
+    const isolatedRes = computeSpreadBand(
+      [
+        [sample(100, 80), sample(200, 70), sample(300, null), sample(400, 50)],
+        [sample(100, 40), sample(200, 30)],
+      ],
+      [{}, {}]
+    );
+    expect(isolatedRes.runs).toHaveLength(1);
+    expect(isolatedRes.fullyCovered).toBe(false);
+    // An isolated 90% reading INSIDE an overlapping 20–40% span is still uncovered (value check, not just timestamp).
+    const interiorIsolatedRes = computeSpreadBand(
+      [[sample(100, 40), sample(200, 40)], [sample(100, 20), sample(200, 20)], [sample(150, 90)]],
+      [{}, {}, {}]
+    );
+    expect(interiorIsolatedRes.fullyCovered).toBe(false);
+    // An end-of-run post-reset value not attached to a subsequent segment is also flagged uncovered.
+    const endResetRes = computeSpreadBand(
+      [
+        [sample(100, 50), sample(200, 30), sample(200, 90)],
+        [sample(100, 40), sample(200, 20)],
+      ],
+      [{}, {}]
+    );
+    expect(endResetRes.fullyCovered).toBe(false);
+    // Interior lane crossings that do not touch the outer min/max envelope emit zero extra vertices.
+    const interiorCrossRes = computeSpreadBand(
+      [
+        [sample(100, 90), sample(200, 90)],
+        [sample(100, 10), sample(200, 10)],
+        [sample(100, 30), sample(200, 70)],
+        [sample(100, 70), sample(200, 30)],
+      ],
+      [{}, {}, {}, {}]
+    );
+    expect(interiorCrossRes.fullyCovered).toBe(true);
+    expect(interiorCrossRes.runs).toEqual([
+      {
+        projected: false,
+        points: [
+          { atMs: 100, minPct: 10, maxPct: 90 },
+          { atMs: 200, minPct: 10, maxPct: 90 },
+        ],
+      },
+    ]);
+    // Offscreen edge-interpolation neighbors before `fromMs` (or after `toMs`) never suppress
+    // coverage when all providers overlap across the visible span [200, 500].
+    const offscreenClippedRes = computeSpreadBand(
+      [
+        [sample(50, 90), sample(150, 85), sample(200, 80), sample(500, 60)],
+        [sample(200, 40), sample(500, 20), sample(700, 10)],
+      ],
+      [{}, {}],
+      200,
+      500
+    );
+    expect(offscreenClippedRes.fullyCovered).toBe(true);
+    expect(offscreenClippedRes.runs).toEqual([
+      {
+        projected: false,
+        points: [
+          { atMs: 200, minPct: 40, maxPct: 80 },
+          { atMs: 500, minPct: 20, maxPct: 60 },
+        ],
+      },
+    ]);
+    // Browser persistence parser safely validates stored values.
+    expect(parseCombinedBackgroundMode('ghost')).toBe('ghost');
+    expect(parseCombinedBackgroundMode('smart')).toBe('smart');
+    expect(parseCombinedBackgroundMode('bogus')).toBe('smart');
+    expect(parseCombinedBackgroundMode(null)).toBe('smart');
+    expect(COMBINED_BACKGROUND_STORAGE_KEY).toBe('quotaPool.combinedBackgroundMode');
   });
 
   test('a history-only lane draws its history with no forecast stroke or reset ticks', async () => {
@@ -965,10 +1152,10 @@ describe('combined lanes chart model & rendering', () => {
         mode: 'remaining',
       })
     );
-    const geminiStart = markup.indexOf('data-series="antigravity"');
-    const geminiEnd = markup.indexOf('<line x1=', geminiStart);
+    const geminiStart = markup.indexOf('data-series="legacy:antigravity"');
+    const geminiEnd = markup.indexOf('data-series="total"', geminiStart);
     expect(markup.slice(geminiStart, geminiEnd)).not.toContain('stroke-dasharray');
-    expect(markup).not.toContain('data-reset-provider="antigravity"');
+    expect(markup).not.toContain('data-total-reset-tick="antigravity"');
     expect(markup).toContain('History only');
   });
 
@@ -1008,37 +1195,53 @@ describe('combined lanes chart model & rendering', () => {
     expect(readout).toContain('Total: 60\u00a0points');
     expect(readout).toContain('Claude: 60\u00a0points');
     expect(readout).not.toContain('Gemini');
-    // Crosshair has dots on Total + Claude only (never Gemini's dormant alignment zero).
+    // At rest with Total present, crosshair renders the single crisp Total dot (never Gemini's alignment zero).
     const crosshair = markup.slice(markup.indexOf('data-crosshair="true"'));
-    expect(crosshair.slice(0, crosshair.indexOf('</g>')).match(/<circle/g)).toHaveLength(2);
+    expect(crosshair.slice(0, crosshair.indexOf('</g>')).match(/<circle/g)).toHaveLength(1);
   });
 
-  test('collapses past 3 provider lanes while preserving next reset across all providers', async () => {
+  test('Smart mode scales cleanly past 4 providers with a min–max spread band, constant plot height, and all provider cards', async () => {
     await i18n.changeLanguage('en');
-    const make = (provider: string, resetAt?: number) => ({
+    const make = (provider: string, remaining: number, resetAt?: number) => ({
       ...pool,
       provider,
       displayName: provider,
-      recorded: [point(100, 50), point(500, 40)],
-      projected: [point(500, 40), point(900, 30)],
+      recorded: [point(100, remaining + 20), point(500, remaining)],
+      projected: [point(500, remaining), point(900, Math.max(0, remaining - 20))],
       resets: resetAt ? [{ atMs: resetAt, gainPoints: 80 }] : [],
     });
-    const lanes = [make('claude'), make('codex'), make('antigravity'), make('orbit-ai', 700)];
+    const lanes = [
+      make('claude', 120),
+      make('codex', 90),
+      make('antigravity', 60),
+      make('kimi', 150),
+      make('orbit-ai', 40, 700),
+    ];
     const markup = renderToStaticMarkup(
       createElement(CombinedLanesChart, {
         lanes,
-        totalSeries: { ...pool, capacityPoints: 800, resets: [{ atMs: 700, gainPoints: 80 }] },
+        totalSeries: { ...pool, capacityPoints: 1000, resets: [{ atMs: 700, gainPoints: 80 }] },
         dashboard,
         mode: 'remaining',
       })
     );
-    expect(markup).toContain('Show all 4 providers');
-    expect(markup).toContain('data-series="claude"');
-    expect(markup).toContain('data-series="codex"');
-    expect(markup).toContain('data-series="antigravity"');
-    expect(markup).not.toContain('data-series="orbit-ai"');
-    // Next reset and Total top-edge tick still include the collapsed 4th provider.
-    expect(markup).toContain('orbit-ai +80');
+    // Constant 244px desktop plot height with min–max spread band instead of 5 tangled background curves.
+    expect(markup).toContain('viewBox="0 0 1000 244"');
+    expect(markup).toContain('data-spread-band="true"');
+    expect(markup).not.toContain('data-emphasis="quiet"');
+    // All 5 provider cards remain directly accessible underneath alongside the Smart/Ghost switch.
+    for (const key of [
+      'legacy:claude',
+      'legacy:codex',
+      'legacy:antigravity',
+      'legacy:kimi',
+      'legacy:orbit-ai',
+    ]) {
+      expect(markup).toContain(`data-provider-card="${key}"`);
+    }
+    expect(markup).toContain('Smart');
+    expect(markup).toContain('Ghost lines');
+    expect(markup).toContain('orbit-ai\u00a0+80');
     expect(markup).toContain('data-total-reset-tick="orbit-ai"');
   });
 
@@ -1090,13 +1293,15 @@ describe('combined lanes chart model & rendering', () => {
         savedData: false,
       })
     );
+    const claudeStart = markup.indexOf('data-series="legacy:claude"');
+    const codexStart = markup.indexOf('data-series="legacy:codex"');
     const totalStart = markup.indexOf('data-series="total"');
-    const claudeStart = markup.indexOf('data-series="claude"');
-    const codexStart = markup.indexOf('data-series="codex"');
     // Server Total remains empty/untouched, while Claude keeps its own recorded & forecast paths.
-    expect(markup.slice(totalStart, claudeStart)).not.toContain('<path ');
+    expect(markup.slice(totalStart, markup.indexOf('data-crosshair=', totalStart))).not.toContain(
+      '<path '
+    );
     expect(markup.slice(claudeStart, codexStart)).toContain('stroke-dasharray="7 5"');
-    expect(markup.slice(claudeStart, codexStart)).toContain('data-reset-provider="claude"');
+    expect(markup).toContain('data-total-reset-tick="claude"');
   });
 
   test('a single eligible provider with a server Total renders neutral Total + reset ticks in expanded and minimized views, but keeps its lane when Total is empty', async () => {
@@ -1120,7 +1325,7 @@ describe('combined lanes chart model & rendering', () => {
       );
       expect(markup).toContain('data-series="total"');
       expect(markup).toContain('data-total-reset-tick="claude"');
-      expect(markup).not.toContain('data-series="claude"');
+      expect(markup).not.toContain('data-series="legacy:claude"');
     }
     // Failed inventory leaves Total empty while the sole provider still holds recorded history:
     // the expanded chart must keep the sole provider's lane visible rather than hiding its history.
@@ -1142,7 +1347,7 @@ describe('combined lanes chart model & rendering', () => {
       })
     );
     expect(expandedWithEmptyTotal).toContain('data-series="total"');
-    expect(expandedWithEmptyTotal).toContain('data-series="claude"');
+    expect(expandedWithEmptyTotal).toContain('data-series="legacy:claude"');
     // When minimized hides provider lanes and Total itself has no trace, the chart shows
     // "No observations in this range" and omits the Projected legend even though the hidden
     // lane has recorded/projected data.
@@ -1168,7 +1373,11 @@ describe('combined lanes chart model & rendering', () => {
       resets: [],
     };
     const stops = buildLaneStops({
-      totalSamples: inRange(chartSamples(claude.recorded, claude.projected, 'remaining'), 100, 1000),
+      totalSamples: inRange(
+        chartSamples(claude.recorded, claude.projected, 'remaining'),
+        100,
+        1000
+      ),
       laneSamples: [
         inRange(chartSamples(claude.recorded, claude.projected, 'remaining'), 100, 1000),
       ],
@@ -1189,7 +1398,7 @@ describe('combined lanes chart model & rendering', () => {
     expect(resolveStopIndex(refreshed, { atMs: 150, projected: false }, 200, 1100)).toBeNull();
   });
 
-  test('compact signed drain lanes preserve the zero baseline label and drop colliding bounds', async () => {
+  test('signed drain keeps an explicit zero baseline on the shared rate axis', async () => {
     await i18n.changeLanguage('en');
     const drainPt = (at: number, drain: number): PoolPoint => ({
       atMs: at,
@@ -1219,12 +1428,306 @@ describe('combined lanes chart model & rendering', () => {
         mode: 'drain',
       })
     );
-    const codexHeaderStart = markup.indexOf('data-lane-header="codex"');
-    const codexHeaderEnd = markup.indexOf('</g><g clip-path=', codexHeaderStart);
-    const codexChrome = markup.slice(codexHeaderStart, codexHeaderEnd);
-    expect(codexChrome).toContain('>0</text>');
-    expect(codexChrome).toContain('>-20</text>');
-    expect(codexChrome).not.toContain('>6</text>');
+    expect(markup).toContain('>0</text>');
+    expect(markup).toContain('>-60</text>');
+    expect(markup).toContain('>50</text>');
+    expect(markup).toContain('data-provider-card="legacy:codex"');
+    expect(markup).toContain('6\u00a0points/h');
+  });
+
+  test('providers sharing one hub get distinct poolKey identities across cards, traces, and reset ticks', async () => {
+    await i18n.changeLanguage('en');
+    const claude = {
+      ...pool,
+      provider: 'claude' as const,
+      instanceId: 'shared-hub',
+      recorded: [point(100, 120), point(500, 90)],
+      projected: [point(500, 90), point(800, 60), point(800, 160)],
+      resets: [{ atMs: 800, gainPoints: 100 }],
+    };
+    const codex = {
+      ...pool,
+      provider: 'codex' as const,
+      instanceId: 'shared-hub',
+      recorded: [point(100, 140), point(500, 110)],
+      projected: [point(500, 110), point(850, 70), point(850, 150)],
+      resets: [{ atMs: 850, gainPoints: 80 }],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(CombinedLanesChart, {
+        lanes: [claude, codex],
+        totalSeries: { ...pool, capacityPoints: 400 },
+        dashboard,
+        mode: 'remaining',
+      })
+    );
+    expect(markup).toContain('data-provider-card="shared-hub:claude"');
+    expect(markup).toContain('data-provider-card="shared-hub:codex"');
+    expect(markup).toContain('data-series="shared-hub:claude"');
+    expect(markup).toContain('data-series="shared-hub:codex"');
+    expect(markup).toContain('data-total-reset-lane="shared-hub:claude"');
+    expect(markup).toContain('data-total-reset-lane="shared-hub:codex"');
+  });
+
+  test('zero-capacity dormant pools preserve recorded balances via a clearly labeled points fallback', async () => {
+    await i18n.changeLanguage('en');
+    const dormantLane = {
+      ...pool,
+      provider: 'claude' as const,
+      capacityPoints: 0,
+      remainingPoints: 140,
+      historyOnly: true as const,
+      recorded: [point(100, 260), point(500, 140)],
+      projected: [point(500, 0), point(900, 0)],
+      resets: [],
+    };
+    const dormantTotal = {
+      ...pool,
+      capacityPoints: 0,
+      remainingPoints: 140,
+      recorded: [point(100, 260), point(500, 140)],
+      projected: [],
+      resets: [],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(CombinedLanesChart, {
+        lanes: [
+          dormantLane,
+          {
+            ...dormantLane,
+            provider: 'codex' as const,
+            recorded: [point(100, 80), point(500, 40)],
+          },
+        ],
+        totalSeries: dormantTotal,
+        dashboard,
+        mode: 'remaining',
+      })
+    );
+    expect(markup).toContain('data-scale="points"');
+    expect(markup).toContain('>points</text>');
+    expect(markup).toContain('shared points scale');
+    expect(markup).not.toContain('0–100% capacity');
+    expect(markup).not.toContain('Total line');
+    expect(markup).not.toContain('provider cards');
+    expect(markup).not.toContain('>100%</text>');
+    expect(markup).not.toContain('No observations in this range');
+    expect(markup).toContain('140\u00a0points');
+    expect(markup).not.toContain('/ 0');
+    expect(markup.slice(markup.indexOf('data-series="total"'))).toContain('<path ');
+  });
+
+  test('minimizing an ambiguous-source chart retains compact provider traces even at 5+ providers in Smart mode', async () => {
+    await i18n.changeLanguage('en');
+    const claude = {
+      ...pool,
+      provider: 'claude' as const,
+      instanceId: 'hub-a',
+      sourceLabel: 'Hub A',
+      recorded: [point(100, 160), point(500, 120)],
+      projected: [point(500, 120), point(900, 80)],
+      resets: [],
+    };
+    const codex = {
+      ...pool,
+      provider: 'claude' as const,
+      instanceId: 'hub-b',
+      sourceLabel: 'Hub B',
+      recorded: [point(100, 180), point(500, 150)],
+      projected: [point(500, 150), point(900, 110)],
+      resets: [],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(CombinedLanesChart, {
+        lanes: [claude, codex],
+        totalSeries: undefined,
+        dashboard,
+        mode: 'remaining',
+        minimized: true,
+      })
+    );
+    expect(markup).toContain('viewBox="0 0 1000 160"');
+    expect(markup).not.toContain('data-provider-card=');
+    expect(markup).not.toContain('No observations in this range');
+    expect(markup).toContain('data-series="hub-a:claude"');
+    expect(markup).toContain('data-series="hub-b:claude"');
+    expect(markup).toContain('Claude · Hub A');
+    expect(markup).toContain('Claude · Hub B');
+
+    // Five providers minimized with Total withheld must keep independent colored lines (not an unlabeled spread band).
+    const fiveNoTotal = ['claude', 'codex', 'antigravity', 'kimi', 'orbit-ai'].map((provider) => ({
+      ...pool,
+      provider,
+      recorded: [point(100, 160), point(500, 120)],
+      projected: [point(500, 120), point(900, 80)],
+      resets: [],
+    }));
+    const minimizedFive = renderToStaticMarkup(
+      createElement(CombinedLanesChart, {
+        lanes: fiveNoTotal,
+        totalSeries: undefined,
+        dashboard,
+        mode: 'remaining',
+        minimized: true,
+      })
+    );
+    expect(minimizedFive).not.toContain('data-spread-band="true"');
+    expect(minimizedFive.match(/data-emphasis="quiet"/g)).toHaveLength(5);
+
+    // Minimizing an ambiguous-source chart mixing live and zero-capacity providers falls back to
+    // points so every provider listed in the legend actually renders its recorded trace.
+    const mixedMinimized = renderToStaticMarkup(
+      createElement(CombinedLanesChart, {
+        lanes: [
+          claude,
+          {
+            ...pool,
+            provider: 'codex' as const,
+            instanceId: 'hub-b',
+            capacityPoints: 0,
+            historyOnly: true as const,
+            recorded: [point(100, 140), point(500, 90)],
+            projected: [],
+            resets: [],
+          },
+        ],
+        totalSeries: undefined,
+        dashboard,
+        mode: 'remaining',
+        minimized: true,
+      })
+    );
+    expect(mixedMinimized).toContain('data-scale="points"');
+    expect(mixedMinimized).toContain('data-series="hub-a:claude"');
+    expect(mixedMinimized).toContain('data-series="hub-b:codex"');
+    expect(mixedMinimized.slice(mixedMinimized.indexOf('data-series="hub-b:codex"'))).toContain(
+      '<path '
+    );
+    expect(mixedMinimized).not.toContain('Total line');
+    expect(mixedMinimized).not.toContain('provider cards');
+  });
+
+  test('Smart mode falls back to quiet lines at 5+ providers in rate views, partial views, and uncovered tails', async () => {
+    await i18n.changeLanguage('en');
+    const drainPt = (at: number, drain: number): PoolPoint => ({
+      atMs: at,
+      remainingPoints: 100,
+      burnPointsPerHour: 10,
+      drainPointsPerHour: drain,
+    });
+    const fiveRateLanes = ['claude', 'codex', 'antigravity', 'kimi', 'orbit-ai'].map(
+      (provider, idx) => ({
+        ...pool,
+        provider,
+        recorded: [drainPt(100, -10 + idx * 5), drainPt(500, 4 + idx * 3)],
+        projected: [],
+        resets: [],
+      })
+    );
+    const rateMarkup = renderToStaticMarkup(
+      createElement(CombinedLanesChart, {
+        lanes: fiveRateLanes,
+        totalSeries: { ...pool, recorded: [drainPt(100, -20), drainPt(500, 30)], projected: [] },
+        dashboard,
+        mode: 'drain',
+      })
+    );
+    expect(rateMarkup).not.toContain('data-spread-band="true"');
+    expect(rateMarkup.match(/data-emphasis="quiet"/g)).toHaveLength(5);
+    expect(rateMarkup).not.toContain('Background style');
+
+    // Partial Remaining view: only 1 of 5 lanes has data, so no spread can represent it -> quiet line stays visible.
+    const partialRemaining = fiveRateLanes.map((lane, idx) => ({
+      ...lane,
+      recorded: idx === 0 ? [point(100, 140), point(500, 110)] : [],
+      projected: idx === 0 ? [point(500, 110), point(900, 80)] : [],
+    }));
+    const partialMarkup = renderToStaticMarkup(
+      createElement(CombinedLanesChart, {
+        lanes: partialRemaining,
+        totalSeries: undefined,
+        dashboard,
+        mode: 'remaining',
+      })
+    );
+    expect(partialMarkup).not.toContain('data-spread-band="true"');
+    expect(partialMarkup).toContain('data-series="legacy:claude"');
+    expect(partialMarkup).toContain('data-emphasis="quiet"');
+    expect(partialMarkup).not.toContain('No observations in this range');
+
+    // Uncovered tail: 5 providers overlap [100, 300], then 4 stop reporting while Claude continues to 500.
+    // Smart mode retains quiet lines instead of hiding Claude's [300, 500] tail under a partial spread band.
+    const tailLanes = fiveRateLanes.map((lane, idx) => ({
+      ...lane,
+      recorded:
+        idx === 0
+          ? [point(100, 180), point(300, 150), point(500, 110)]
+          : [point(100, 160), point(300, 130)],
+      projected: [],
+    }));
+    const tailMarkup = renderToStaticMarkup(
+      createElement(CombinedLanesChart, {
+        lanes: tailLanes,
+        totalSeries: undefined,
+        dashboard,
+        mode: 'remaining',
+      })
+    );
+    expect(tailMarkup).not.toContain('data-spread-band="true"');
+    expect(tailMarkup.match(/data-emphasis="quiet"/g)).toHaveLength(5);
+  });
+
+  test('balances exceeding current capacity keep a fixed 0–100% scale, indicate overflow, preserve exact points, and keep crossing geometry exact', async () => {
+    await i18n.changeLanguage('en');
+    const claude = {
+      ...pool,
+      provider: 'claude' as const,
+      capacityPoints: 200,
+      remainingPoints: 100,
+      recorded: [point(100, 250), point(500, 100)],
+      projected: [],
+      resets: [],
+    };
+    const codex = {
+      ...pool,
+      provider: 'codex' as const,
+      capacityPoints: 200,
+      remainingPoints: 250,
+      recorded: [point(100, 180), point(500, 250)],
+      projected: [],
+      resets: [],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(CombinedLanesChart, {
+        lanes: [claude, codex],
+        totalSeries: {
+          ...pool,
+          capacityPoints: 400,
+          remainingPoints: 350,
+          recorded: [point(100, 430), point(500, 350)],
+          projected: [],
+          resets: [],
+        },
+        dashboard,
+        mode: 'remaining',
+      })
+    );
+    expect(markup).toContain('>100%</text>');
+    expect(markup).not.toContain('>125%</text>');
+    expect(markup).toContain('data-overflow="true"');
+    expect(markup).toContain('data-overflow-caret="true"');
+    expect(markup).toContain('&gt;100%');
+    expect(markup).toContain('250 / 200');
+    // Synthetic 100% crossing point bends the SVG stroke path without adding a third fake observation dot.
+    const claudeStart = markup.indexOf('data-series="legacy:claude"');
+    const codexStart = markup.indexOf('data-series="legacy:codex"');
+    const claudeSvg = markup.slice(claudeStart, codexStart);
+    expect(claudeSvg.match(/<circle/g)).toHaveLength(2);
+    const strokePath = claudeSvg.match(
+      /<path d="([^"]+)" fill="none" stroke="var\(--pool-accent\)"/
+    );
+    expect(strokePath).not.toBeNull();
+    expect(strokePath![1].match(/ L/g)).toHaveLength(2);
   });
   test('long rosters get search, sort and a low count; short ones stay plain', async () => {
     await i18n.changeLanguage('en');
@@ -1406,12 +1909,13 @@ describe('pool presentation', () => {
       })
     );
     expect(markup).not.toContain('data-series="total"');
-    expect(markup).toContain('data-series="alpha"');
-    expect(markup).toContain('data-series="beta"');
+    expect(markup).toContain('data-series="alpha:claude"');
+    expect(markup).toContain('data-series="beta:claude"');
     expect(markup).toContain('Claude · Alpha');
     expect(markup).toContain('Claude · Beta');
     expect(markup).toContain('Stale');
-    expect(markup).toContain('>500</text>');
+    expect(markup).toContain('>100%</text>');
+    expect(markup).toContain('390 / 500');
     expect(markup).not.toContain('>700</text>');
     expect(markup).not.toContain('private@example.test');
     const a = chartSamples(alpha.recorded, [], 'remaining');

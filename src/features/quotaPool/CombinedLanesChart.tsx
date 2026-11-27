@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { PoolDashboard, PoolTrace } from '@/domain/quotaPool/types';
 import {
@@ -15,28 +15,37 @@ import {
 } from './chartGeometry';
 import {
   buildLaneStops,
-  computeLanesLayout,
+  buildSpreadPaths,
+  collectScheduledResets,
+  computeHybridFrame,
+  computeSpreadBand,
+  describeCombinedStop,
   findNextReset,
+  formatNormalizedPercentLabel,
   latestRecordedStopIndex,
-  placeLaneResets,
+  normalizePercentValue,
+  normalizeSamplesToPercent,
+  overflowMarkerXs,
   placeTotalResetTicks,
+  readCombinedBackgroundMode,
   sameVisibleTrace,
-  type LaneStop,
+  sampleHasOverflow,
+  shouldUsePercentScale,
+  SMART_BAND_THRESHOLD,
+  writeCombinedBackgroundMode,
+  type CombinedBackgroundMode,
   type LaneTrace,
 } from './combinedLanesModel';
+import { CombinedProviderBars } from './CombinedProviderBars';
+import { poolKey } from './poolOrder';
 import { PoolTracePaths } from './PoolTracePaths';
 import { formatPoolDate, formatPoolNumber, formatPoolTick } from './presentation';
-import {
-  poolProviderLabel,
-  poolProviderStyle,
-  providerGlyphPath,
-  providerMarkerShape,
-} from './providerPresentation';
+import { poolProviderLabel, poolProviderStyle } from './providerPresentation';
 import { useChartScrub } from './useChartScrub';
 import styles from './QuotaPoolPage.module.scss';
 
-const DEFAULT_VISIBLE_LANES = 3;
 const MAX_INLINE_RESET_PILLS = 2;
+const EMPTY_KEY_SET: ReadonlySet<string> = new Set();
 
 export function CombinedLanesChart({
   lanes,
@@ -57,7 +66,9 @@ export function CombinedLanesChart({
   const id = useId();
   const container = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(defaultChartFrame.width);
-  const [showAllLanes, setShowAllLanes] = useState(false);
+  const [bgMode, setBgMode] = useState<CombinedBackgroundMode>(() => readCombinedBackgroundMode());
+  const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
+  const [pinnedProviders, setPinnedProviders] = useState<string[]>([]);
 
   useEffect(() => {
     const element = container.current;
@@ -72,7 +83,13 @@ export function CombinedLanesChart({
     return () => observer.disconnect();
   }, []);
 
-  const unit = t(`quota_pool.${mode === 'remaining' ? 'points' : 'points_hour'}`);
+  const setBackgroundMode = (next: CombinedBackgroundMode) => {
+    setBgMode(next);
+    writeCombinedBackgroundMode(next);
+  };
+
+  const isRemaining = mode === 'remaining';
+  const unit = t(`quota_pool.${isRemaining ? 'points' : 'points_hour'}`);
   const narrow = width < 600;
   const tickCount = width < 480 ? 4 : width < 850 ? 5 : 8;
   const { fromMs, toMs } = viewRange(dashboard, mode);
@@ -80,208 +97,295 @@ export function CombinedLanesChart({
   const hourly = toMs - fromMs <= 2.5 * 86_400_000;
   const field = metricField[mode];
 
-  const sharesProvider = (lane: LaneTrace) =>
-    lanes.filter((other) => other.provider === lane.provider).length > 1;
-  const laneLabel = (lane: LaneTrace) =>
-    `${poolProviderLabel(t, lane.provider, lane.displayName)}${(lane.sourceLabel || lane.instanceId) && sharesProvider(lane) ? ` · ${lane.sourceLabel ?? lane.instanceId}` : ''}`;
+  const laneLabel = useCallback(
+    (lane: LaneTrace) => {
+      const multi = lanes.filter((other) => other.provider === lane.provider).length > 1;
+      return `${poolProviderLabel(t, lane.provider, lane.displayName)}${(lane.sourceLabel || lane.instanceId) && multi ? ` · ${lane.sourceLabel ?? lane.instanceId}` : ''}`;
+    },
+    [lanes, t]
+  );
   const number = (value: number | null) => formatPoolNumber(value, i18n.language);
   const date = (value: number) => formatPoolDate(value, i18n.language);
   const visible = (at: number | null): at is number => at !== null && at >= fromMs && at <= toMs;
 
-  const totalSamples = totalSeries
-    ? inRange(chartSamples(totalSeries.recorded, totalSeries.projected, mode), fromMs, toMs)
-    : [];
-  const laneSampleSets = lanes.map((lane) => {
-    const samples = inRange(chartSamples(lane.recorded, lane.projected, mode), fromMs, toMs);
-    return {
-      lane,
-      samples,
-      visibleSamples: lane.historyOnly ? samples.filter((s) => !s.projected) : samples,
-      sparseProjection:
-        !lane.historyOnly && samples.filter((sample) => sample.projected).length < 3,
-    };
-  });
+  const totalSamples = useMemo(
+    () =>
+      totalSeries
+        ? inRange(chartSamples(totalSeries.recorded, totalSeries.projected, mode), fromMs, toMs)
+        : [],
+    [totalSeries, mode, fromMs, toMs]
+  );
+  const laneRawSets = useMemo(
+    () =>
+      lanes.map((lane) => {
+        const key = poolKey(lane);
+        const samples = inRange(chartSamples(lane.recorded, lane.projected, mode), fromMs, toMs);
+        const visibleSamples = lane.historyOnly ? samples.filter((s) => !s.projected) : samples;
+        return {
+          lane,
+          key,
+          samples,
+          visibleSamples,
+          sparseProjection:
+            !lane.historyOnly && samples.filter((sample) => sample.projected).length < 3,
+        };
+      }),
+    [lanes, mode, fromMs, toMs]
+  );
 
-  // Always render the neutral server Total when supplied. Suppress a sole lane below it only when
-  // Total actually draws the same visible trace (e.g. an empty failed-inventory Total still keeps
-  // the sole provider's recorded history visible in its lane).
+  // Restrict focus sets to currently mounted lanes so removed providers never leave charts dimmed.
+  const validKeys = new Set(laneRawSets.map((set) => set.key));
+  const activePinned = pinnedProviders.filter((key) => validKeys.has(key));
+  const activeHovered = hoveredProvider && validKeys.has(hoveredProvider) ? hoveredProvider : null;
+  const focusKeys = new Set<string>(activePinned);
+  if (activeHovered) focusKeys.add(activeHovered);
+  const hasFocus = !minimized && focusKeys.size > 0;
+
   const hasTotal = Boolean(totalSeries);
   const skipDuplicateLane =
     hasTotal &&
     lanes.length === 1 &&
-    sameVisibleTrace(totalSamples, laneSampleSets[0].visibleSamples, mode);
-  const singleStandaloneLane = !hasTotal && lanes.length === 1;
-  const collapsedCount =
-    !skipDuplicateLane && !minimized && !showAllLanes && lanes.length > DEFAULT_VISIBLE_LANES
-      ? lanes.length - DEFAULT_VISIBLE_LANES
-      : 0;
-  const visibleLaneSets =
-    (minimized && hasTotal) || skipDuplicateLane
-      ? []
-      : collapsedCount > 0
-        ? laneSampleSets.slice(0, DEFAULT_VISIBLE_LANES)
-        : laneSampleSets;
+    sameVisibleTrace(totalSamples, laneRawSets[0].visibleSamples, mode);
+  // Hide cards when minimized, but keep compact provider traces whenever Total is withheld.
+  const showProviderCards = !minimized && !skipDuplicateLane && lanes.length > 0;
+  const showProviderTraces = showProviderCards || (minimized && !hasTotal && lanes.length > 0);
 
-  // Measure widest Y-axis tick across Total and every rendered lane so the gutter never clips.
-  const tickCandidates: number[] = [];
-  if (totalSeries && hasTotal) {
-    const totalAxis = chartGeometry(totalSamples, mode, totalSeries.capacityPoints, fromMs, toMs);
-    tickCandidates.push(totalSeries.capacityPoints, ...axisTicks(totalAxis.min, totalAxis.max));
-  }
-  for (const { lane, visibleSamples } of visibleLaneSets) {
-    const laneAxis = chartGeometry(visibleSamples, mode, lane.capacityPoints, fromMs, toMs);
-    tickCandidates.push(lane.capacityPoints, ...axisTicks(laneAxis.min, laneAxis.max));
-  }
-  const numberChars = Math.max(1, ...tickCandidates.map((v) => number(v).length));
-  const alignUnitEnd = width >= 600;
-  const labelChars = alignUnitEnd
-    ? Math.max(numberChars, Math.ceil(unit.length * 0.72))
-    : numberChars;
-
-  const layout = computeLanesLayout({
-    width,
-    minimized,
-    hasTotal,
-    visibleLaneCount: visibleLaneSets.length,
-    labelChars,
-  });
-
-  const x = (atMs: number) =>
-    layout.left + ((atMs - fromMs) / Math.max(1, toMs - fromMs)) * (layout.right - layout.left);
-
-  const stops = buildLaneStops({
+  const requireAllLanesPlotted = minimized && !hasTotal;
+  const unfocusedPercentScale = useMemo(
+    () =>
+      shouldUsePercentScale({
+        isRemaining,
+        totalSeries,
+        totalSamples,
+        laneSets: laneRawSets,
+        focusKeys: EMPTY_KEY_SET,
+        hasFocus: false,
+        requireAllLanesPlotted,
+      }),
+    [isRemaining, totalSeries, totalSamples, laneRawSets, requireAllLanesPlotted]
+  );
+  const usePercentScale = shouldUsePercentScale({
+    isRemaining,
+    totalSeries,
     totalSamples,
-    laneSamples: laneSampleSets.map((s) => s.samples),
-    lanes,
-    mode,
-    fromMs,
-    toMs,
-    labelOf: laneLabel,
+    laneSets: laneRawSets,
+    focusKeys,
+    hasFocus,
+    requireAllLanesPlotted,
   });
+
+  const normalizedLaneSamples = useMemo(
+    () =>
+      unfocusedPercentScale
+        ? laneRawSets.map((set) =>
+            normalizeSamplesToPercent(set.visibleSamples, set.lane.capacityPoints)
+          )
+        : [],
+    [unfocusedPercentScale, laneRawSets]
+  );
+
+  // Memoize spread computation strictly against unfocused trace data and visible range so
+  // scrubbing, hover, pin, and Ghost toggles never recompute it. Minimized no-Total charts
+  // always keep colored provider lines rather than an unlabeled spread band.
+  const baseSpread = useMemo(() => {
+    if (!unfocusedPercentScale || !showProviderCards || lanes.length < SMART_BAND_THRESHOLD) {
+      return { runs: [], fullyCovered: false };
+    }
+    return computeSpreadBand(normalizedLaneSamples, lanes, fromMs, toMs);
+  }, [unfocusedPercentScale, showProviderCards, lanes, normalizedLaneSamples, fromMs, toMs]);
+
+  const laneSampleSets = useMemo(
+    () =>
+      laneRawSets.map((set, index) => ({
+        ...set,
+        plotSamples: usePercentScale
+          ? (normalizedLaneSamples[index] ??
+            normalizeSamplesToPercent(set.visibleSamples, set.lane.capacityPoints))
+          : set.visibleSamples,
+        hasOverflow:
+          usePercentScale &&
+          sampleHasOverflow(set.visibleSamples, set.lane.capacityPoints, fromMs, toMs),
+      })),
+    [laneRawSets, usePercentScale, normalizedLaneSamples, fromMs, toMs]
+  );
+  const plotTotalSamples = useMemo(
+    () =>
+      usePercentScale && totalSeries
+        ? normalizeSamplesToPercent(totalSamples, totalSeries.capacityPoints)
+        : totalSamples,
+    [usePercentScale, totalSeries, totalSamples]
+  );
+  const totalHasOverflow = useMemo(
+    () =>
+      usePercentScale && totalSeries
+        ? sampleHasOverflow(totalSamples, totalSeries.capacityPoints, fromMs, toMs)
+        : false,
+    [usePercentScale, totalSeries, totalSamples, fromMs, toMs]
+  );
+  // Decide switch slot from unfocused state so focusing a zero-capacity pool never shifts the grid.
+  const baseSpreadCanRepresent = baseSpread.runs.length > 0 && baseSpread.fullyCovered;
+  const showBgSwitch = showProviderCards && baseSpreadCanRepresent;
+  const showSpreadBand = usePercentScale && baseSpreadCanRepresent && bgMode === 'smart';
+  const showQuietLines = showProviderTraces && !showSpreadBand;
+  const plottedLaneSets = showProviderTraces
+    ? laneSampleSets.filter((set) => showQuietLines || focusKeys.has(set.key))
+    : [];
+
+  // Derive non-% axis extents from all eligible traces so hover/pin emphasis never rescales or
+  // shifts horizontal gutters mid-interaction.
+  const axisProbeSamples = !usePercentScale
+    ? [
+        ...(hasTotal ? totalSamples : []),
+        ...(showProviderTraces ? laneSampleSets.flatMap((set) => set.visibleSamples) : []),
+      ]
+    : [];
+  const probeAxis = !usePercentScale
+    ? chartGeometry(axisProbeSamples, mode, 0, fromMs, toMs)
+    : null;
+  const pctTicks = axisTicks(0, 100);
+  const totalAxisLabel = t('quota_pool.total_points_axis');
+  const totalCap = totalSeries?.capacityPoints ?? 0;
+  const pctLeftLabels = pctTicks.map((v) => `${number(v)}%`);
+  const pctRightLabels =
+    !narrow && hasTotal && totalCap > 0
+      ? pctTicks.map((pct) => number((pct / 100) * totalCap))
+      : [];
+  const pctLeftChars = Math.max(1, ...pctLeftLabels.map((s) => s.length));
+  const pctRightChars =
+    pctRightLabels.length > 0
+      ? Math.max(...pctRightLabels.map((s) => s.length), Math.ceil(totalAxisLabel.length * 0.75))
+      : 0;
+  // Share one memoized 0–100% frame and geometry across axes, traces, and cached spread paths so
+  // hovering/leaving a zero-capacity card never discards or duplicates percentage transforms.
+  const pctFrame = useMemo(
+    () =>
+      computeHybridFrame({
+        width,
+        minimized,
+        leftChars: pctLeftChars,
+        rightChars: pctRightChars,
+      }),
+    [width, minimized, pctLeftChars, pctRightChars]
+  );
+  const pctGeom = useMemo(
+    () => chartGeometry([], 'remaining', 100, fromMs, toMs, pctFrame),
+    [fromMs, toMs, pctFrame]
+  );
+  const spreadPaths = useMemo(
+    () => buildSpreadPaths(baseSpread.runs, pctGeom.x, pctGeom.y),
+    [baseSpread.runs, pctGeom]
+  );
+
+  const yTicks = usePercentScale ? pctTicks : axisTicks(probeAxis!.min, probeAxis!.max);
+  const leftLabels = usePercentScale ? pctLeftLabels : yTicks.map((v) => number(v));
+  const showRightAxis = usePercentScale && pctRightLabels.length > 0;
+  const rightLabels = showRightAxis ? pctRightLabels : [];
+  const leftChars = usePercentScale
+    ? pctLeftChars
+    : Math.max(1, ...leftLabels.map((s) => s.length), !narrow ? Math.ceil(unit.length * 0.72) : 0);
+  const frame = usePercentScale
+    ? pctFrame
+    : computeHybridFrame({ width, minimized, leftChars, rightChars: 0 });
+  const geom = usePercentScale
+    ? pctGeom
+    : chartGeometry(axisProbeSamples, mode, 0, fromMs, toMs, frame);
+  const { x, y: yOf, segmentRuns } = geom;
+
+  const clearPins = () => {
+    setPinnedProviders([]);
+    setHoveredProvider(null);
+  };
+
+  const stops = useMemo(
+    () =>
+      buildLaneStops({
+        totalSamples,
+        laneSamples: laneRawSets.map((s) => s.samples),
+        lanes,
+        mode,
+        fromMs,
+        toMs,
+        labelOf: laneLabel,
+      }),
+    [totalSamples, laneRawSets, lanes, mode, fromMs, toMs, laneLabel]
+  );
   const latestIdx = latestRecordedStopIndex(stops, nowMs);
   const scrub = useChartScrub({
     stops,
     latestIdx,
     fromMs,
     toMs,
-    layoutWidth: layout.width,
+    layoutWidth: frame.width,
     x,
+    onEscapeAtRest: activePinned.length > 0 ? clearPins : undefined,
   });
   const activeStop = stops[scrub.activeIndex];
   const committedStop = stops[scrub.committedIndex];
   const { isInspecting, showNowButton } = scrub;
 
+  // Derive empty-state & Projected legend strictly from traces actually plotted on the SVG.
   const hasValues =
-    Boolean(layout.totalBox && totalSamples.some((s) => s.point[field] !== null)) ||
-    visibleLaneSets.some((set) => set.visibleSamples.some((s) => s.point[field] !== null));
+    Boolean(hasTotal && plotTotalSamples.some((s) => s.point[field] !== null)) ||
+    plottedLaneSets.some((set) => set.plotSamples.some((s) => s.point[field] !== null)) ||
+    showSpreadBand;
   const hasProjection =
     Boolean(
-      layout.totalBox &&
+      hasTotal &&
       totalSeries &&
-      totalSamples.some((s) => s.projected && s.point[field] !== null)
+      plotTotalSamples.some((s) => s.projected && s.point[field] !== null)
     ) ||
-    visibleLaneSets.some((set) =>
-      set.visibleSamples.some((s) => s.projected && s.point[field] !== null)
-    );
+    plottedLaneSets.some((set) =>
+      set.plotSamples.some((s) => s.projected && s.point[field] !== null)
+    ) ||
+    (showSpreadBand && baseSpread.runs.some((run) => run.projected));
 
-  const totalGeom =
-    totalSeries && layout.totalBox
-      ? chartGeometry(totalSamples, mode, totalSeries.capacityPoints, fromMs, toMs, layout.totalBox)
-      : null;
-  const laneGeoms = visibleLaneSets.map(({ lane, visibleSamples }, index) =>
-    chartGeometry(visibleSamples, mode, lane.capacityPoints, fromMs, toMs, layout.laneBoxes[index])
-  );
-
-  const totalTicks =
-    mode === 'remaining' && layout.totalBox
-      ? placeTotalResetTicks(lanes, fromMs, toMs, x, laneLabel)
-      : [];
-  const laneResetSets = visibleLaneSets.map(({ lane }, index) =>
-    mode === 'remaining' && !lane.historyOnly
-      ? placeLaneResets(
-          lane.resets,
-          fromMs,
-          toMs,
-          x,
-          layout.laneBoxes[index].right,
-          i18n.language,
-          narrow
-        )
-      : []
-  );
-  const hasAnyReset =
-    totalTicks.length > 0 || laneResetSets.some((resetList) => resetList.length > 0);
+  const allTotalTicks = isRemaining ? placeTotalResetTicks(lanes, fromMs, toMs, x, laneLabel) : [];
+  const visibleTicks = hasFocus
+    ? allTotalTicks.filter((tick) => focusKeys.has(tick.laneKey))
+    : allTotalTicks;
+  const showMinimizedProviderLegend = minimized && !hasTotal && showProviderTraces;
   const showTickLegend =
-    hasTotal && (minimized || skipDuplicateLane) && mode === 'remaining' && totalTicks.length > 0;
-  const nextReset = mode === 'remaining' ? findNextReset(lanes, nowMs, toMs, laneLabel) : null;
-
-  // All scheduled resets across all active lanes, for assistive tech.
-  const allScheduledResets =
-    mode === 'remaining'
-      ? lanes
-          .flatMap((lane) =>
-            lane.historyOnly
-              ? []
-              : lane.resets
-                  .filter((r) => visible(r.atMs) && r.gainPoints > 0)
-                  .map((r) => ({
-                    atMs: r.atMs,
-                    gainPoints: r.gainPoints,
-                    provider: lane.provider,
-                    label: laneLabel(lane),
-                  }))
-          )
-          .sort((a, b) => a.atMs - b.atMs)
-      : [];
+    isRemaining &&
+    !showMinimizedProviderLegend &&
+    (minimized || skipDuplicateLane) &&
+    visibleTicks.length > 0;
+  const tickLaneKeys = new Set(visibleTicks.map((tick) => tick.laneKey));
+  const nextReset = isRemaining ? findNextReset(lanes, nowMs, toMs, laneLabel) : null;
+  const allScheduledResets = isRemaining
+    ? collectScheduledResets(lanes, fromMs, toMs, laneLabel)
+    : [];
 
   const snapshotText = t(`quota_pool.${savedData ? 'saved_snapshot' : 'snapshot'}`);
   const snapshotX = visible(nowMs) ? x(nowMs) : null;
   const snapshotAnchor =
     snapshotX === null
       ? 'middle'
-      : layout.right - snapshotX < 64
+      : frame.right - snapshotX < 64
         ? 'end'
-        : snapshotX - layout.left < 64
+        : snapshotX - frame.left < 64
           ? 'start'
           : 'middle';
 
-  const topPlotY = layout.totalBox?.top ?? layout.laneBoxes[0]?.top ?? 36;
-  const bottomPlotY =
-    layout.laneBoxes[layout.laneBoxes.length - 1]?.bottom ?? layout.totalBox?.bottom ?? 126;
-
-  // Build assistive-tech summary for the committed stop (never floods aria-live on hover).
-  const describeStop = (stop: LaneStop | undefined, isLatest: boolean): string => {
-    if (!stop) return t('quota_pool.inspect_hint');
-    const parts: string[] = [];
-    parts.push(
-      isLatest && !stop.projected
-        ? `${t('quota_pool.latest_reading')} · ${date(stop.atMs)}`
-        : `${date(stop.atMs)}${stop.projected ? ` · ${t('quota_pool.projected')}` : ''}`
-    );
-    if (totalSeries && stop.totalAfter !== null) {
-      parts.push(`${t('quota_pool.total')}: ${number(stop.totalAfter)}\u00a0${unit}`);
-    }
-    lanes.forEach((lane, index) => {
-      if (lane.historyOnly && stop.projected) return;
-      const val = stop.lanes[index];
-      if (!val?.present) return;
-      const reset = stop.resets.find((r) => r.laneIndex === index);
-      if (reset) {
-        parts.push(
-          `${laneLabel(lane)}: ${number(val.after)}\u00a0${unit} (+${number(reset.gainPoints)})`
-        );
-      } else {
-        parts.push(
-          `${laneLabel(lane)}: ${val.after === null ? t('quota_pool.no_observation') : `${number(val.after)}\u00a0${unit}`}`
-        );
-      }
-    });
-    return parts.join(' · ');
-  };
+  const readoutText = describeCombinedStop({
+    stop: committedStop,
+    isLatest: scrub.isAtLatestCommit,
+    hasTotal,
+    lanes,
+    unit,
+    laneLabel,
+    date,
+    number,
+    labels: {
+      inspectHint: t('quota_pool.inspect_hint'),
+      latestReading: t('quota_pool.latest_reading'),
+      projected: t('quota_pool.projected'),
+      total: t('quota_pool.total'),
+      noObservation: t('quota_pool.no_observation'),
+    },
+  });
 
   const totalSparseProjection =
     totalSeries !== undefined && totalSamples.filter((s) => s.projected).length < 3;
-  const activeX = isInspecting && activeStop ? x(activeStop.atMs) : null;
   const inlineResets =
     isInspecting && activeStop ? activeStop.resets.slice(0, MAX_INLINE_RESET_PILLS) : [];
   const hiddenResetCount =
@@ -293,11 +397,92 @@ export function CombinedLanesChart({
           .map((reset) => `${reset.label} +${number(reset.gainPoints)}`)
           .join(', ')
       : undefined;
-  const tickProviders = new Set(totalTicks.map((tick) => tick.provider));
+
+  const totalNormAtActive =
+    isRemaining && totalSeries
+      ? normalizePercentValue(activeStop?.totalAfter ?? null, totalSeries.capacityPoints)
+      : null;
+
+  const togglePinProvider = (key: string) => {
+    setPinnedProviders((prev) =>
+      prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]
+    );
+  };
+
+  const renderOverflowCaret = (
+    cx: number,
+    cy: number,
+    stroke: string,
+    key: string,
+    extraStyle?: ReturnType<typeof poolProviderStyle>
+  ) => (
+    <path
+      key={key}
+      {...extraStyle}
+      d={`M${cx - 3.5},${cy - 6.5} L${cx},${cy - 10} L${cx + 3.5},${cy - 6.5}`}
+      fill="none"
+      stroke={stroke}
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      data-overflow-caret="true"
+    />
+  );
+
+  const renderProviderTrace = (
+    set: (typeof laneSampleSets)[number],
+    emphasis: 'quiet' | 'focused'
+  ) => {
+    if (!set.plotSamples.length) return null;
+    const isFocused = emphasis === 'focused';
+    const traceOpacity = isFocused ? undefined : hasFocus ? 0.15 : lanes.length <= 4 ? 0.48 : 0.42;
+    const strokeWidth = isFocused ? 2.4 : lanes.length <= 4 ? 1.5 : 1.25;
+    const overflowXs = set.hasOverflow
+      ? overflowMarkerXs(set.visibleSamples, set.lane.capacityPoints, fromMs, toMs, x)
+      : [];
+    return (
+      <g
+        key={`${emphasis}-${set.key}`}
+        {...poolProviderStyle(set.lane.provider)}
+        data-series={set.key}
+        data-emphasis={emphasis}
+        data-overflow={set.hasOverflow ? 'true' : undefined}
+        opacity={traceOpacity}
+      >
+        <PoolTracePaths
+          samples={set.plotSamples}
+          mode={mode}
+          x={x}
+          y={yOf}
+          segmentRuns={segmentRuns}
+          stroke="var(--pool-accent)"
+          strokeWidth={strokeWidth}
+          fillId={`${id}-empty-fill`}
+          includeProjected={!set.lane.historyOnly}
+          showResetRisers
+          sparseProjection={set.sparseProjection}
+          keyPrefix={`${emphasis}-${set.key}`}
+        />
+        {overflowXs.map((cx, idx) =>
+          renderOverflowCaret(
+            cx,
+            yOf(100),
+            'var(--pool-accent)',
+            `${emphasis}-${set.key}-ov-${idx}`
+          )
+        )}
+      </g>
+    );
+  };
+
+  const totalOverflowXs =
+    totalHasOverflow && totalSeries
+      ? overflowMarkerXs(totalSamples, totalSeries.capacityPoints, fromMs, toMs, x)
+      : [];
 
   return (
     <div className={styles.chart} ref={container}>
-      {/* Thumb-safe readout bar above the plot: fixed height so pinning never shifts the SVG. */}
+      {/* Thumb-safe constant-height readout bar above the plot. */}
       <div className={styles.lanesReadout}>
         <div className={styles.lanesReadoutMain}>
           {activeStop ? (
@@ -315,10 +500,12 @@ export function CombinedLanesChart({
                   {t('quota_pool.total')}{' '}
                   <strong>
                     {number(activeStop.totalAfter)}
-                    {mode === 'remaining'
+                    {isRemaining && totalSeries.capacityPoints > 0
                       ? ` / ${number(totalSeries.capacityPoints)}`
                       : `\u00a0${unit}`}
                   </strong>
+                  {totalNormAtActive !== null &&
+                    ` (${formatNormalizedPercentLabel(totalNormAtActive)})`}
                 </span>
               )}
               {inlineResets.length > 0 && (
@@ -329,7 +516,7 @@ export function CombinedLanesChart({
                       className={styles.lanesResetPill}
                       {...poolProviderStyle(reset.provider)}
                     >
-                      {reset.label} +{number(reset.gainPoints)}
+                      {`${reset.label}\u00a0+${number(reset.gainPoints)}`}
                     </span>
                   ))}
                   {hiddenResetCount > 0 && (
@@ -343,7 +530,7 @@ export function CombinedLanesChart({
                 <span className={styles.lanesNextReset}>
                   {t('quota_pool.next_reset_summary', {
                     details: nextReset.items
-                      .map((item) => `${item.label} +${number(item.gainPoints)}`)
+                      .map((item) => `${item.label}\u00a0+${number(item.gainPoints)}`)
                       .join(', '),
                     date: date(nextReset.atMs),
                   })}
@@ -371,24 +558,30 @@ export function CombinedLanesChart({
 
       <svg
         className={styles.lanesChart}
-        viewBox={`0 0 ${layout.width} ${layout.height}`}
+        viewBox={`0 0 ${frame.width} ${frame.height}`}
         role="img"
         aria-labelledby={`${id}-title ${id}-desc`}
         aria-describedby={`${id}-readout`}
+        data-scale={usePercentScale ? 'percent' : isRemaining ? 'points' : 'rate'}
         tabIndex={stops.length > 1 ? 0 : undefined}
         {...scrub.svgHandlers}
       >
         <title id={`${id}-title`}>
           {t('quota_pool.chart_title', {
-            provider: singleStandaloneLane ? laneLabel(lanes[0]) : t('quota_pool.combined_usage'),
+            provider:
+              !hasTotal && lanes.length === 1
+                ? laneLabel(lanes[0])
+                : t('quota_pool.combined_usage'),
             mode: t(`quota_pool.${mode}`),
           })}
         </title>
         <desc id={`${id}-desc`}>
           {t(
-            mode === 'remaining'
-              ? 'quota_pool.combined_lanes_description'
-              : 'quota_pool.combined_lanes_rate_description'
+            !isRemaining
+              ? 'quota_pool.combined_lanes_rate_description'
+              : usePercentScale
+                ? 'quota_pool.combined_lanes_description'
+                : 'quota_pool.combined_lanes_points_description'
           )}
         </desc>
         <defs>
@@ -396,52 +589,55 @@ export function CombinedLanesChart({
             <stop offset="0%" stopColor="var(--text-primary)" stopOpacity="0.14" />
             <stop offset="100%" stopColor="var(--text-primary)" stopOpacity="0" />
           </linearGradient>
-          {visibleLaneSets.map(({ lane }, index) => (
-            <linearGradient
-              key={`grad-${index}`}
-              id={`${id}-lane-fill-${index}`}
-              x1="0"
-              y1="0"
-              x2="0"
-              y2="1"
-              {...poolProviderStyle(lane.provider)}
-            >
-              <stop offset="0%" stopColor="var(--pool-accent)" stopOpacity="0.18" />
-              <stop offset="100%" stopColor="var(--pool-accent)" stopOpacity="0" />
-            </linearGradient>
-          ))}
+          <linearGradient id={`${id}-empty-fill`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--text-primary)" stopOpacity="0" />
+            <stop offset="100%" stopColor="var(--text-primary)" stopOpacity="0" />
+          </linearGradient>
           <clipPath id={`${id}-clip`}>
             <rect
-              x={layout.left - 6}
-              y={topPlotY - 8}
-              width={layout.right - layout.left + 12}
-              height={Math.max(1, bottomPlotY - topPlotY + 16)}
+              x={frame.left - 6}
+              y={frame.top - 12}
+              width={frame.right - frame.left + 12}
+              height={Math.max(1, frame.bottom - frame.top + 20)}
             />
           </clipPath>
         </defs>
 
-        <text
-          className={styles.axisUnit}
-          x={alignUnitEnd ? layout.left - 10 : 0}
-          y={topPlotY - 16}
-          textAnchor={alignUnitEnd ? 'end' : 'start'}
-        >
-          {unit}
-        </text>
+        {!usePercentScale && (
+          <text
+            className={styles.axisUnit}
+            x={narrow ? 0 : frame.left - 10}
+            y={frame.top - 16}
+            textAnchor={narrow ? 'start' : 'end'}
+          >
+            {unit}
+          </text>
+        )}
+        {showRightAxis && (
+          <text
+            className={styles.axisUnitRight}
+            x={frame.right + 10}
+            y={frame.top - 16}
+            textAnchor="start"
+          >
+            {t('quota_pool.total_points_axis')}
+            <title>{`${t('quota_pool.total')} (${unit})`}</title>
+          </text>
+        )}
 
-        {/* Shared vertical date/hour gridlines spanning Total and every lane. */}
+        {/* Shared vertical date/hour gridlines. */}
         {(hourly ? hourTicks : dayTicks)(fromMs, toMs, tickCount).map((at) => {
           const edge = 40;
           return (
             <g key={at} className={styles.grid}>
-              <line x1={x(at)} x2={x(at)} y1={topPlotY} y2={bottomPlotY} />
+              <line x1={x(at)} x2={x(at)} y1={frame.top} y2={frame.bottom} />
               <text
                 x={x(at)}
-                y={layout.axisY}
+                y={frame.axisY}
                 textAnchor={
-                  x(at) - layout.left < edge
+                  x(at) - frame.left < edge
                     ? 'start'
-                    : layout.right - x(at) < edge
+                    : frame.right - x(at) < edge
                       ? 'end'
                       : 'middle'
                 }
@@ -452,146 +648,77 @@ export function CombinedLanesChart({
           );
         })}
 
-        {/* Total plot Y-axis gridlines & labels. */}
-        {totalGeom &&
-          layout.totalBox &&
-          axisTicks(totalGeom.min, totalGeom.max).map((value, index) => (
-            <g
-              key={`total-y-${index}`}
-              className={value === 0 && totalGeom.min < 0 ? styles.zeroAxis : styles.grid}
-            >
-              <line
-                x1={layout.totalBox!.left}
-                x2={layout.totalBox!.right}
-                y1={totalGeom.y(value)}
-                y2={totalGeom.y(value)}
-              />
-              <text x={layout.totalBox!.left - 10} y={totalGeom.y(value) + 4} textAnchor="end">
-                {number(value)}
-              </text>
-            </g>
-          ))}
-
-        {/* Provider lane headers, baselines, and own-scale Y-axis gutter labels. */}
-        {visibleLaneSets.map(({ lane }, index) => {
-          const box = layout.laneBoxes[index];
-          const geom = laneGeoms[index];
-          const laneTicks = singleStandaloneLane
-            ? axisTicks(geom.min, geom.max)
-            : geom.min < 0 && geom.max > 0
-              ? [geom.min, 0, geom.max]
-              : geom.min === geom.max
-                ? [geom.max]
-                : [geom.min, geom.max];
-          const stopVal = activeStop?.lanes[index];
-          const resetHere = activeStop?.resets.find((r) => r.laneIndex === index);
-          const shape = providerMarkerShape(lane.provider);
-          const fullName = laneLabel(lane);
-          const shownName = narrow && fullName.length > 18 ? `${fullName.slice(0, 17)}…` : fullName;
-          const statusTag = lane.historyOnly
-            ? t('quota_pool.history_only')
-            : lane.forecastState !== 'ready'
-              ? t(`quota_pool.state.${lane.forecastState}`)
-              : null;
-          const captionValue =
-            lane.historyOnly && activeStop?.projected
-              ? '—'
-              : resetHere && resetHere.before !== null && resetHere.after !== null
-                ? narrow
-                  ? `${number(resetHere.after)} (+${number(resetHere.gainPoints)})`
-                  : `${number(resetHere.before)} → ${number(resetHere.after)} (+${number(resetHere.gainPoints)})`
-                : stopVal && stopVal.present
-                  ? stopVal.after === null
-                    ? t('quota_pool.no_observation')
-                    : mode === 'remaining' && lane.capacityPoints > 0
-                      ? `${number(stopVal.after)} / ${number(lane.capacityPoints)}`
-                      : `${number(stopVal.after)}\u00a0${unit}`
-                  : '';
-          const zeroY = geom.min < 0 && geom.max > 0 ? geom.y(0) : null;
-
+        {/* Shared Y-axis gridlines: fixed 0–100% left (+ exact Total pts right), points fallback, or rates. */}
+        {yTicks.map((value, index) => {
+          const tickY = yOf(value);
+          const isZeroLine = !isRemaining && value === 0 && (probeAxis?.min ?? 0) < 0;
           return (
-            <g
-              key={`lane-chrome-${index}`}
-              data-lane-header={lane.instanceId ?? lane.provider}
-              {...poolProviderStyle(lane.provider)}
-            >
-              {!singleStandaloneLane && (
-                <>
-                  <path
-                    d={providerGlyphPath(shape, layout.left + 4.5, box.captionY - 3.5, 4)}
-                    fill="var(--pool-accent)"
-                  />
-                  <text x={layout.left + 14} y={box.captionY} className={styles.laneName}>
-                    <title>{fullName}</title>
-                    {shownName}
-                    {statusTag && <tspan className={styles.laneStatus}>{` · ${statusTag}`}</tspan>}
-                  </text>
-                  {captionValue && (
-                    <text
-                      x={layout.right}
-                      y={box.captionY}
-                      textAnchor="end"
-                      className={resetHere ? styles.laneValueReset : styles.laneValue}
-                    >
-                      {captionValue}
-                    </text>
-                  )}
-                </>
+            <g key={`y-${index}`} className={isZeroLine ? styles.zeroAxis : styles.grid}>
+              <line x1={frame.left} x2={frame.right} y1={tickY} y2={tickY} />
+              <text x={frame.left - 10} y={tickY + 4} textAnchor="end">
+                {leftLabels[index]}
+              </text>
+              {showRightAxis && (
+                <text
+                  x={frame.right + 10}
+                  y={tickY + 4}
+                  textAnchor="start"
+                  className={styles.axisRightTick}
+                >
+                  {rightLabels[index]}
+                </text>
               )}
-              {laneTicks.map((value, tickIdx) => {
-                const tickY = geom.y(value);
-                // In compact signed lanes, always keep the "0" baseline label and drop a cramped
-                // bound label if it would collide vertically with zero.
-                const hideCrampedBound =
-                  !singleStandaloneLane &&
-                  zeroY !== null &&
-                  ((value === geom.max && zeroY - tickY < 14) ||
-                    (value === geom.min && tickY - zeroY < 14));
-                const textY =
-                  !singleStandaloneLane && value === geom.max
-                    ? tickY + 8
-                    : !singleStandaloneLane && value === geom.min
-                      ? tickY
-                      : Math.max(box.top + 8, Math.min(box.bottom, tickY + 4));
-                return (
-                  <g
-                    key={`lane-y-${index}-${tickIdx}`}
-                    className={value === 0 && geom.min < 0 ? styles.zeroAxis : styles.grid}
-                  >
-                    <line x1={box.left} x2={box.right} y1={tickY} y2={tickY} />
-                    {!hideCrampedBound && (
-                      <text x={box.left - 10} y={textY} textAnchor="end">
-                        {number(value)}
-                      </text>
-                    )}
-                  </g>
-                );
-              })}
             </g>
           );
         })}
 
-        {/* Clipped data paths: Total line + independent own-scale provider lane lines. */}
+        {/* Clipped data layer: spread band, quiet background lines, bold Total, spotlighted providers. */}
         <g clipPath={`url(#${id}-clip)`}>
-          {totalSeries && totalGeom && layout.totalBox && (
-            <g data-series="total">
+          {showSpreadBand && spreadPaths.length > 0 && (
+            <g data-spread-band="true" opacity={hasFocus ? 0.45 : 1}>
+              {spreadPaths.map((run, runIdx) => (
+                <g key={`spread-${runIdx}`} data-spread-projected={run.projected || undefined}>
+                  <path d={run.fill} className={styles.spreadBandFill} />
+                  <path d={run.upper} className={styles.spreadBandEdge} />
+                  <path d={run.lower} className={styles.spreadBandEdge} />
+                </g>
+              ))}
+            </g>
+          )}
+
+          {/* Quiet background provider curves below Total. */}
+          {showQuietLines &&
+            laneSampleSets
+              .filter((set) => !focusKeys.has(set.key))
+              .map((set) => renderProviderTrace(set, 'quiet'))}
+
+          {/* Bold neutral Total curve. */}
+          {hasTotal && totalSeries && (
+            <g
+              data-series="total"
+              data-overflow={totalHasOverflow ? 'true' : undefined}
+              opacity={hasFocus ? 0.4 : 1}
+            >
               <PoolTracePaths
-                samples={totalSamples}
+                samples={plotTotalSamples}
                 mode={mode}
-                x={totalGeom.x}
-                y={totalGeom.y}
-                segmentRuns={totalGeom.segmentRuns}
+                x={x}
+                y={yOf}
+                segmentRuns={segmentRuns}
                 stroke="var(--text-primary)"
-                strokeWidth={2.5}
-                fillId={`${id}-total-fill`}
+                strokeWidth={2.6}
+                fillId={hasFocus ? `${id}-empty-fill` : `${id}-total-fill`}
                 showResetRisers
                 sparseProjection={totalSparseProjection}
                 keyPrefix="total"
               />
-              {mode === 'remaining' && visible(totalSeries.poolEmptyAtMs) && (
+              {totalOverflowXs.map((cx, idx) =>
+                renderOverflowCaret(cx, yOf(100), 'var(--text-primary)', `total-ov-${idx}`)
+              )}
+              {isRemaining && visible(totalSeries.poolEmptyAtMs) && (
                 <circle
-                  cx={totalGeom.x(totalSeries.poolEmptyAtMs)}
-                  cy={totalGeom.y(0)}
+                  cx={x(totalSeries.poolEmptyAtMs)}
+                  cy={yOf(0)}
                   r="4.5"
                   fill="var(--bg-primary)"
                   stroke="var(--text-primary)"
@@ -603,201 +730,149 @@ export function CombinedLanesChart({
             </g>
           )}
 
-          {visibleLaneSets.map(({ lane, visibleSamples, sparseProjection }, index) => {
-            const geom = laneGeoms[index];
-            const box = layout.laneBoxes[index];
-            const resets = laneResetSets[index];
-            const shape = providerMarkerShape(lane.provider);
-            const resetPointByTime = new Map(
-              stops
-                .filter((s) => s.projected)
-                .map((s) => [
-                  s.atMs,
-                  {
-                    before: s.lanes[index]?.before ?? null,
-                    after: s.lanes[index]?.after ?? null,
-                  },
-                ])
-            );
+          {/* Spotlighted / pinned provider curves above Total. */}
+          {showProviderTraces &&
+            laneSampleSets
+              .filter((set) => focusKeys.has(set.key))
+              .map((set) => renderProviderTrace(set, 'focused'))}
 
-            return (
-              <g
-                key={`lane-${index}`}
-                {...poolProviderStyle(lane.provider)}
-                data-series={lane.instanceId ?? lane.provider}
-                data-lane-capacity={lane.capacityPoints}
-              >
-                <PoolTracePaths
-                  samples={visibleSamples}
-                  mode={mode}
-                  x={geom.x}
-                  y={geom.y}
-                  segmentRuns={geom.segmentRuns}
-                  stroke="var(--pool-accent)"
-                  strokeWidth={singleStandaloneLane ? 2.4 : 2}
-                  fillId={`${id}-lane-fill-${index}`}
-                  includeProjected={!lane.historyOnly}
-                  showResetRisers
-                  sparseProjection={sparseProjection}
-                  keyPrefix={`lane-${index}`}
-                />
-                {/* Per-lane scheduled reset guides, shape markers, and non-overlapping +gain labels. */}
-                {resets.map((reset, resetIdx) => {
-                  const pt = resetPointByTime.get(reset.atMs);
-                  const hasAfter = pt?.after !== null && pt?.after !== undefined;
-                  const markerY = hasAfter ? geom.y(pt.after!) : box.top;
-                  const beforeY =
-                    pt?.before !== null && pt?.before !== undefined ? geom.y(pt.before) : markerY;
-                  const sideY = reset.anchor === 'end' ? beforeY : markerY;
-                  const topLabelY = box.top + 11;
-                  const bottomLabelY = box.bottom - 5;
-                  const labelY =
-                    Math.abs(sideY - topLabelY) >= Math.abs(sideY - bottomLabelY)
-                      ? topLabelY
-                      : bottomLabelY;
-                  const hitsCrosshair =
-                    activeX !== null &&
-                    (Math.abs(reset.rx - activeX) < 18 ||
-                      (activeX >= reset.labelLeft - 12 && activeX <= reset.labelRight + 12));
-                  return (
-                    <g
-                      key={`lane-reset-${index}-${resetIdx}`}
-                      className={styles.laneResetMarker}
-                      data-reset-provider={lane.provider}
-                    >
-                      <line
-                        className={styles.laneResetGuide}
-                        x1={reset.rx}
-                        x2={reset.rx}
-                        y1={box.top}
-                        y2={box.bottom}
-                      />
-                      {hasAfter ? (
-                        <path
-                          d={providerGlyphPath(shape, reset.rx, markerY, 3.8)}
-                          fill="var(--pool-accent)"
-                          stroke="var(--bg-primary)"
-                          strokeWidth="1.2"
-                        />
-                      ) : (
-                        <line
-                          x1={reset.rx}
-                          x2={reset.rx}
-                          y1={box.top - 4}
-                          y2={box.top + 3}
-                          stroke="var(--pool-accent)"
-                          strokeWidth="2"
-                        />
-                      )}
-                      {reset.showLabel && !hitsCrosshair && (
-                        <text
-                          x={reset.labelX}
-                          y={labelY}
-                          textAnchor={reset.anchor}
-                          className={styles.laneResetGain}
-                        >
-                          {reset.text}
-                        </text>
-                      )}
-                      <title>{`${laneLabel(lane)} · ${t('quota_pool.reset')}: ${date(reset.atMs)} · ${reset.text} ${unit}`}</title>
-                    </g>
-                  );
-                })}
-                {/* Pool-empty marker inside this provider's own lane. */}
-                {mode === 'remaining' && !lane.historyOnly && visible(lane.poolEmptyAtMs) && (
-                  <g data-empty-marker={lane.provider}>
-                    <circle
-                      cx={geom.x(lane.poolEmptyAtMs)}
-                      cy={geom.y(0)}
-                      r="4"
-                      fill="var(--bg-primary)"
-                      stroke="var(--pool-accent)"
-                      strokeWidth="2"
-                    >
-                      <title>{`${laneLabel(lane)} · ${t('quota_pool.pool_empty')}: ${date(lane.poolEmptyAtMs)}`}</title>
-                    </circle>
-                  </g>
-                )}
-              </g>
-            );
-          })}
+          {/* Empty-pool markers on the 0 baseline (kept visible so imminent depletions never hide). */}
+          {isRemaining &&
+            showProviderTraces &&
+            laneSampleSets.map((set) => {
+              if (set.lane.historyOnly || !visible(set.lane.poolEmptyAtMs)) return null;
+              const markerOpacity = !hasFocus || focusKeys.has(set.key) ? 1 : 0.22;
+              return (
+                <g
+                  key={`empty-${set.key}`}
+                  {...poolProviderStyle(set.lane.provider)}
+                  data-empty-marker={set.lane.provider}
+                  opacity={markerOpacity}
+                >
+                  <circle
+                    cx={x(set.lane.poolEmptyAtMs)}
+                    cy={yOf(0)}
+                    r="4.2"
+                    fill="var(--bg-primary)"
+                    stroke="var(--pool-accent)"
+                    strokeWidth="2"
+                  >
+                    <title>{`${laneLabel(set.lane)} · ${t('quota_pool.pool_empty')}: ${date(set.lane.poolEmptyAtMs)}`}</title>
+                  </circle>
+                </g>
+              );
+            })}
 
-          {/* Snapshot vertical rule across Total and all lanes. */}
+          {/* Snapshot vertical rule. */}
           {snapshotX !== null && (
             <line
               x1={snapshotX}
               x2={snapshotX}
-              y1={topPlotY}
-              y2={bottomPlotY}
+              y1={frame.top}
+              y2={frame.bottom}
               className={styles.nowLine}
             />
           )}
 
-          {/* Synchronized vertical scrub crosshair & active dots across Total + lanes. */}
+          {/* Synchronized vertical scrub crosshair & active dots. */}
           {activeStop && (
             <g data-crosshair="true">
               <line
                 x1={x(activeStop.atMs)}
                 x2={x(activeStop.atMs)}
-                y1={topPlotY}
-                y2={bottomPlotY}
+                y1={frame.top}
+                y2={frame.bottom}
                 stroke="var(--text-tertiary)"
                 opacity="0.55"
               />
-              {totalGeom && activeStop.totalAfter !== null && (
-                <circle
-                  cx={x(activeStop.atMs)}
-                  cy={totalGeom.y(activeStop.totalAfter)}
-                  r="4.8"
-                  fill="var(--text-primary)"
-                  stroke="var(--bg-primary)"
-                  strokeWidth="2"
-                />
-              )}
-              {visibleLaneSets.map(({ lane }, index) => {
-                if (lane.historyOnly && activeStop.projected) return null;
-                const val = activeStop.lanes[index];
-                if (!val || val.after === null) return null;
-                return (
-                  <circle
-                    key={`crosshair-dot-${index}`}
-                    {...poolProviderStyle(lane.provider)}
-                    cx={x(activeStop.atMs)}
-                    cy={laneGeoms[index].y(val.after)}
-                    r={singleStandaloneLane ? '5' : '4'}
-                    fill="var(--pool-accent)"
-                    stroke="var(--bg-primary)"
-                    strokeWidth="1.8"
-                  />
-                );
-              })}
+              {hasTotal &&
+                totalSeries &&
+                activeStop.totalAfter !== null &&
+                (!usePercentScale || totalNormAtActive !== null) && (
+                  <>
+                    <circle
+                      cx={x(activeStop.atMs)}
+                      cy={yOf(usePercentScale ? totalNormAtActive!.plotPct : activeStop.totalAfter)}
+                      r="4.6"
+                      fill="var(--text-primary)"
+                      stroke="var(--bg-primary)"
+                      strokeWidth="2"
+                      opacity={hasFocus ? 0.45 : 1}
+                      data-overflow={totalNormAtActive?.overflow ? 'true' : undefined}
+                    />
+                    {usePercentScale &&
+                      totalNormAtActive?.overflow &&
+                      renderOverflowCaret(
+                        x(activeStop.atMs),
+                        yOf(100),
+                        'var(--text-primary)',
+                        'crosshair-total-ov'
+                      )}
+                  </>
+                )}
+              {showProviderTraces &&
+                laneSampleSets.map((set, index) => {
+                  const showDot = focusKeys.has(set.key) || (!hasTotal && showQuietLines);
+                  if (!showDot) return null;
+                  if (set.lane.historyOnly && activeStop.projected) return null;
+                  const val = activeStop.lanes[index];
+                  if (!val || val.after === null) return null;
+                  const norm = usePercentScale
+                    ? normalizePercentValue(val.after, set.lane.capacityPoints)
+                    : null;
+                  if (usePercentScale && !norm) return null;
+                  const yVal = usePercentScale ? norm!.plotPct : val.after;
+                  const dotStyle = poolProviderStyle(set.lane.provider);
+                  return (
+                    <Fragment key={`crosshair-dot-${set.key}`}>
+                      <circle
+                        {...dotStyle}
+                        cx={x(activeStop.atMs)}
+                        cy={yOf(yVal)}
+                        r="4.5"
+                        fill="var(--pool-accent)"
+                        stroke="var(--bg-primary)"
+                        strokeWidth="1.8"
+                        data-overflow={norm?.overflow ? 'true' : undefined}
+                      />
+                      {norm?.overflow &&
+                        renderOverflowCaret(
+                          x(activeStop.atMs),
+                          yOf(100),
+                          'var(--pool-accent)',
+                          `crosshair-dot-${set.key}-ov`,
+                          dotStyle
+                        )}
+                    </Fragment>
+                  );
+                })}
             </g>
           )}
         </g>
 
-        {/* Top-edge provider-colored reset ticks on the Total plot (unclipped above top edge). */}
-        {layout.totalBox &&
-          totalTicks.map((tick, tickIdx) => (
-            <line
-              key={`total-tick-${tickIdx}`}
-              {...poolProviderStyle(tick.provider)}
-              data-total-reset-tick={tick.provider}
-              x1={tick.x}
-              x2={tick.x}
-              y1={layout.totalBox!.top - 6}
-              y2={layout.totalBox!.top + 4}
-              stroke="var(--pool-accent)"
-              strokeWidth="2.2"
-            >
-              <title>{`${tick.label} · ${t('quota_pool.reset')}: ${date(tick.atMs)} · +${number(tick.gainPoints)} ${unit}`}</title>
-            </line>
-          ))}
+        {/* Top-edge provider-colored reset ticks (unclipped above top edge). */}
+        {visibleTicks.map((tick, tickIdx) => (
+          <line
+            key={`total-tick-${tickIdx}`}
+            {...poolProviderStyle(tick.provider)}
+            data-total-reset-tick={tick.provider}
+            data-total-reset-lane={tick.laneKey}
+            x1={tick.x}
+            x2={tick.x}
+            y1={frame.top - 6}
+            y2={frame.top + 4}
+            stroke="var(--pool-accent)"
+            strokeWidth="2.2"
+          >
+            <title>{`${tick.label} · ${t('quota_pool.reset')}: ${date(tick.atMs)} · +${number(tick.gainPoints)} ${unit}`}</title>
+          </line>
+        ))}
 
         {snapshotX !== null && (
           <text
             className={styles.nowLabel}
             x={snapshotAnchor === 'end' ? snapshotX - 4 : snapshotX}
-            y={topPlotY - 12}
+            y={frame.top - 12}
             textAnchor={snapshotAnchor}
           >
             {snapshotText}
@@ -806,8 +881,8 @@ export function CombinedLanesChart({
 
         {!hasValues && (
           <text
-            x={(layout.left + layout.right) / 2}
-            y={layout.height / 2}
+            x={(frame.left + frame.right) / 2}
+            y={frame.height / 2}
             textAnchor="middle"
             className={styles.emptyChart}
           >
@@ -816,13 +891,13 @@ export function CombinedLanesChart({
         )}
         {hasValues &&
           !hasProjection &&
-          mode === 'remaining' &&
+          isRemaining &&
           lanes.every((lane) => lane.forecastState === 'ready' || lane.historyOnly) &&
           visible(nowMs) &&
-          x(nowMs) < layout.right - 130 && (
+          x(nowMs) < frame.right - 130 && (
             <text
-              x={(x(nowMs) + layout.right) / 2}
-              y={(topPlotY + (layout.totalBox?.bottom ?? bottomPlotY)) / 2}
+              x={(x(nowMs) + frame.right) / 2}
+              y={(frame.top + frame.bottom) / 2}
               textAnchor="middle"
               className={styles.emptyChart}
             >
@@ -831,30 +906,43 @@ export function CombinedLanesChart({
           )}
       </svg>
 
-      {/* Expand/collapse button when 4+ providers are combined. */}
-      {!skipDuplicateLane && !minimized && lanes.length > DEFAULT_VISIBLE_LANES && (
-        <button
-          type="button"
-          className={styles.lanesShowAll}
-          aria-expanded={showAllLanes}
-          onClick={() => setShowAllLanes((prev) => !prev)}
-        >
-          {showAllLanes
-            ? t('quota_pool.show_fewer_providers')
-            : t('quota_pool.show_all_providers', { count: lanes.length })}
-        </button>
+      {/* Live synchronized provider bar grid + per-browser Smart/Ghost background toggle. */}
+      {showProviderCards && (
+        <CombinedProviderBars
+          items={laneSampleSets}
+          activeStop={activeStop}
+          isRemaining={isRemaining}
+          unit={unit}
+          laneLabel={laneLabel}
+          activePinned={activePinned}
+          focusKeys={focusKeys}
+          hasFocus={hasFocus}
+          bgMode={bgMode}
+          showBgSwitch={showBgSwitch}
+          bgSwitchVisible={usePercentScale}
+          onSelectBgMode={setBackgroundMode}
+          onHoverProvider={setHoveredProvider}
+          onTogglePin={togglePinProvider}
+          onClearPins={clearPins}
+        />
       )}
 
       <div className={styles.chartFooter}>
         <div className={styles.legend}>
-          {/* When lanes are hidden, encode provider colors as vertical reset ticks (matching the plot). */}
+          {showMinimizedProviderLegend &&
+            laneSampleSets.map(({ lane, key }) => (
+              <span key={`min-prov-${key}`} {...poolProviderStyle(lane.provider)}>
+                <i className={styles.providerKey} />
+                {laneLabel(lane)}
+              </span>
+            ))}
           {showTickLegend && (
             <>
               <span className={styles.legendGroupLabel}>{t('quota_pool.scheduled_reset')}:</span>
-              {lanes
-                .filter((lane) => !lane.historyOnly && tickProviders.has(lane.provider))
-                .map((lane, index) => (
-                  <span key={`min-key-${index}`} {...poolProviderStyle(lane.provider)}>
+              {laneSampleSets
+                .filter((set) => !set.lane.historyOnly && tickLaneKeys.has(set.key))
+                .map(({ lane, key }) => (
+                  <span key={`min-key-${key}`} {...poolProviderStyle(lane.provider)}>
                     <i className={styles.resetKey} />
                     {laneLabel(lane)}
                     {lane.forecastState !== 'ready' &&
@@ -863,7 +951,10 @@ export function CombinedLanesChart({
                 ))}
             </>
           )}
-          <span data-style-key data-divider={showTickLegend || undefined}>
+          <span
+            data-style-key
+            data-divider={showTickLegend || showMinimizedProviderLegend || undefined}
+          >
             <i />
             {t('quota_pool.recorded')}
           </span>
@@ -873,7 +964,13 @@ export function CombinedLanesChart({
               {t('quota_pool.projected')}
             </span>
           )}
-          {mode === 'remaining' && hasAnyReset && !showTickLegend && (
+          {showSpreadBand && (
+            <span data-style-key>
+              <i className={styles.spreadKey} />
+              {t('quota_pool.provider_spread_band')}
+            </span>
+          )}
+          {isRemaining && visibleTicks.length > 0 && !showTickLegend && (
             <span data-style-key>
               <i className={styles.resetKey} />
               {t('quota_pool.scheduled_reset')}
@@ -884,7 +981,7 @@ export function CombinedLanesChart({
 
       {/* Polite screen-reader summary of the committed moment + full scheduled reset list. */}
       <div id={`${id}-readout`} className={styles.srOnly} aria-live="polite">
-        {describeStop(committedStop, scrub.isAtLatestCommit)}
+        {readoutText}
         {stops.length === 1 ? ` · ${t('quota_pool.single_sample')}` : ''}
       </div>
       {allScheduledResets.length > 0 && (

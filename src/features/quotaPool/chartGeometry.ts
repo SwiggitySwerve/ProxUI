@@ -10,6 +10,8 @@ export const metricField = {
 export interface ChartSample {
   point: PoolPoint;
   projected: boolean;
+  /** Boundary crossing point inserted for exact clamped path geometry (not a real observation). */
+  synthetic?: true;
 }
 
 export const chartFrame = { width: 1000, height: 300, left: 64, right: 976, top: 38, bottom: 254 };
